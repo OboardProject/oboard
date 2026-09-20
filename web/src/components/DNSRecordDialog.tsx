@@ -102,7 +102,7 @@ export function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraf
   const canSubmit = Boolean(zoneID && hostPrefix.trim() && draft.content.trim())
   const submitHint = canSubmit ? undefined : '请填写域名、主机记录和记录值'
 
-  return <MotionDialogPanel onCancel={onCancel} className="dns-record-dialog" ariaLabel={editing ? '编辑解析记录' : '添加解析记录'}>
+  return <MotionDialogPanel onCancel={onCancel} placement="right" className="dns-record-dialog" ariaLabel={editing ? '编辑解析记录' : '添加解析记录'}>
     <header className="dialog-head"><div><h2>{editing ? '编辑解析记录' : '添加解析记录'}</h2><p className="muted">{editing ? `所属域名：${selectedZoneName}` : '为指定域名创建一条子域名解析。'}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><X aria-hidden="true" /></button></header>
     <div className="dialog-body">
       <form id={formID} className="form server-dialog-form labeled-form" onSubmit={event => { event.preventDefault(); if (canSubmit) void onSubmit() }}>

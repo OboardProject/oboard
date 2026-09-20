@@ -116,7 +116,7 @@ export function ServerBasicSettingsDialog({ server, onCancel, onSubmit }: { serv
   }
   const regionPreview = draft.region_mode==='manual' ? normalizeRegionCode(draft.region_code) : normalizeRegionCode(draft.detected_region_code)
   return (
-    <MotionDialogPanel onCancel={onCancel} className="server-dialog server-basic-settings-dialog">
+    <MotionDialogPanel onCancel={onCancel} className="server-dialog server-basic-settings-dialog" placement="right">
       <header className="dialog-head">
         <div>
           <h2>基础设置 · {server.name || `服务器 #${server.id}`}</h2>

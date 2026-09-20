@@ -11,6 +11,9 @@ import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './compone
 import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
 import { ServerMonitoringTargetDialog } from './components/server/ServerMonitoringTargetDialog'
+import { ServerInspectorPanel } from './components/server/ServerInspectorPanel'
+import { SignalRing } from './components/ui/SignalRing'
+import { SignalEmptyState } from './components/ui/SignalEmptyState'
 import { lazyDialog, lazySurface } from './components/ui/lazy-surface'
 import { useMobileNavigation } from './hooks/use-mobile-navigation'
 const ReturnLatencyPage = lazySurface(() => import('./components/server/ReturnLatencyPage').then(module => ({ default: module.ReturnLatencyPage })))
@@ -2609,8 +2612,9 @@ export function App() {
           >
             <div className="brand">
               <img className="brand-mark" src={logo} alt="OBoard" width={34} height={34} />
-              <div className="brand-text">
+              <div className="brand-text" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <h1>OBoard</h1>
+                <SignalRing size={16} ariaLabel="OBoard 信号工作台标记" />
               </div>
               {!isMobile && (
                 <button
@@ -6520,6 +6524,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [deleteServerDraft, setDeleteServerDraft] = useState<Server | null>(null)
   const [deleteServerBusy, setDeleteServerBusy] = useState(false)
   const [uninstallingServerIDs, setUninstallingServerIDs] = useState<Set<number>>(() => new Set())
+  const [inspectedServerId, setInspectedServerId] = useState<number | null>(null)
+  const inspectedServer = useMemo(() => servers.find(s => s.id === inspectedServerId) || null, [servers, inspectedServerId])
 
   // URL panel state sync: /servers?server=12&panel=network&tab=diagnostics
   const syncURLPanel = (serverId: number | null, panel: string | null, tab: string | null) => {
@@ -6695,6 +6701,28 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     () => filterServerList(orderedServers, serverQuery, serverStatusFilter, serverRegionFilter, serverListRegion),
     [orderedServers, serverQuery, serverStatusFilter, serverRegionFilter],
   )
+  useEffect(() => {
+    if (!inspectedServerId) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        const idx = visibleServers.findIndex(s => s.id === inspectedServerId)
+        if (idx >= 0 && idx < visibleServers.length - 1) {
+          setInspectedServerId(visibleServers[idx + 1].id)
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        const idx = visibleServers.findIndex(s => s.id === inspectedServerId)
+        if (idx > 0) {
+          setInspectedServerId(visibleServers[idx - 1].id)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [inspectedServerId, visibleServers])
   const hasServerFilters = Boolean(serverQuery.trim() || serverStatusFilter !== 'all' || serverRegionFilter !== 'all')
   const clearServerFilters = () => {
     setServerQuery('')
@@ -6992,6 +7020,11 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'about' || type === 'details') { clearServerWorkspaces(); setAboutServer(s) }
+    else if (type === 'inspect') { setInspectedServerId(current => current === s.id ? null : s.id) }
+    else if (type === 'full-about') {
+      clearServerWorkspaces()
+      setAboutServer(s)
+    }
     else if (type === 'basic-settings' || type === 'edit') { clearServerWorkspaces(); setEditServer(s) }
     else if (type === 'return-latency') {
       window.history.pushState({}, '', `${pathForTab('return-latency')}?server=${s.id}`)
@@ -7087,7 +7120,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         ><GripVertical size={14} /></button>
         <button type="button" className="ghost icon-button" disabled={!next} onClick={() => next && moveCustomServer(server.id, next.id, 'after')} aria-label="向后移动" title="向后移动"><ArrowDown size={14} /></button>
       </div>}
-      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} uninstalling={uninstallingServerIDs.has(server.id)} onAction={handleServerAction} layout={view === 'list' ? 'list' : 'grid'} />
+      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} uninstalling={uninstallingServerIDs.has(server.id)} onAction={handleServerAction} layout={view === 'list' ? 'list' : 'grid'} isSelected={inspectedServerId === server.id} />
     </div>
   }
   return <section className="panel server-management-panel">
@@ -7209,10 +7242,28 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     {loading && !servers.length
       ? <CardSkeleton />
       : !servers.length
-      ? <p className="muted server-empty">暂无服务器</p>
+      ? <SignalEmptyState
+          title="暂无受控服务器"
+          description="通过单行命令为远程服务器安装 Agent，注册上线后即可在此统一编排管理。"
+          action={hasManagementAccess(role) ? <button type="button" className="btn primary" onClick={() => setCreateOpen(true)}>接入首台服务器</button> : null}
+        />
       : !visibleServers.length
       ? <div className="server-filter-empty"><Search size={20} aria-hidden="true" /><strong>没有符合条件的服务器</strong><button type="button" className="ghost" onClick={clearServerFilters}>清除筛选</button></div>
-      : <ServerListPage key={JSON.stringify([serverQuery, serverStatusFilter, serverRegionFilter, listPreferences.sortMode])} items={visibleServers} view={view} renderItem={renderServerCard} />}
+      : (
+        <div className="server-workbench-layout">
+          <div className="server-workbench-main">
+            <ServerListPage key={JSON.stringify([serverQuery, serverStatusFilter, serverRegionFilter, listPreferences.sortMode])} items={visibleServers} view={view} renderItem={renderServerCard} />
+          </div>
+          {inspectedServer && (
+            <ServerInspectorPanel
+              server={inspectedServer}
+              role={role}
+              onClose={() => setInspectedServerId(null)}
+              onAction={handleServerAction}
+            />
+          )}
+        </div>
+      )}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
@@ -8778,7 +8829,7 @@ function formatTimeOffset(offsetMS: number) {
   return `${seconds > 0 ? '+' : ''}${seconds.toFixed(Math.abs(seconds) >= 10 ? 1 : 2)} 秒`
 }
 
-function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalling = false, layout = 'grid' }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; uninstalling?: boolean; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list' }) {
+function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalling = false, layout = 'grid', isSelected = false }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; uninstalling?: boolean; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list'; isSelected?: boolean }) {
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
@@ -8799,11 +8850,11 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
     const totalTraffic = formatBytes(trafficTotalBytes)
     const limitTraffic = trafficLimitBytes > 0 ? formatBytes(trafficLimitBytes) : ''
     return (
-      <article className="server-card server-list-row server-card-monitorable">
+      <article className={`server-card server-list-row server-card-monitorable${isSelected ? ' is-selected' : ''}`}>
         <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
         
         {/* Identity */}
-        <div className="server-list-identity">
+        <div className="server-list-identity" onClick={() => onAction('inspect', server)} style={{ cursor: 'pointer' }}>
           <RegionFlag code={serverRegionCode(server)} size={22} />
           <div className="server-list-identity-text">
             <div className="server-list-name-row">
@@ -8916,10 +8967,10 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   }
 
   return (
-    <article className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}`}>
+    <article className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}${isSelected ? ' is-selected' : ''}`}>
       <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
       <div className="server-card-head">
-        <div className="server-card-title">
+        <div className="server-card-title" onClick={() => onAction('inspect', server)} style={{ cursor: 'pointer' }}>
           <RegionFlag code={serverRegionCode(server)} size={20} />
           <div className="server-card-name-row">
             <h3>{server.name || `server-${server.id}`}</h3>

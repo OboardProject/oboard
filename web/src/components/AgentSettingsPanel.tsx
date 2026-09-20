@@ -247,7 +247,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       </SettingsGroup>
       <SettingsGroup title="监控数据" description="统一管理负载、公网延迟和地区延迟的历史数据。">
         <SettingsRow label="保留时间" description="缩短后会自动清理过期数据，删除后无法恢复。" htmlFor="server-monitoring-retention-days">
-          <Select id="server-monitoring-retention-days" value={monitoringRetentionDays} onChange={handleMonitoringRetentionChange} disabled={Boolean(savingKey)} aria-label="服务器监控数据保留时间">
+          <Select id="server-monitoring-retention-days" value={monitoringRetentionDays} onChange={handleMonitoringRetentionChange} disabled={Boolean(savingKey)} aria-label="服务器监控数据保留时间" aria-describedby="server-monitoring-retention-help">
             {monitoringRetentionOptions.map(days => <option key={days} value={days}>{days} 天</option>)}
           </Select>
         </SettingsRow>

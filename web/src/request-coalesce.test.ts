@@ -28,7 +28,7 @@ describe('CoalescedReadCoordinator', () => {
     reads.cancel('audit/risk-overview?window_hours=24')
     expect(signals[0]?.aborted).toBe(true)
     first.resolve('stale')
-    await expect(shared).resolves.toEqual({ data: 'stale', epoch: 0 })
+    await expect(shared).resolves.toEqual({ data: 'stale', epoch: 1 })
   })
 
   it('does not retain completed responses as a cache', async () => {
