@@ -59,6 +59,7 @@ import {
   graphLayoutSignature,
   graphServerNodeWidth,
   layoutProxyGraphTopology,
+  resolveGraphNodeCollisions,
   loadGraphDirectExitInstances,
   loadGraphLayoutSignatures,
   loadGraphPositions,
@@ -79,7 +80,7 @@ import { SERVER_GRAPH_SOURCE_HANDLE, graphConnectionSourceIntent, graphServerEnt
 import { GraphSourceSelectionDialog, type GraphSourceSelectionRequest } from './components/proxy-path/GraphSourceSelectionDialog'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
-import { GRAPH_EDGE_ARROW_GAP, GRAPH_EDGE_ARROW_LENGTH, curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, routeEndArrowPath, routeEndArrowPoints, trimRouteEnd, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
+import { curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import {
   buildGraphRoutingStages,
@@ -103,6 +104,8 @@ import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-bind
 import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
+import './components/proxy-path/ProxyCanvas.css'
+import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
 import { ConnectivityDetails } from './components/server/ConnectivityDetails'
 import { Badge } from './components/ui/badge'
@@ -10744,8 +10747,10 @@ function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchP
     || servers.find((server: Server) => (visibleData.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false))
     || servers[0]
   const [selectedServer, setSelectedServer] = useState<number>(preferredRoot?.id || 0)
+  const handledRootFocus = useRef<number | null>(null)
   useEffect(() => {
-    if (requestedInbound && selectedServer !== requestedInbound.server_id) {
+    if (requestedInbound && focusRequest?.requestID !== handledRootFocus.current) {
+      handledRootFocus.current = focusRequest.requestID
       setSelectedServer(requestedInbound.server_id)
       return
     }
@@ -10859,7 +10864,7 @@ type TransportDialogRequest = {
 	currentMode?: PathTransportMode
   resolve: (value: TransportSelection | null) => void
 }
-function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest }: any) {
+export function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest }: any) {
   const dialogs = useDialogs()
   const servers: Server[] = data.servers || []
   const entries: Inbound[] = data.inbounds || []
@@ -10884,10 +10889,19 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const toolboxRef = useRef<HTMLDivElement>(null)
   const toolboxWasDragged = useRef(false)
   const hasInitialSafeFit = useRef(false)
-  const initialSafeFitFrame = useRef<number | null>(null)
+  const initialSafeFitTimer = useRef<number | null>(null)
   const pendingServerSafeFit = useRef(0)
   const serverSafeFitTimer = useRef<number | null>(null)
   const [initialViewportReady, setInitialViewportReady] = useState(false)
+  const canvasViewports = useRef(new Map<number, { x: number; y: number; zoom: number }>())
+  const activeCanvasID = useRef(selected?.id || 0)
+  const connectionBusy = useRef(false)
+  const [connectionHint, setConnectionHint] = useState('')
+  const [connectingFrom, setConnectingFrom] = useState('')
+  const connectionStart = useRef<{ nodeID: string; handleID: string | null; type: string } | null>(null)
+  const connectionCompleted = useRef(false)
+  const pendingNodeReveal = useRef<{ nodeID: string; rootID: number } | null>(null)
+  const [selectedGraphItem, setSelectedGraphItem] = useState<{ entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge' } | null>(null)
   // Coordinates the operator set by hand. Auto layout owns everything else, so
   // a canvas whose topology changed since the last visit reopens tidy instead
   // of restoring ranks that no longer match the chain.
@@ -10903,8 +10917,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const positionsRef = useRef(positions)
   positionsRef.current = positions
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
-	const [canvasImportedIDs, setCanvasImportedIDs] = useState<number[]>([])
-	const [canvasServerInstances, setCanvasServerInstances] = useState<CanvasServerInstance[]>([])
+	const [canvasImportedIDs, setCanvasImportedIDs] = useCanvasScope<number[]>(selected?.id || 0, [])
+	const [canvasServerInstances, setCanvasServerInstances] = useCanvasScope<CanvasServerInstance[]>(selected?.id || 0, [])
 	const [canvasDirectExitInstances, setCanvasDirectExitInstances] = useState<GraphDirectExitInstance[]>(() => loadGraphDirectExitInstances())
 	const [canvasWARPInstances, setCanvasWARPInstances] = useState<CanvasWARPInstance[]>([])
 	const [canvasRoutingInstances, setCanvasRoutingInstances] = useState<CanvasRoutingInstance[]>([])
@@ -10939,12 +10953,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  edges: builtFlowContent.edges,
 	}), [builtFlowContent, positions])
   // Structure only: adding a hop asks for a relayout, moving a card never does.
-  const graphStructureSignature = useMemo(() => graphLayoutSignature(
-    builtFlowContent.nodes.map(node => node.id),
-    builtFlowContent.edges
-      .filter(edge => (edge.data as GraphTransportEdgeData | undefined)?.routingClass === 'primary')
-      .map(edge => ({ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle || undefined })),
-  ), [builtFlowContent])
+  const graphStructureSignature = useMemo(() => {
+    const primary = builtFlowContent.edges.filter(edge => (edge.data as GraphTransportEdgeData | undefined)?.routingClass === 'primary')
+    const structural = new Set(primary.flatMap(edge => [edge.source, edge.target]))
+    const cards = builtFlowContent.nodes.filter(node => structural.has(node.id) || node.id === `server-${selected?.id}` || node.id.startsWith('entry-'))
+    return graphLayoutSignature(cards.map(node => node.id), primary.map(edge => ({ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle || undefined })))
+      + '|' + cards.map(node => `${node.id}:${numericNodeStyle(node, 'width') || GRAPH_ENTRY_NODE_WIDTH}:${estimatedGraphNodeHeight(node)}`).sort().join(',')
+  }, [builtFlowContent, selected?.id])
   const graphStructureSignatureRef = useRef(graphStructureSignature)
   graphStructureSignatureRef.current = graphStructureSignature
   const [nodes, setNodes] = useState<Node[]>(builtFlow.nodes)
@@ -10993,12 +11008,14 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const openGraphContextMenuRef = useRef<(clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => void>(() => undefined)
   const [relatedGraphTarget, setRelatedGraphTarget] = useState<RelatedGraphTarget | null>(null)
   const [inboundFocusAnnouncement, setInboundFocusAnnouncement] = useState('')
+  const consumedInboundFocus = useRef<number | null>(null)
   const pathFocusTimer = useRef<number | null>(null)
 	const inboundFocusTimer = useRef<number | null>(null)
 	const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
 	  const sheet = graphMenuShouldUseSheet()
 	  const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
 	  if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
+    setSelectedGraphItem({ entity, pathIDs, source })
 	  setGraphMenu({
 	    x: sheet ? 0 : Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
 	    y: sheet ? 0 : Math.max(8, Math.min(clientY, window.innerHeight - 280)),
@@ -11011,7 +11028,24 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   nodesRef.current = nodes
   edgesRef.current = edges
   openGraphContextMenuRef.current = openGraphContextMenu
-  useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
+  useLayoutEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
+  useLayoutEffect(() => {
+    const rootID = selected?.id || 0
+    if (activeCanvasID.current === rootID) return
+    if (flowInstance) canvasViewports.current.set(activeCanvasID.current, flowInstance.getViewport())
+    activeCanvasID.current = rootID
+    pendingServerSafeFit.current = rootID
+    setInitialViewportReady(!rootID)
+    if (!rootID && serverSafeFitTimer.current !== null) {
+      window.clearTimeout(serverSafeFitTimer.current)
+      serverSafeFitTimer.current = null
+    }
+    setGraphMenu(null)
+    setSelectedGraphItem(null)
+    setRelatedGraphTarget(null)
+    setConnectionHint('')
+    setConnectingFrom('')
+  }, [selected?.id, flowInstance])
   useLayoutEffect(() => {
     if (!graphMenu || graphMenu.sheet) return
     const menu = graphMenuRef.current
@@ -11102,7 +11136,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }, [initialViewportReady])
   useEffect(() => {
     const inboundID = Number(focusRequest?.inboundID || 0)
-    if (!inboundID || !flowInstance) return
+    if (!inboundID || !flowInstance || consumedInboundFocus.current === focusRequest?.requestID) return
     const inbound = entries.find(entry => entry.id === inboundID)
     if (!inbound) return
     if (inbound.server_id !== selected?.id) {
@@ -11112,6 +11146,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const locate = (attempt = 0) => {
       const node = flowInstance.getNode(`entry-${inboundID}`)
       if (node) {
+        consumedInboundFocus.current = focusRequest.requestID
+        pendingServerSafeFit.current = 0
+        setInitialViewportReady(true)
         setNodes(current => current.map(item => ({ ...item, selected: item.id === node.id })))
         setFocusedPathID(0)
         setHoveredGraphFocus({ kind: 'direct-entry', entryID: inbound.id, serverID: inbound.server_id })
@@ -11125,6 +11162,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         return
       }
       if (attempt >= 8) {
+        consumedInboundFocus.current = focusRequest.requestID
         inboundFocusTimer.current = null
         return
       }
@@ -11208,7 +11246,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   // Provisional strokes use React Flow's built-in edge so they appear the frame
   // the drag ends, without waiting for the orthogonal router or the response.
   const displayEdgesWithProvisional = useMemo(() => (provisionalEdges.length
-    ? [...displayEdges, ...provisionalEdges.map(edge => ({
+    ? [...displayEdges, ...provisionalEdges.filter(edge => nodes.some(node => node.id === edge.source) && nodes.some(node => node.id === edge.target)).map(edge => ({
         id: edge.id,
         source: edge.source,
         target: edge.target,
@@ -11220,7 +11258,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         focusable: false,
         zIndex: 5,
       }))]
-    : displayEdges), [displayEdges, provisionalEdges])
+    : displayEdges), [displayEdges, provisionalEdges, nodes])
   useEffect(() => {
     if (!selectedServer && servers[0]) setSelectedServer(servers[0].id)
     if (selectedServer && !servers.some(s => s.id === selectedServer) && servers[0]) setSelectedServer(servers[0].id)
@@ -11242,7 +11280,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const pad = 28
     let leftInset = pad
     let rightInset = pad
-    const topInset = pad
+    const topInset = pad + 48
     const bottomInset = pad + 56 // React Flow controls sit bottom-right
 
     if (toolbox && !isToolbarCollapsed) {
@@ -11259,7 +11297,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 
     const usableWidth = Math.max(120, width - leftInset - rightInset)
     const usableHeight = Math.max(120, height - topInset - bottomInset)
-    const bounds = getNodesBounds(instance.getNodes())
+    const bounds = getNodesBounds(instance.getNodes().filter(node => builtFlow.nodes.some(item => item.id === node.id)))
     if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height) || bounds.width <= 0 || bounds.height <= 0) {
       instance.fitView({ padding: 0.18, maxZoom: 0.92, duration })
       return true
@@ -11300,15 +11338,15 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       setInitialViewportReady(true)
       return
     }
-    initialSafeFitFrame.current = window.requestAnimationFrame(() => prepareInitialViewport(instance, attempt + 1))
+    initialSafeFitTimer.current = window.setTimeout(() => prepareInitialViewport(instance, attempt + 1), 16)
   }
   const initializeFlow = (instance: ReactFlowInstance) => {
     setFlowInstance(instance)
-    if (initialSafeFitFrame.current !== null) window.cancelAnimationFrame(initialSafeFitFrame.current)
-    initialSafeFitFrame.current = window.requestAnimationFrame(() => prepareInitialViewport(instance))
+    if (initialSafeFitTimer.current !== null) window.clearTimeout(initialSafeFitTimer.current)
+    initialSafeFitTimer.current = window.setTimeout(() => prepareInitialViewport(instance), 16)
   }
   useEffect(() => () => {
-    if (initialSafeFitFrame.current !== null) window.cancelAnimationFrame(initialSafeFitFrame.current)
+    if (initialSafeFitTimer.current !== null) window.clearTimeout(initialSafeFitTimer.current)
     if (serverSafeFitTimer.current !== null) window.clearTimeout(serverSafeFitTimer.current)
     if (pathFocusTimer.current !== null) window.clearTimeout(pathFocusTimer.current)
     if (inboundFocusTimer.current !== null) window.clearTimeout(inboundFocusTimer.current)
@@ -11316,14 +11354,23 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   useEffect(() => {
     if (!flowInstance || !selected?.id || pendingServerSafeFit.current !== selected.id) return
     if (serverSafeFitTimer.current !== null) window.clearTimeout(serverSafeFitTimer.current)
-    // Let React Flow commit and measure the newly selected server's nodes before
-    // fitting the same toolbox-safe viewport used by the Auto arrange button.
-    serverSafeFitTimer.current = window.setTimeout(() => {
+    let attempt = 0
+    const settle = () => {
       if (pendingServerSafeFit.current !== selected.id) return
+      const measured = flowInstance.getNodes()
+      const ready = builtFlow.nodes.every(node => measured.some(item => item.id === node.id && item.width && item.height))
+      if (!ready && attempt++ < 12) {
+        serverSafeFitTimer.current = window.setTimeout(settle, 16)
+        return
+      }
+      const previous = canvasViewports.current.get(selected.id)
+      if (previous) void flowInstance.setViewport(previous, { duration: 0 })
+      else fitGraphToSafeArea(0)
       pendingServerSafeFit.current = 0
-      fitGraphToSafeArea(280)
+      setInitialViewportReady(true)
       serverSafeFitTimer.current = null
-    }, 40)
+    }
+    serverSafeFitTimer.current = window.setTimeout(settle, 16)
     return () => {
       if (serverSafeFitTimer.current !== null) {
         window.clearTimeout(serverSafeFitTimer.current)
@@ -11359,7 +11406,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     return () => window.removeEventListener('resize', clampOnResize)
   }, [])
   const beginToolboxDrag = (event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0) return
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
     const start = { x: event.clientX, y: event.clientY, position: toolboxPosition }
     let latest = toolboxPosition
     toolboxWasDragged.current = false
@@ -11393,18 +11440,35 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const laidOut = autoLayoutProxyGraphPositions(data, rootServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances)
     if (!Object.keys(laidOut).length) return false
     setPositions(current => {
-      const next = { ...current, ...laidOut }
-      if (preservePinned) pinnedGraphNodes.current.forEach(nodeID => { if (current[nodeID]) next[nodeID] = current[nodeID] })
-      saveGraphPositions(next)
-      return next
+      const rootKey = `server-${rootServerID}`
+      const offset = preservePinned && current[rootKey] && laidOut[rootKey]
+        ? { x: current[rootKey].x - laidOut[rootKey].x, y: current[rootKey].y - laidOut[rootKey].y }
+        : { x: 0, y: 0 }
+      const next = { ...current, ...Object.fromEntries(Object.entries(laidOut).map(([id, point]) => [id, { x: point.x + offset.x, y: point.y + offset.y }])) }
+      const primaryIDs = new Set(builtFlowContent.edges.filter(edge => (edge.data as GraphTransportEdgeData | undefined)?.routingClass === 'primary').flatMap(edge => [edge.source, edge.target]))
+      const fixed = new Set<string>()
+      if (preservePinned) builtFlowContent.nodes.forEach(node => {
+        const staging = !primaryIDs.has(node.id) && !node.id.startsWith('entry-') && node.id !== `server-${rootServerID}`
+        if (current[node.id] && (pinnedGraphNodes.current.has(node.id) || staging)) {
+          next[node.id] = current[node.id]
+          fixed.add(node.id)
+        }
+      })
+      const resolved = resolveGraphNodeCollisions(builtFlowContent.nodes.map(node => ({
+        id: node.id,
+        width: numericNodeStyle(node, 'width') || GRAPH_ENTRY_NODE_WIDTH,
+        height: estimatedGraphNodeHeight(node),
+      })), next, fixed)
+      saveGraphPositions(resolved)
+      return resolved
     })
     return true
   }
   // The toolbox action is a deliberate reset: it drops every pin so the whole
   // canvas returns to the computed layout.
   const autoArrangeGraph = () => {
-    pinnedGraphNodes.current = new Set()
-    savePinnedGraphNodes([])
+    builtFlowContent.nodes.forEach(node => pinnedGraphNodes.current.delete(node.id))
+    savePinnedGraphNodes(pinnedGraphNodes.current)
     if (!relayoutGraph(false)) return
     if (selected?.id) saveGraphLayoutSignature(selected.id, graphStructureSignatureRef.current)
     window.setTimeout(() => fitGraphToSafeArea(280), 40)
@@ -11438,11 +11502,41 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     pendingServerSafeFit.current = nextServerID
     setSelectedServer(nextServerID)
   }
-  const placeGraphNode = (id: string, position: GraphPosition) => {
-    const next = { ...positions, [id]: snapGraphPosition(position) }
-    setPositions(next)
-    saveGraphPositions(next)
+  const placeGraphNode = (id: string, position: GraphPosition, pin = false) => {
+    pendingNodeReveal.current = { nodeID: id, rootID: selected?.id || 0 }
+    if (pin) {
+      pinnedGraphNodes.current.add(id)
+      savePinnedGraphNodes(pinnedGraphNodes.current)
+    }
+    setPositions(current => {
+      const next = { ...current, [id]: snapGraphPosition(position) }
+      saveGraphPositions(next)
+      return next
+    })
   }
+  useEffect(() => {
+    const pending = pendingNodeReveal.current
+    if (!flowInstance || !pending || pending.rootID !== selected?.id || !builtFlow.nodes.some(node => node.id === pending.nodeID)) return
+    const timer = window.setTimeout(() => {
+      if (activeCanvasID.current !== pending.rootID) return
+      const node = flowInstance.getNode(pending.nodeID)
+      const canvas = workspaceRef.current?.querySelector('.proxy-flow')?.getBoundingClientRect()
+      if (!node || !canvas) return
+      const start = flowInstance.flowToScreenPosition(node.position)
+      const width = node.width || numericNodeStyle(node, 'width') || GRAPH_ENTRY_NODE_WIDTH
+      const height = node.height || estimatedGraphNodeHeight(node)
+      const end = flowInstance.flowToScreenPosition({ x: node.position.x + width, y: node.position.y + height })
+      const toolbox = !isToolbarCollapsed ? toolboxRef.current?.getBoundingClientRect() : null
+      const left = Math.max(canvas.left + 24, toolbox && toolbox.left < canvas.left + canvas.width / 2 ? toolbox.right + 24 : 0)
+      if (start.x < left || start.y < canvas.top + 76 || end.x > canvas.right - 24 || end.y > canvas.bottom - 76) {
+        const viewport = flowInstance.getViewport()
+        const center = { x: node.position.x + width / 2, y: node.position.y + height / 2 }
+        void flowInstance.setViewport({ zoom: viewport.zoom, x: (left + canvas.right - 24) / 2 - canvas.left - center.x * viewport.zoom, y: canvas.height / 2 - center.y * viewport.zoom }, { duration: 220 })
+      }
+      pendingNodeReveal.current = null
+    }, 40)
+    return () => window.clearTimeout(timer)
+  }, [builtFlow, flowInstance, selected?.id])
   const onNodesChange = (changes: NodeChange[]) => setNodes(nds => {
     const next = applyNodeChanges(changes, nds)
     return next
@@ -11462,9 +11556,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  // here until the operator resets the layout from the toolbox.
 	  pinnedGraphNodes.current.add(node.id)
 	  savePinnedGraphNodes(pinnedGraphNodes.current)
-	  const next = { ...positions, [node.id]: dropped }
-	  setPositions(next)
-	  saveGraphPositions(next)
+	  setPositions(current => {
+      const next = { ...current, [node.id]: dropped }
+      saveGraphPositions(next)
+      return next
+    })
 	}
 	const onEdgesChange = (changes: EdgeChange[]) => setEdges(eds => applyEdgeChanges(changes, eds))
 	const graphEntity = (id: string) => nodes.find(n => n.id === id)?.data?.entity as GraphEntity | undefined
@@ -11501,10 +11597,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	}
 	const getPreferredViewportNewNodePosition = (width = 260, height = 140): GraphPosition => {
 	  let bounds = { left: 100, top: 100, right: 900, bottom: 600 }
-	  if (workspaceRef.current) {
-	    const rect = workspaceRef.current.getBoundingClientRect()
-	    bounds = { left: rect.left + 40, top: rect.top + 40, right: rect.right - 40, bottom: rect.bottom - 40 }
-	  }
+	  const canvas = workspaceRef.current?.querySelector('.proxy-flow')
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect()
+      const toolbox = !isToolbarCollapsed ? toolboxRef.current?.getBoundingClientRect() : null
+      bounds = { left: rect.left + 32, top: rect.top + 76, right: rect.right - 32, bottom: rect.bottom - 76 }
+      if (toolbox && toolbox.left < rect.left + rect.width / 2) bounds.left = Math.min(rect.right - 120, Math.max(bounds.left, toolbox.right + 24))
+    }
 	  let topLeft = { x: 100, y: 100 }
 	  let bottomRight = { x: 900, y: 600 }
 	  if (flowInstance?.screenToFlowPosition) {
@@ -11519,12 +11618,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    width: node.width || Number.parseFloat(String(node.style?.width || '')) || width,
 	    height: node.height || Number.parseFloat(String(node.style?.height || '')) || height,
 	  }))
-	  const isOpen = (pos: GraphPosition) => occupied.every(rect => (
-	    pos.x + width + 24 <= rect.x ||
-	    rect.x + rect.width + 24 <= pos.x ||
-	    pos.y + height + 20 <= rect.y ||
-	    rect.y + rect.height + 20 <= pos.y
-	  ))
 	  // A new block belongs under the chain it is about to join, not wherever the
 	  // canvas happens to be panned. The topology anchor is only abandoned when it
 	  // would drop the block outside what the operator can currently see.
@@ -11540,22 +11633,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    && graphAnchor.x + width > topLeft.x && graphAnchor.x < bottomRight.x
 	    && graphAnchor.y + height > topLeft.y && graphAnchor.y < bottomRight.y)
 	  const origin = anchorVisible && graphAnchor ? graphAnchor : { x: viewportCenterX, y: viewportStartY }
-	  const columnStep = width + GRAPH_LAYER_SIBLING_GAP
-	  const rowStep = height + 60
-	  // Outward spiral: straight below the anchor first, then alternating sides,
-	  // then the next row down.
-	  for (let row = 0; row < 6; row++) {
-	    for (let column = 0; column <= row + 2; column++) {
-	      for (const direction of column === 0 ? [1] : [1, -1]) {
-	        const candidate = snapGraphPosition({
-	          x: origin.x + direction * column * columnStep,
-	          y: origin.y + row * rowStep,
-	        })
-	        if (isOpen(candidate)) return candidate
-	      }
-	    }
-	  }
-	  return snapGraphPosition(origin)
+    return snapGraphPosition(findCanvasPlacement(origin, { width, height }, occupied, {
+      x: topLeft.x, y: topLeft.y,
+      width: Math.max(0, bottomRight.x - topLeft.x), height: Math.max(0, bottomRight.y - topLeft.y),
+    }))
 	}
 
 	const putImportedOnCanvas = (node: ExternalOutbound) => {
@@ -11623,10 +11704,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const putServerOnCanvas = (server: Server) => {
 	  const instance: CanvasServerInstance = { instance_id: `${server.id}-${Date.now()}-${++canvasServerSequence.current}`, server_id: server.id }
 	  const id = canvasServerNodeID(instance)
-	  const nextInstances = [...canvasServerInstances, instance]
 	  const width = graphServerNodeWidth(1)
 	  const targetPos = getPreferredViewportNewNodePosition(width, 140)
-	  setCanvasServerInstances(nextInstances)
+	  setCanvasServerInstances(current => [...current, instance])
 	  placeGraphNode(id, targetPos)
 	}
 	const addImportedToCurrentEntry = async (node: ExternalOutbound) => {
@@ -11856,7 +11936,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    saveGraphPositions(next)
 	    return next
 	  })
-	  window.setTimeout(() => fitGraphToSafeArea(280), 40)
 	}
 	const consumeCanvasDirectTarget = (targetID: string, createdPaths: ProxyPath[]) => {
 	  if (!targetID.startsWith('direct-exit-canvas-') || !createdPaths.length) return
@@ -11923,6 +12002,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    return true
 	  }
 
+    if (sourceStep && allSteps.some(step => step.path_id === sourceStep.path_id && step.position > sourceStep.position)) {
+      await dialogs.alert({ title: '这个起点已有后续节点', message: '请选择链路末端继续连接，或先断开这个起点的后续链段。不会把所选链段静默追加到另一处。' })
+      return true
+    }
 	  let pathID = sourcePath?.id || 0
 	  let inboundID = sourcePath?.inbound_id || sourceEntry?.id || 0
 	  let nextPosition = sourcePath
@@ -12057,6 +12140,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			    const sources = await chooseGraphConnectionSources(conn.source, sourceEntity, sourceTitle)
 			    if (!sources?.length) return
 			    if (targetEntity?.type === 'detached-step') {
+              if (sources.length !== 1) return dialogs.alert({ title: '请选择一个连接起点', message: '未连接链段只能恢复到一个起点。请从对应入口或路径的连接点重新连接。' })
 			      await reconnectDetachedChain(sources[0], conn.target)
 			      return
 			    }
@@ -12254,7 +12338,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   // React Flow does not await onConnect, so a rejected request would otherwise
   // surface only as an unhandled rejection in the console.
   const onConnect = (conn: Connection) => {
+    connectionCompleted.current = true
+    const issue = graphConnectionIssue(conn, edgesRef.current, connectionBusy.current)
+    if (issue) { setConnectionHint(issue); return }
     if (!conn.source || !conn.target) return
+    connectionBusy.current = true
+    setConnectionHint('')
     const provisionalID = `provisional-${conn.source}-${conn.sourceHandle || ''}-${conn.target}-${Date.now()}`
     setProvisionalEdges(current => [...current, {
       id: provisionalID,
@@ -12267,7 +12356,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       .catch(async (error: any) => {
         await dialogs.alert({ title: '连接失败', message: localizeErrorMessage(error?.message || error) })
       })
-      .finally(() => setProvisionalEdges(current => current.filter(edge => edge.id !== provisionalID)))
+      .finally(() => {
+        connectionBusy.current = false
+        setProvisionalEdges(current => current.filter(edge => edge.id !== provisionalID))
+      })
   }
   const addServer = (position?: GraphPosition) => {
     serverDraftPosition.current = position || getPreferredViewportNewNodePosition(280, 160)
@@ -12320,7 +12412,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const result = await client.request('/inbounds', { method: 'POST', body: JSON.stringify(body) }) as { inbound?: Inbound }
 	      applyMutationResult(result)
       if (result.inbound?.id) {
-        placeGraphNode(`entry-${result.inbound.id}`, __graphPosition || nextEntryGraphPosition(data, positions, Number(body.server_id), selected?.id || Number(body.server_id)))
+        placeGraphNode(`entry-${result.inbound.id}`, __graphPosition || nextEntryGraphPosition(data, positions, Number(body.server_id), selected?.id || Number(body.server_id)), Boolean(__graphPosition))
       }
 	      setEntryDraft(null)
 	      reconcileTopology()
@@ -12930,6 +13022,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const onNodeClick = (event: React.MouseEvent, node: Node) => {
 	    if (suppressGraphClickRef.current || event.detail > 1 || isGraphHandleTarget(event.target)) return
 	    const { entity, pathIDs } = selectGraphItem(node)
+      if (entity) setSelectedGraphItem({ entity, pathIDs, source: 'node' })
 	    if (entity && graphPointerIsCoarse(event)) openGraphContextMenu(event.clientX, event.clientY, entity, pathIDs, 'node')
 	    else setGraphMenu(null)
 	  }
@@ -12968,6 +13061,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const onEdgeClick = (event: React.MouseEvent, edge: Edge) => {
 	    if (suppressGraphClickRef.current || event.detail > 1) return
 	    const { entity, pathIDs } = selectGraphItem(edge)
+      if (entity) setSelectedGraphItem({ entity, pathIDs, source: 'edge' })
 	    if (entity && graphPointerIsCoarse(event)) openGraphContextMenu(event.clientX, event.clientY, entity, pathIDs, 'edge')
 	    else setGraphMenu(null)
 	  }
@@ -12976,6 +13070,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  const clearGraphSelection = () => {
 	    dismissGraphMenu()
+      setSelectedGraphItem(null)
+      setConnectionHint('')
 	    setFocusedPathID(0)
 	    setHoveredGraphFocus(undefined)
 	  }
@@ -13027,11 +13123,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     return []
   }
   const deleteGraphMenuEntity = async () => {
+    if (pendingGraphNodeIDs.length) return
     const entity = graphMenu?.entity
     setGraphMenu(null)
     if (entity) await withGraphPending(graphEntityNodeIDs(entity), () => deleteGraphEntity(entity))
   }
 	const disconnectGraphMenuEdge = async () => {
+    if (pendingGraphNodeIDs.length) return
 	  const entity = graphMenu?.entity
 	  const pathIDs = graphMenu?.pathIDs || []
 	  setGraphMenu(null)
@@ -13040,6 +13138,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const graphMenuStep = graphMenu?.entity.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id) : undefined
   const graphMenuPrimaryLabel = graphMenu ? graphEntityPrimaryActionLabel(graphMenu.entity, graphMenuStep) : ''
   const openGraphMenuEntity = async () => {
+    if (pendingGraphNodeIDs.length) return
     const entity = graphMenu?.entity
     setGraphMenu(null)
     if (!entity) return
@@ -13153,8 +13252,17 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		      className="graph-path-select"
 		      value={String(focusedPathID)}
 		      onChange={value => {
-		        setFocusedPathID(Number(value) || 0)
-		        setHoveredGraphFocus(undefined)
+            const path = visibleProxyPaths.find(item => item.id === Number(value))
+            if (path) {
+              setFocusedPathID(path.id)
+              setHoveredGraphFocus(undefined)
+              const pathNodes = flowInstance?.getNodes().filter(node => ((node.data?.pathIDs || []) as number[]).includes(path.id)) || []
+              if (pathNodes.length) void flowInstance?.fitView({ nodes: pathNodes, padding: 0.3, minZoom: 0.3, maxZoom: 1, duration: 240 })
+            } else {
+              setFocusedPathID(0)
+              setHoveredGraphFocus(undefined)
+              fitGraphToSafeArea()
+            }
 		      }}
 		      options={pathFocusOptions}
 		      selectedLabel={pathFocusLabel(focusedPath)}
@@ -13203,6 +13311,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           onNodeDoubleClick={onNodeDoubleClick} 
           onEdgesChange={onEdgesChange} 
 		  onEdgeClick={onEdgeClick}
+          onEdgeDoubleClick={(_, edge) => {
+            if (pendingGraphNodeIDs.length) return
+            const entity = edge.data?.entity as GraphEntity | undefined
+            if (entity?.type === 'proxy-path-step') void editProxyPathTransportForEntity(entity)
+          }}
 		  onEdgeMouseEnter={(_, edge) => previewGraphPaths(edge)}
 		  onEdgeMouseLeave={stopPreviewingGraphPaths}
 		  onEdgeContextMenu={onEdgeContextMenu}
@@ -13210,6 +13323,32 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  onPaneContextMenu={onPaneContextMenu}
 		  onMoveStart={dismissGraphMenu}
           onConnect={onConnect}
+          isValidConnection={connection => !graphConnectionIssue(connection, edgesRef.current, connectionBusy.current)}
+          onConnectStart={(_, params) => {
+            connectionCompleted.current = false
+            connectionStart.current = params.nodeId && params.handleType ? { nodeID: params.nodeId, handleID: params.handleId, type: params.handleType } : null
+            setConnectionHint(connectionBusy.current ? '上一条连接仍在处理中，请完成或取消后再连接。' : '')
+            setConnectingFrom(params.nodeId || '')
+          }}
+          onConnectEnd={event => {
+            const start = connectionStart.current
+            if (start && !connectionCompleted.current) {
+              const point = 'changedTouches' in event ? event.changedTouches[0] : event
+              const handle = point ? document.elementFromPoint(point.clientX, point.clientY)?.closest('.react-flow__handle') : null
+              const targetID = handle?.getAttribute('data-nodeid')
+              if (targetID) {
+                const connection = start.type === 'source'
+                  ? { source: start.nodeID, sourceHandle: start.handleID, target: targetID, targetHandle: handle?.getAttribute('data-handleid') }
+                  : { target: start.nodeID, targetHandle: start.handleID, source: targetID, sourceHandle: handle?.getAttribute('data-handleid') }
+                setConnectionHint(graphConnectionIssue(connection, edgesRef.current, connectionBusy.current) || '请从输出连接点连接到目标节点上方的输入连接点。')
+              }
+            }
+            connectionStart.current = null
+            setConnectingFrom('')
+          }}
+          onMoveEnd={(_, viewport) => { if (!pendingServerSafeFit.current) canvasViewports.current.set(activeCanvasID.current, viewport) }}
+          connectionRadius={28}
+          nodeDragThreshold={5}
           connectionLineType={ConnectionLineType.SmoothStep}
           panOnScroll={false}
           zoomOnScroll
@@ -13225,10 +13364,27 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           deleteKeyCode={null}
           proOptions={{ hideAttribution: true }}
         >
-          <Background id="minor-grid" color="var(--border-strong)" gap={20} size={1} variant={BackgroundVariant.Lines} style={{ opacity: 0.5 }} />
-          <Background id="major-grid" color="var(--muted-2)" gap={100} size={1} variant={BackgroundVariant.Lines} style={{ opacity: 0.28 }} />
-          <Controls position="bottom-right" />
+          <Background id="minor-grid" color="var(--border-strong)" gap={24} size={1} variant={BackgroundVariant.Dots} />
+          <Controls position="bottom-right" showFitView={false} showInteractive={false} />
         </ReactFlow>
+        {!initialViewportReady && <div className="graph-canvas-loading" role="status">正在整理画布…</div>}
+        <div className="graph-workbench-bar" aria-label="画布工具">
+          <span className="graph-workbench-status" role="status" aria-live="polite">
+            {provisionalEdges.length ? (transportRequest || sourceSelectionRequest ? '等待确认连接' : '正在保存连接…') : `${selectedEntries.length} 个入口 · ${visibleProxyPaths.length} 条路径`}
+          </span>
+          <button type="button" className="ghost" onClick={() => fitGraphToSafeArea()} disabled={!nodes.length} title="只调整视角，不改变节点位置"><Search size={14} />查看全图</button>
+          <button type="button" className="ghost" onClick={autoArrangeGraph} disabled={!nodes.length || pendingGraphNodeIDs.length > 0} title="整理当前画布并解除当前节点的手动固定"><Sliders size={14} />整理布局</button>
+        </div>
+        {selectedGraphItem && <div className="graph-selection-actions" aria-label="选中对象操作">
+          <strong>{selectedGraphItem.entity.label}</strong>
+          {relationTargetForEntity(selectedGraphItem.entity, selectedGraphItem.pathIDs) && <button type="button" className="ghost" onClick={() => openRelatedPaths(selectedGraphItem.entity, selectedGraphItem.pathIDs)}><Workflow size={14} />相关链路</button>}
+          <button type="button" className="ghost" disabled={pendingGraphNodeIDs.length > 0} onClick={event => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            openGraphContextMenu(rect.left, rect.bottom + 8, selectedGraphItem.entity, selectedGraphItem.pathIDs, selectedGraphItem.source)
+          }}><Edit3 size={14} />操作</button>
+          <button type="button" className="ghost icon-button" aria-label="取消选择" onClick={clearGraphSelection}><X size={14} /></button>
+        </div>}
+        {(connectionHint || connectingFrom) && <div className="graph-connection-hint" role="status">{connectionHint || '连接到目标节点上方的连接点；也可依次点击两个连接点。'}</div>}
         <ProxyGraphLegend />
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
         {graphMenu && createPopoverPortal(
@@ -13810,7 +13966,7 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
         {filteredServers.map(server => {
           const online = server.status?.toLowerCase() === 'online'
           const address = serverDefaultEntryAddress(server) || 'IP 待检测'
-          return <button type="button" className="graph-server-tile" key={`server-${server.id}`} onClick={() => onShowServer(server)} title={`${server.name} · ${regionLabel(serverRegionCode(server))} · ${online ? '在线' : labelValue(server.status || 'unknown')} · ${address}`} aria-label={`将 ${server.name} 放入画布`}>
+          return <button type="button" className="graph-server-tile" key={`server-${server.id}`} onClick={() => { onShowServer(server); closeNodePicker() }} title={`${server.name} · ${regionLabel(serverRegionCode(server))} · ${online ? '在线' : labelValue(server.status || 'unknown')} · ${address}`} aria-label={`将 ${server.name} 放入画布`}>
             <span className={`graph-palette-kind server${online ? ' online' : ''}`}><RegionFlag code={serverRegionCode(server)} size={20} /></span>
             <span className="graph-palette-copy"><strong>{server.name || `服务器 ${server.id}`}</strong><small className={online ? 'online' : ''}>{online ? '在线' : labelValue(server.status || 'unknown')}</small></span>
             <Plus size={13} className="graph-server-tile-add" aria-hidden="true" />
@@ -16515,10 +16671,7 @@ function ProxyGraphEdge({
     if (import.meta.env.DEV) console.warn('[proxy-routing] failed to route edge', id)
     return null
   }
-  const showArrow = data?.routingClass !== 'belongs'
-  const arrow = showArrow ? routeEndArrowPoints(points) : undefined
-  const drawPoints = arrow ? trimRouteEnd(points, GRAPH_EDGE_ARROW_GAP + GRAPH_EDGE_ARROW_LENGTH) : points
-  const path = curvedGraphPath(drawPoints, 24)
+  const path = curvedGraphPath(points, 24)
   const labelX = data.route?.labelPoint?.x
   const labelY = data.route?.labelPoint?.y
   let phaseHash = 0
@@ -16527,14 +16680,6 @@ function ProxyGraphEdge({
   return <>
     <path d={path} className="proxy-edge-casing" pointerEvents="none" />
     <BaseEdge id={id} path={path} style={style} interactionWidth={40} />
-    {arrow && (
-      <path
-        d={routeEndArrowPath(arrow)}
-        className="proxy-edge-arrow"
-        pointerEvents="none"
-        style={{ color: style?.stroke as string }}
-      />
-    )}
     {!data?.unhealthy && data?.focusState === 'active' && (
       <g className="edge-flow" pointerEvents="none" style={{ color: style?.stroke as string }}>
         <circle r="1.7" fill="currentColor" opacity="0.5">
@@ -17584,8 +17729,8 @@ function GraphNode({
       <div className="rf-node-header">
         <span className="rf-node-kind-icon">{Icon}</span>
         <span className="rf-node-heading">
+          <strong title={title || headerLabel}>{title || headerLabel}</strong>
           <small>{headerLabel}</small>
-          <strong>{title || headerLabel}</strong>
         </span>
         {isServer
           ? <span className={`rf-node-status ${isOnline ? 'online' : 'offline'}`}><i />{isOnline ? '在线' : '离线'}</span>

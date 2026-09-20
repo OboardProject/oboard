@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, GRAPH_LAYOUT_ALGORITHM_VERSION, GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT, GRAPH_SERVER_SLOT_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphHopFallbackPosition, graphLayoutSignature, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, snapDraggedGraphPosition, sortServerEntriesForGraph } from './layout'
+import { GRAPH_ENTRY_NODE_WIDTH, GRAPH_LAYOUT_ALGORITHM_VERSION, GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT, GRAPH_SERVER_SLOT_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphHopFallbackPosition, graphLayoutSignature, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, resolveGraphNodeCollisions, snapDraggedGraphPosition, sortServerEntriesForGraph } from './layout'
 
 describe('proxy graph server layout', () => {
   it('gives every server source one card-wide slot', () => {
@@ -121,6 +121,101 @@ describe('proxy graph server layout', () => {
     // The target handle on routing node is at: routingLeft + childWidth / 2
     const targetHandleX = routingLeft + childWidth / 2
     expect(targetHandleX).toBe(sourceHandleX)
+  })
+})
+
+describe('topology geometry regressions', () => {
+  it('uses actual node edges for a narrow parent with a wide subtree and offset target', () => {
+    const result = layoutProxyGraphTopology([
+      { id: 'root', width: 100, height: 180, handles: { out: { x: 80, y: 180 } } },
+      { id: 'child', width: 400, height: 180, handles: { in: { x: 40, y: 0 } } },
+      { id: 'leaf', width: 800, height: 180 },
+    ], [
+      { id: 'a', source: 'root', target: 'child', sourceHandle: 'out', targetHandle: 'in', pathIDs: [1] },
+      { id: 'b', source: 'child', target: 'leaf', pathIDs: [1] },
+    ], 'root', { centerX: 0 })
+    expect(result.positions.root.x).toBe(-50)
+    expect(result.positions.child.x + 40).toBe(result.positions.root.x + 80)
+    expect(result.positions.leaf.x + 400).toBe(result.positions.child.x + 200)
+    expect(result.bands.root.left).toBeLessThan(result.positions.root.x)
+  })
+
+  it('orders fanout and channel tracks by source ports rather than path IDs', () => {
+    const result = layoutProxyGraphTopology([
+      { id: 'root', width: 1000, height: 180, handles: { left: { x: 200, y: 180 }, right: { x: 800, y: 180 } } },
+      { id: 'left', width: 200, height: 180 },
+      { id: 'right', width: 300, height: 180 },
+    ], [
+      { id: 'right-edge', source: 'root', target: 'right', sourceHandle: 'right', pathIDs: [1] },
+      { id: 'left-edge', source: 'root', target: 'left', sourceHandle: 'left', pathIDs: [99] },
+    ], 'root')
+    expect(result.positions.left.x + 100).toBe(result.positions.root.x + 200)
+    expect(result.positions.right.x + 150).toBe(result.positions.root.x + 800)
+    expect(result.layerChannels[0].tracks['left-edge']).toBeLessThan(result.layerChannels[0].tracks['right-edge'])
+  })
+
+  it('balances a shared merge using both target handles, then aligns its continuation', () => {
+    const result = layoutProxyGraphTopology([
+      { id: 'root', width: 800, height: 180, handles: { l: { x: 100, y: 180 }, r: { x: 700, y: 180 } } },
+      { id: 'a', width: 100, height: 180 },
+      { id: 'b', width: 100, height: 180 },
+      { id: 'merge', width: 200, height: 180, handles: { l: { x: 20, y: 0 }, r: { x: 180, y: 0 } } },
+      { id: 'end', width: 120, height: 180 },
+    ], [
+      { id: 'ra', source: 'root', target: 'a', sourceHandle: 'l', pathIDs: [2] },
+      { id: 'rb', source: 'root', target: 'b', sourceHandle: 'r', pathIDs: [1] },
+      { id: 'am', source: 'a', target: 'merge', targetHandle: 'l', pathIDs: [2] },
+      { id: 'bm', source: 'b', target: 'merge', targetHandle: 'r', pathIDs: [1] },
+      { id: 'me', source: 'merge', target: 'end', pathIDs: [1, 2] },
+    ], 'root')
+    expect(result.ranks.merge).toBe(2)
+    expect(result.positions.merge.x).toBe((result.positions.a.x + 50 - 20 + result.positions.b.x + 50 - 180) / 2)
+    expect(result.positions.end.x + 60).toBe(result.positions.merge.x + 100)
+  })
+
+  it('packs every rank without overlap across uneven fanouts and input permutations', () => {
+    const nodes = [
+      { id: 'root', width: 180, height: 180 },
+      ...Array.from({ length: 18 }, (_, i) => ({ id: `n${i}`, width: 100 + (i % 5) * 140, height: 100 + (i % 3) * 90 })),
+    ]
+    const edges = nodes.slice(1).map((node, i) => ({
+      id: `e${i}`, source: i < 3 ? 'root' : `n${Math.floor((i - 3) / 3)}`, target: node.id, pathIDs: [18 - i],
+    }))
+    const result = layoutProxyGraphTopology(nodes, edges, 'root')
+    expect(layoutProxyGraphTopology([...nodes].reverse(), [...edges].reverse(), 'root')).toEqual(result)
+    expect(layoutProxyGraphTopology([...nodes.slice(4), ...nodes.slice(0, 4)], [...edges.slice(7), ...edges.slice(0, 7)], 'root')).toEqual(result)
+    for (const a of nodes) for (const b of nodes) {
+      if (a.id === b.id) continue
+      const p = result.positions[a.id]
+      const q = result.positions[b.id]
+      expect(p.x + a.width <= q.x || q.x + b.width <= p.x || p.y + a.height <= q.y || q.y + b.height <= p.y).toBe(true)
+    }
+  })
+})
+
+describe('pinned collision resolution', () => {
+  it('keeps pins fixed and finds the nearest free horizontal interval without mutating inputs', () => {
+    const nodes = ['pin-left', 'pin-right', 'auto', 'below'].map(id => ({ id, width: 100, height: 100 }))
+    const positions = { 'pin-left': { x: 0, y: 0 }, 'pin-right': { x: 180, y: 0 }, auto: { x: 90, y: 50 }, below: { x: 90, y: 150 } }
+    const result = resolveGraphNodeCollisions(nodes, positions, ['pin-left', 'pin-right'])
+    expect(result['pin-left']).toEqual(positions['pin-left'])
+    expect(result['pin-right']).toEqual(positions['pin-right'])
+    expect(result.auto).toEqual({ x: -148, y: 50 })
+    expect(result.below).toEqual(positions.below)
+    expect(positions.auto).toEqual({ x: 90, y: 50 })
+    expect(resolveGraphNodeCollisions([...nodes].reverse(), positions, ['pin-right', 'pin-left'])).toEqual(result)
+    expect(resolveGraphNodeCollisions(nodes, result, ['pin-left', 'pin-right'])).toEqual(result)
+  })
+
+  it('preserves overlapping pins and separates multiple unpinned cards', () => {
+    const nodes = ['p', 'q', 'a', 'b'].map(id => ({ id, width: 100, height: 100 }))
+    const positions = Object.fromEntries(nodes.map(node => [node.id, { x: 0, y: 0 }]))
+    const result = resolveGraphNodeCollisions(nodes, positions, new Set(['p', 'q']))
+    expect(result.p).toEqual(positions.p)
+    expect(result.q).toEqual(positions.q)
+    expect(result.a).toEqual({ x: -148, y: 0 })
+    expect(result.b).toEqual({ x: 148, y: 0 })
+    expect(resolveGraphNodeCollisions([], {}, [])).toEqual({})
   })
 })
 

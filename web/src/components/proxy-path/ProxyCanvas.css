@@ -1,0 +1,268 @@
+.proxy-editor-workspace {
+  --canvas-spring: cubic-bezier(0.175, 0.885, 0.32, 1.5);
+  --canvas-glass: color-mix(in srgb, var(--surface-solid) 92%, transparent);
+  --canvas-shadow: 0 8px 24px rgb(15 23 42 / 10%);
+}
+
+.flow.proxy-flow {
+  background: var(--surface-2);
+}
+
+/* React Flow owns all node, viewport and edge-label positioning. */
+.flow.proxy-flow .react-flow__node,
+.flow.proxy-flow .react-flow__viewport {
+  transition: opacity 140ms ease;
+  animation: none;
+}
+
+.flow.proxy-flow .react-flow__node.graph-node .graph-node-inner {
+  transform: none;
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.flow.proxy-flow .proxy-graph-node-wrapper {
+  animation: canvas-card-in 160ms ease-out;
+}
+
+@keyframes canvas-card-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.flow.proxy-flow .rf-node-custom {
+  border-color: var(--border-strong);
+  border-style: solid;
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+  box-shadow: 0 2px 5px rgb(15 23 42 / 4%), 0 10px 24px rgb(15 23 42 / 4%);
+}
+
+.flow.proxy-flow .direct-exit-card { --graph-node-accent: var(--graph-direct); }
+.flow.proxy-flow .warp-exit-card { --graph-node-accent: var(--graph-wireguard); }
+.flow.proxy-flow .routing-exit-card { --graph-node-accent: var(--graph-forward); }
+
+.flow.proxy-flow :is(.direct-exit-card, .warp-exit-card, .routing-exit-card) {
+  border-color: var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+  box-shadow: 0 2px 5px rgb(15 23 42 / 4%), 0 10px 24px rgb(15 23 42 / 4%);
+}
+
+.flow.proxy-flow .react-flow__node:hover :is(.rf-node-custom, .direct-exit-card, .warp-exit-card, .routing-exit-card) {
+  border-color: var(--graph-node-accent);
+  box-shadow: 0 4px 14px rgb(15 23 42 / 10%);
+}
+
+.flow.proxy-flow .react-flow__node:is(.selected, :focus-visible) :is(.rf-node-custom, .direct-exit-card, .warp-exit-card, .routing-exit-card) {
+  border-color: var(--graph-node-accent);
+  outline: 2px solid var(--graph-node-accent);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--graph-node-accent) 12%, transparent);
+}
+
+.flow.proxy-flow .react-flow__node.graph-node-pending .rf-node-custom {
+  animation: none;
+  border-color: var(--primary);
+  border-style: dashed;
+}
+
+.flow.proxy-flow .rf-node-header {
+  border-bottom-color: var(--border);
+  background: transparent;
+}
+.flow.proxy-flow .rf-node-heading strong { color: var(--text-primary); font-size: 14px; font-weight: 650; line-height: 1.35; }
+.flow.proxy-flow .rf-node-heading small { color: var(--muted); font-size: 10px; font-weight: 500; line-height: 1.2; }
+.flow.proxy-flow .rf-node-kind-icon { border-color: transparent; background: var(--surface-2); border-radius: 10px; }
+.flow.proxy-flow .rf-node-status { border-color: transparent; background: transparent; font-weight: 500; }
+.flow.proxy-flow .rf-node-protocol { color: var(--muted); background: var(--surface-2); border-color: transparent; font-weight: 550; }
+.flow.proxy-flow .role-chip { color: var(--muted); background: var(--surface-2); border-color: transparent; font-weight: 500; }
+.flow.proxy-flow .role-foreign { color: var(--primary); }
+.flow.proxy-flow .rf-node-detail code { background: none; border: none; color: var(--text-primary); font-weight: 450; }
+.flow.proxy-flow :is(.direct-exit-icon, .warp-exit-icon, .routing-exit-icon) { background: var(--surface-2); border-color: transparent; box-shadow: none; }
+.flow.proxy-flow :is(.direct-exit-copy, .warp-exit-copy, .routing-exit-copy) strong { color: var(--text-primary); font-weight: 650; }
+.flow.proxy-flow :is(.direct-exit-copy, .warp-exit-copy, .routing-exit-copy) small { color: var(--muted); font-weight: 500; }
+.flow.proxy-flow :is(.direct-exit-state, .warp-exit-state, .routing-exit-state) { color: var(--muted); background: transparent; }
+.flow.proxy-flow .react-flow__edge.proxy-transport-edge .react-flow__edge-path { stroke-width: 2px; }
+.flow.proxy-flow :is(.rf-node-body, .rf-node-metrics, .rf-node-footnote) { color: var(--text-secondary); }
+
+.flow.proxy-flow .react-flow__node.graph-node.path-focus-muted { opacity: .3; }
+.flow.proxy-flow .react-flow__node.graph-node.path-focus-context { opacity: .58; }
+.flow.proxy-flow .react-flow__node.graph-node:is(:hover, .selected, :focus-within) { opacity: 1; }
+.flow.proxy-flow .react-flow__edge.proxy-transport-edge.path-focus-muted { opacity: .14; }
+.flow.proxy-flow .react-flow__edge.proxy-transport-edge.path-focus-context { opacity: .4; }
+.flow.proxy-flow .react-flow__edge.proxy-transport-edge .react-flow__edge-path { filter: none; }
+.flow.proxy-flow .react-flow__edge.proxy-transport-edge:is(.selected, :hover) .react-flow__edge-path {
+  stroke-width: 3px !important;
+}
+
+.flow.proxy-flow .proxy-edge-label {
+  border-color: var(--border);
+  background: var(--surface-solid);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 6%);
+  color: var(--text-secondary);
+  font-weight: 600;
+  transition: opacity 140ms ease, border-color 160ms ease, background 160ms ease;
+}
+.flow.proxy-flow .proxy-edge-label.path-focus-muted { opacity: .25; pointer-events: all; }
+.flow.proxy-flow .proxy-edge-label.path-focus-context { opacity: .5; }
+.flow.proxy-flow .proxy-edge-label:is(:hover, :focus-visible, .path-focus-active) {
+  opacity: 1;
+  color: var(--text-strong);
+  border-color: var(--primary);
+}
+
+/* Expand hit targets without moving the measured port centres. */
+.flow.proxy-flow .react-flow__handle:not(.server-entry-target-handle)::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: transparent;
+}
+.flow.proxy-flow .react-flow__handle:not(.server-entry-target-handle):is(:hover, .connecting, .valid) {
+  opacity: 1 !important;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+.flow.proxy-flow .react-flow__handle:not(.server-entry-target-handle):is(:hover, .connecting, .valid)::after {
+  width: 12px !important;
+  height: 12px !important;
+  opacity: 1 !important;
+}
+.flow.proxy-flow .react-flow__handle.valid {
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 25%, transparent);
+}
+.flow.proxy-flow .react-flow__handle.valid::after { background: var(--success) !important; }
+.flow.proxy-flow .react-flow__node.server-graph-node .connect-target-top:is(:hover, .connecting, .valid) {
+  background: var(--primary) !important;
+}
+
+.graph-toolbox,
+.graph-workbench-bar,
+.graph-selection-actions,
+.graph-connection-hint,
+.graph-canvas-loading,
+.proxy-flow .proxy-graph-legend {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--canvas-glass, var(--surface-solid));
+  color: var(--text);
+  box-shadow: var(--canvas-shadow, 0 8px 24px rgb(15 23 42 / 10%));
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+.graph-toolbox-section { border-top-color: color-mix(in srgb, var(--border) 75%, transparent); }
+.graph-toolbox :is(.graph-tool, .graph-server-tile) { box-shadow: none; }
+
+.graph-workbench-bar {
+  position: absolute;
+  z-index: 12;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: calc(100% - 76px);
+  padding: 6px 8px;
+  pointer-events: auto;
+}
+.graph-workbench-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.graph-workbench-status strong { color: var(--text-strong); font-weight: 650; }
+.graph-workbench-status svg { flex-shrink: 0; color: var(--primary); }
+.proxy-flow:has(.graph-workbench-bar) .proxy-graph-legend { top: 70px; }
+
+.graph-selection-actions {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 6px;
+  pointer-events: auto;
+}
+.graph-selection-actions :is(strong, span) { overflow-wrap: anywhere; }
+.graph-selection-actions > strong { padding-inline: 5px; font-size: 11px; }
+
+.graph-connection-hint,
+.graph-canvas-loading {
+  position: absolute;
+  z-index: 13;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.graph-connection-hint { bottom: 74px; border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); }
+.graph-canvas-loading { top: 45%; }
+
+:is(.graph-toolbox, .graph-workbench-bar, .graph-selection-actions) button {
+  transition: transform 180ms var(--canvas-spring, cubic-bezier(0.175, 0.885, 0.32, 1.5)), background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+:is(.graph-toolbox, .graph-workbench-bar, .graph-selection-actions) button:active:not(:disabled) {
+  transform: scale(.97) translateY(1px);
+}
+:is(.graph-workbench-bar, .graph-selection-actions) button {
+  min-height: 30px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  box-shadow: none;
+}
+:is(.graph-toolbox, .graph-workbench-bar, .graph-selection-actions) button:focus-visible,
+.proxy-flow .proxy-edge-label:focus-visible,
+.proxy-flow .proxy-graph-legend summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+@media (max-width: 600px) {
+  .graph-workbench-bar { top: 8px; right: 8px; gap: 4px; max-width: calc(100% - 72px); }
+  .graph-workbench-status { flex-basis: 100%; justify-content: flex-end; }
+  .proxy-flow:has(.graph-workbench-bar) .proxy-graph-legend { top: 112px; right: 8px; }
+  .graph-selection-actions { max-width: calc(100vw - 40px); }
+  .graph-connection-hint { bottom: 104px; }
+}
+
+@media (pointer: coarse) {
+  :is(.graph-workbench-bar, .graph-selection-actions) button { min-height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow.proxy-flow .proxy-graph-node-wrapper,
+  .flow.proxy-flow .react-flow__node,
+  .flow.proxy-flow .react-flow__viewport,
+  .flow.proxy-flow .react-flow__handle,
+  .flow.proxy-flow .react-flow__handle::after,
+  .flow.proxy-flow .react-flow__edge,
+  .flow.proxy-flow .proxy-edge-label,
+  .flow.proxy-flow .rf-node-custom,
+  .flow.proxy-flow .react-flow__node.graph-node .graph-node-inner,
+  :is(.graph-toolbox, .graph-workbench-bar, .graph-selection-actions) button {
+    animation: none;
+    transition: none;
+  }
+  .flow.proxy-flow .edge-flow { display: none; }
+}

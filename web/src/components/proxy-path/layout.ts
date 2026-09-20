@@ -134,7 +134,7 @@ export function saveGraphLayoutSignature(rootServerID: number, signature: string
 // spacing. Stored signatures then stop matching and every canvas recomputes
 // once. A purely structural fingerprint cannot notice this on its own: the
 // topology is identical, only the geometry it should produce has changed.
-export const GRAPH_LAYOUT_ALGORITHM_VERSION = 2
+export const GRAPH_LAYOUT_ALGORITHM_VERSION = 3
 
 /** Structural fingerprint of one canvas: which nodes exist and how the primary
  *  chain connects them. Coordinates deliberately do not participate, so moving
@@ -254,7 +254,10 @@ export function layoutProxyGraphTopology(
     indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1)
   })
   incoming.forEach(nodeEdges => nodeEdges.sort(compareLayoutEdges))
-  outgoing.forEach(nodeEdges => nodeEdges.sort(compareLayoutEdges))
+  outgoing.forEach(nodeEdges => nodeEdges.sort((left, right) =>
+    getNodeHandleOffsetX(nodeByID.get(left.source), left.sourceHandle)
+      - getNodeHandleOffsetX(nodeByID.get(right.source), right.sourceHandle)
+      || compareLayoutEdges(left, right)))
 
   const ready = orderedNodes.filter(node => indegree.get(node.id) === 0).map(node => node.id).sort()
   const topological: string[] = []
@@ -308,14 +311,6 @@ export function layoutProxyGraphTopology(
   }
   orderedNodes.forEach(node => spanFor(node.id))
 
-  const rootCandidates = orderedNodes
-    .filter(node => !(incoming.get(node.id)?.length))
-    .map(node => node.id)
-    .sort((left, right) => (left === rootNodeID ? -1 : right === rootNodeID ? 1 : left.localeCompare(right)))
-  const roots = rootCandidates.length ? rootCandidates : orderedNodes.map(node => node.id)
-  const totalWidth = roots.reduce((sum, nodeID) => sum + (subtreeSpans.get(nodeID) || 0), 0)
-    + Math.max(0, roots.length - 1) * subtreeGap
-  let rootCursor = centerX - totalWidth / 2
   function getNodeHandleOffsetX(node: ProxyLayoutNode | undefined, handleID?: string): number {
     if (!node) return 0
     if (handleID && node.handles?.[handleID] && Number.isFinite(node.handles[handleID].x)) {
@@ -325,59 +320,52 @@ export function layoutProxyGraphTopology(
   }
 
   const bands: Record<string, GraphBranchBand> = {}
-  const assignBand = (nodeID: string, left: number, right: number) => {
-    if (bands[nodeID]) return
-    const center = (left + right) / 2
-    bands[nodeID] = { nodeID, left, right, centerX: center, rank: ranks[nodeID] || 0 }
-    const parentNode = nodeByID.get(nodeID)
-    const children = spanningChildren.get(nodeID) || []
-    if (!children.length) return
+  const nodeLeft = (nodeID: string) => bands[nodeID].centerX - nodeByID.get(nodeID)!.width / 2
+  const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length
+  const rankOrder = [...new Set(Object.values(ranks))].sort((a, b) => a - b)
+  for (const rank of rankOrder) {
+    const layer = orderedNodes.filter(node => ranks[node.id] === rank).map(node => {
+      const parents = (incoming.get(node.id) || []).filter(edge => bands[edge.source] && ranks[edge.source] < rank)
+      const anchors = parents.map(edge => nodeLeft(edge.source) + getNodeHandleOffsetX(nodeByID.get(edge.source), edge.sourceHandle))
+      return {
+        node,
+        width: subtreeSpans.get(node.id) || node.width,
+        order: anchors.length ? mean(anchors) : centerX,
+        desired: anchors.length
+          ? mean(parents.map((edge, index) => anchors[index] - getNodeHandleOffsetX(node, edge.targetHandle) + node.width / 2))
+          : centerX,
+        edge: parents[0],
+      }
+    }).sort((a, b) => a.order - b.order
+      || (a.edge && b.edge ? compareLayoutEdges(a.edge, b.edge) : 0)
+      || (a.node.id === rootNodeID ? -1 : b.node.id === rootNodeID ? 1 : a.node.id.localeCompare(b.node.id)))
 
-    if (children.length === 1) {
-      const edge = children[0]
-      const childWidth = subtreeSpans.get(edge.target) || nodeByID.get(edge.target)?.width || 0
-      const anchorX = left + getNodeHandleOffsetX(parentNode, edge.sourceHandle)
-      const childLeft = anchorX - childWidth / 2
-      assignBand(edge.target, childLeft, childLeft + childWidth)
-      return
-    }
-
-    const initialPositions = children.map(edge => {
-      const width = subtreeSpans.get(edge.target) || nodeByID.get(edge.target)?.width || 0
-      const anchorX = left + getNodeHandleOffsetX(parentNode, edge.sourceHandle)
-      return { edge, width, anchorX, left: anchorX - width / 2 }
+    // Project desired centres onto non-overlapping subtree slots. Pooling adjacent
+    // violations preserves port order and shares displacement instead of pushing
+    // every later sibling right. All incoming handles contribute at a DAG merge.
+    const offsets: number[] = []
+    const blocks: { start: number; end: number; sum: number; count: number }[] = []
+    layer.forEach((item, index) => {
+      offsets[index] = index === 0 ? 0 : offsets[index - 1] + (layer[index - 1].width + item.width) / 2 + subtreeGap
+      blocks.push({ start: index, end: index, sum: item.desired - offsets[index], count: 1 })
+      while (blocks.length > 1) {
+        const right = blocks[blocks.length - 1]
+        const left = blocks[blocks.length - 2]
+        if (left.sum / left.count <= right.sum / right.count) break
+        left.end = right.end
+        left.sum += right.sum
+        left.count += right.count
+        blocks.pop()
+      }
     })
-
-    for (let i = 1; i < initialPositions.length; i++) {
-      const prevRight = initialPositions[i - 1].left + initialPositions[i - 1].width
-      if (initialPositions[i].left < prevRight + subtreeGap) {
-        initialPositions[i].left = prevRight + subtreeGap
+    for (const block of blocks) {
+      for (let index = block.start; index <= block.end; index++) {
+        const { node, width } = layer[index]
+        const center = block.sum / block.count + offsets[index]
+        bands[node.id] = { nodeID: node.id, left: center - width / 2, right: center + width / 2, centerX: center, rank }
       }
     }
-
-    const totalGroupWidth = (initialPositions[initialPositions.length - 1].left + initialPositions[initialPositions.length - 1].width) - initialPositions[0].left
-    const avgAnchorX = (initialPositions[0].anchorX + initialPositions[initialPositions.length - 1].anchorX) / 2
-    const groupCenter = initialPositions[0].left + totalGroupWidth / 2
-    const centerShift = avgAnchorX - groupCenter
-    initialPositions.forEach(item => {
-      item.left += centerShift
-    })
-
-    initialPositions.forEach(item => {
-      assignBand(item.edge.target, item.left, item.left + item.width)
-    })
   }
-  roots.forEach(nodeID => {
-    const width = subtreeSpans.get(nodeID) || nodeByID.get(nodeID)?.width || 0
-    assignBand(nodeID, rootCursor, rootCursor + width)
-    rootCursor += width + subtreeGap
-  })
-  orderedNodes.forEach(node => {
-    if (bands[node.id]) return
-    const width = subtreeSpans.get(node.id) || node.width
-    assignBand(node.id, rootCursor, rootCursor + width)
-    rootCursor += width + subtreeGap
-  })
 
   const maxRank = Math.max(0, ...Object.values(ranks))
   const nodesByRank = new Map<number, ProxyLayoutNode[]>()
@@ -387,8 +375,8 @@ export function layoutProxyGraphTopology(
   for (let sourceRank = 0; sourceRank < maxRank; sourceRank++) {
     const crossingEdges = edges.filter(edge => (ranks[edge.source] || 0) <= sourceRank && (ranks[edge.target] || 0) > sourceRank)
       .sort((left, right) => {
-        const leftSource = bands[left.source]?.left || 0
-        const rightSource = bands[right.source]?.left || 0
+        const leftSource = nodeLeft(left.source) + getNodeHandleOffsetX(nodeByID.get(left.source), left.sourceHandle)
+        const rightSource = nodeLeft(right.source) + getNodeHandleOffsetX(nodeByID.get(right.source), right.sourceHandle)
         if (leftSource !== rightSource) return leftSource - rightSource
         return compareLayoutEdges(left, right)
       })
@@ -416,11 +404,44 @@ export function layoutProxyGraphTopology(
   const positions = Object.fromEntries(orderedNodes.map(node => [
     node.id,
     snapGraphPosition({
-      x: (bands[node.id]?.centerX || centerX) - node.width / 2,
+      x: (bands[node.id]?.centerX ?? centerX) - node.width / 2,
       y: layerY[ranks[node.id] || 0] ?? originY,
     }),
   ]))
   return { positions, bands, ranks, layerChannels }
+}
+
+/** Keep pins fixed; move other rectangles the shortest horizontal distance into
+ * free space. Overlapping pins remain untouched because operator intent wins. */
+export function resolveGraphNodeCollisions(
+  nodes: Pick<ProxyLayoutNode, 'id' | 'width' | 'height'>[],
+  positions: Record<string, GraphPosition>,
+  pinnedIDs: Iterable<string>,
+): Record<string, GraphPosition> {
+  const result = Object.fromEntries(Object.entries(positions).map(([id, position]) => [id, { ...position }]))
+  const pinned = new Set(pinnedIDs)
+  const placed: Pick<ProxyLayoutNode, 'id' | 'width' | 'height'>[] = []
+  const ordered = nodes.filter(node => Number.isFinite(result[node.id]?.x) && Number.isFinite(result[node.id]?.y))
+    .slice().sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id))
+      || result[a.id].y - result[b.id].y || result[a.id].x - result[b.id].x || a.id.localeCompare(b.id))
+  for (const node of ordered) {
+    const position = result[node.id]
+    if (!pinned.has(node.id)) {
+      const intervals = placed.filter(other => {
+        const otherPosition = result[other.id]
+        return position.y < otherPosition.y + other.height && otherPosition.y < position.y + node.height
+      }).map(other => ({
+        left: result[other.id].x - node.width - PRIMARY_SUBTREE_GAP,
+        right: result[other.id].x + other.width + PRIMARY_SUBTREE_GAP,
+      }))
+      const candidates = [position.x, ...intervals.flatMap(interval => [interval.left, interval.right])]
+        .filter(x => intervals.every(interval => x <= interval.left || x >= interval.right))
+        .sort((a, b) => Math.abs(a - position.x) - Math.abs(b - position.x) || a - b)
+      position.x = candidates[0]
+    }
+    placed.push(node)
+  }
+  return result
 }
 
 export function minimizeGraphLayerCrossings(

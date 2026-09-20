@@ -132,6 +132,13 @@ export function TransportDialog({
   const [previewLoading, setPreviewLoading] = useState(reuseEnabled)
   const [previewError, setPreviewError] = useState('')
   const [saving, setSaving] = useState(false)
+  const savingRef = React.useRef(false)
+  const [saveError, setSaveError] = useState('')
+  const [previewKey, setPreviewKey] = useState('')
+  const [retry, setRetry] = useState(0)
+  const [requestFailed, setRequestFailed] = useState(false)
+  const sourcesKey = JSON.stringify(target.sources?.map(source => ({ inbound_id: source.inbound_id, step_id: source.step_id })) || [])
+  const sources = useMemo<ProxyPathReuseSource[]>(() => JSON.parse(sourcesKey), [sourcesKey])
   const previewHandlerRef = React.useRef(onPreview)
   previewHandlerRef.current = onPreview
 
@@ -148,7 +155,7 @@ export function TransportDialog({
   const reuseRequest = useMemo<ProxyPathReuseRequest | null>(() => {
     if (!reuseEnabled || !target.targetServerID || !target.sources) return null
     return buildProxyPathReuseRequest({
-      sources: target.sources,
+      sources,
       targetServerID: target.targetServerID,
       targetKind,
       targetInboundID,
@@ -163,28 +170,36 @@ export function TransportDialog({
       copyMode: targetKind === 'existing' ? copyMode : 'none',
       branchPathID,
     })
-  }, [reuseEnabled, target.targetServerID, target.sources, targetKind, targetInboundID, chainProtocol, chainMethod, realityServer, realityPortValue, mode, tunnelKind, sshPortValue, keepaliveValue, copyMode, branchPathID])
+  }, [reuseEnabled, target.targetServerID, sources, targetKind, targetInboundID, chainProtocol, chainMethod, realityServer, realityPortValue, mode, tunnelKind, sshPortValue, keepaliveValue, copyMode, branchPathID])
+
+  const requestKey = JSON.stringify(reuseRequest)
+  const currentPreview = previewKey === requestKey ? preview : null
 
   useEffect(() => {
     if (!reuseRequest || !previewAvailable || !previewHandlerRef.current || sshPortInvalid || keepaliveInvalid || realityInvalid || branchInvalid) {
-      setPreview(null)
+      setPreviewKey('')
       setPreviewLoading(false)
       setPreviewError('')
+      setRequestFailed(false)
       return
     }
     let active = true
     const runPreview = previewHandlerRef.current
     setPreviewLoading(true)
     setPreviewError('')
+    setRequestFailed(false)
+    setPreviewKey('')
     const timer = window.setTimeout(() => {
-      void runPreview(reuseRequest).then(result => {
+      void Promise.resolve().then(() => runPreview(reuseRequest)).then(result => {
         if (!active) return
         setPreview(result)
-        setPreviewError(result.error || '')
+        setPreviewKey(requestKey)
+        setPreviewError(result.error || (result.valid ? '' : '拓扑检查未通过，请调整连接设置。'))
       }).catch(error => {
         if (!active) return
-        setPreview(null)
-        setPreviewError(String(error?.message || error))
+        setPreviewKey('')
+        setRequestFailed(true)
+        setPreviewError(String(error?.message || error) || '拓扑检查失败，请重试。')
       }).finally(() => {
         if (active) setPreviewLoading(false)
       })
@@ -193,14 +208,14 @@ export function TransportDialog({
       active = false
       window.clearTimeout(timer)
     }
-  }, [reuseRequest, previewAvailable, sshPortInvalid, keepaliveInvalid, realityInvalid, branchInvalid])
+  }, [reuseRequest, requestKey, previewAvailable, sshPortInvalid, keepaliveInvalid, realityInvalid, branchInvalid, retry])
 
   const targetOptions = preview?.target_options || target.staticTargetOptions || []
   const generatedOptions = targetOptions.filter(option => option.kind === 'generated')
   const existingOptions = targetOptions.filter(option => option.kind === 'existing')
   const branchOptions = preview?.branch_options || []
   const selectedTarget = targetOptions.find(option => targetOptionSelected(option, targetKind, targetInboundID, chainProtocol, chainMethod))
-  const blocked = sshPortInvalid || keepaliveInvalid || realityInvalid || branchInvalid || (reuseEnabled && (previewLoading || !preview?.valid))
+  const blocked = sshPortInvalid || keepaliveInvalid || realityInvalid || branchInvalid || (reuseEnabled && (previewLoading || !currentPreview?.valid))
 
   const chooseTarget = (option: ProxyPathReuseTargetOption) => {
     if (!option.eligible) return
@@ -220,8 +235,10 @@ export function TransportDialog({
   }
 
   const submit = async () => {
-    if (blocked) return
+    if (blocked || savingRef.current) return
+    savingRef.current = true
     setSaving(true)
+    setSaveError('')
     try {
       const configJSON = buildTransportConfig({ targetKind, chainProtocol, chainMethod, realityServer, realityPort: realityPortValue, mode, tunnelKind, sshPort: sshPortValue, keepalive: keepaliveValue })
       await onSubmit({
@@ -233,7 +250,10 @@ export function TransportDialog({
         target_inbound_id: targetKind === 'existing' ? targetInboundID : undefined,
         reuse_request: reuseRequest || undefined,
       })
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error || '保存失败，请重试。'))
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
@@ -247,12 +267,12 @@ export function TransportDialog({
   ).filter(option => allowed.includes(option.value))
 
   return (
-    <MotionDialogPanel onCancel={onCancel} className="transport-dialog">
+    <MotionDialogPanel onCancel={() => { if (!savingRef.current) onCancel() }} className="transport-dialog">
       <header className="dialog-head">
         <div><h2>{target.editing ? '编辑传递方式' : '选择传递方式'}</h2><p className="muted">{target.sourceLabel} → {target.targetLabel}</p></div>
-        <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><X size={16} /></button>
+        <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><X size={16} /></button>
       </header>
-      <div className="dialog-body transport-dialog-body">
+      <fieldset disabled={saving} className="dialog-body transport-dialog-body" style={{ border: 0, margin: 0, minWidth: 0 }}>
         <div className="transport-mode-options" role="radiogroup" aria-label="传递方式">
           {modeOptions.map(option => {
             const active = mode === option.value
@@ -284,24 +304,37 @@ export function TransportDialog({
 
         {reuseEnabled && targetKind === 'existing' && <section className="transport-branch-copy">
           <div><strong>复制已有分支</strong><span className="muted">只复制启用分支，复制后独立保存。</span></div>
-          <div className="transport-copy-modes" role="radiogroup" aria-label="复制已有分支">
-            <button type="button" className={copyMode === 'none' ? 'is-active' : ''} onClick={() => { setCopyMode('none'); setBranchPathID(0) }}>不复制</button>
-            <button type="button" className={copyMode === 'all' ? 'is-active' : ''} onClick={() => { setCopyMode('all'); setBranchPathID(0) }}>全部分支</button>
-            <button type="button" className={copyMode === 'single' ? 'is-active' : ''} onClick={() => setCopyMode('single')}>单条分支</button>
+          <div className="transport-copy-modes" role="radiogroup" aria-label="复制已有分支" onKeyDown={event => {
+            const modes: BranchCopyMode[] = ['none', 'all', 'single']
+            const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
+            if (!direction || saving) return
+            event.preventDefault()
+            const next = (modes.indexOf(copyMode) + direction + modes.length) % modes.length
+            setCopyMode(modes[next])
+            setBranchPathID(0)
+            event.currentTarget.querySelectorAll<HTMLButtonElement>('button')[next]?.focus()
+          }}>
+            <button type="button" role="radio" aria-checked={copyMode === 'none'} tabIndex={copyMode === 'none' ? 0 : -1} className={copyMode === 'none' ? 'is-active' : ''} onClick={() => { setCopyMode('none'); setBranchPathID(0) }}>不复制</button>
+            <button type="button" role="radio" aria-checked={copyMode === 'all'} tabIndex={copyMode === 'all' ? 0 : -1} className={copyMode === 'all' ? 'is-active' : ''} onClick={() => { setCopyMode('all'); setBranchPathID(0) }}>全部分支</button>
+            <button type="button" role="radio" aria-checked={copyMode === 'single'} tabIndex={copyMode === 'single' ? 0 : -1} className={copyMode === 'single' ? 'is-active' : ''} onClick={() => setCopyMode('single')}>单条分支</button>
           </div>
-          {copyMode === 'single' && <div className="transport-branch-list">{branchOptions.map(branch => <label key={branch.path_id} className={!branch.eligible ? 'is-disabled' : ''}><input type="radio" name="branch-path" value={branch.path_id} checked={branchPathID === branch.path_id} disabled={!branch.eligible} onChange={() => setBranchPathID(branch.path_id)} /><span><strong>{branch.name}</strong><small>{branch.kind === 'direct' ? '直接出口' : `${branch.step_count} 个后续节点`}{branch.reason ? ` · ${branch.reason}` : ''}</small></span></label>)}</div>}
+          {branchInvalid && <small role="alert" className="transport-field-error">请选择一条可复制的分支。</small>}
+          {copyMode === 'single' && <div className="transport-branch-list" role="radiogroup" aria-label="选择分支">{branchOptions.map(branch => <label key={branch.path_id} className={!branch.eligible ? 'is-disabled' : ''}><input type="radio" name="branch-path" value={branch.path_id} checked={branchPathID === branch.path_id} disabled={!branch.eligible} onChange={() => setBranchPathID(branch.path_id)} /><span><strong>{branch.name}</strong><small>{branch.kind === 'direct' ? '直接出口' : `${branch.step_count} 个后续节点`}{branch.reason ? ` · ${branch.reason}` : ''}</small></span></label>)}</div>}
           {copyMode === 'all' && branchOptions.some(branch => !branch.eligible) && <div className="transport-invalid-branches">{branchOptions.filter(branch => !branch.eligible).map(branch => <span key={branch.path_id}><strong>{branch.name}</strong>{branch.reason || '无法复制'}</span>)}</div>}
         </section>}
 
         <div className="transport-preview">
           <span>本次变更</span>
-          <strong>{describeSelection(target, mode, selectedTarget, tunnelKind, sshPortValue, preview)}</strong>
+          <strong>{describeSelection(target, mode, selectedTarget, tunnelKind, sshPortValue, currentPreview)}</strong>
           {reuseEnabled && <div className="transport-preview-status" aria-live="polite">
-            {previewLoading ? <small className="muted">正在检查拓扑...</small> : previewError ? <small className="transport-field-error">{previewError}</small> : preview?.valid ? <small className="muted">拓扑检查通过</small> : null}
+            {previewLoading ? <small className="muted">正在检查拓扑...</small> : previewError ? <small className="transport-field-error">{previewError}</small> : currentPreview?.valid ? <small className="muted">拓扑检查通过</small> : null}
+            {!previewAvailable && <small role="alert">暂时无法检查拓扑，请关闭后重试。</small>}
+            {requestFailed && !previewLoading && <button type="button" onClick={() => setRetry(value => value + 1)}>重试检查</button>}
           </div>}
         </div>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={() => void submit()} disabled={saving || blocked}>{saving ? '保存中...' : '确定'}</button></footer>
+      </fieldset>
+      {saveError && <p role="alert" className="transport-field-error">保存失败：{saveError}</p>}
+      <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={() => void submit()} disabled={saving || blocked}>{saving ? '保存中...' : '确定'}</button></footer>
     </MotionDialogPanel>
   )
 }
