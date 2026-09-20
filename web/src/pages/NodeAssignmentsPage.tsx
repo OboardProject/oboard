@@ -622,7 +622,7 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
       </>
     </div>
 
-      <Dialog isOpen={detail !== null} onClose={() => { detailRead.current++; setDetail(null) }} title={detail ? detail.node?.name || '节点详情' : ''} size="xl" className="node-signal-dialog signal-node-detail">
+      <Dialog isOpen={detail !== null} onClose={() => { detailRead.current++; setDetail(null) }} title={detail ? detail.node?.name || '节点详情' : ''} placement="right" drawerSize="wide" className="node-signal-dialog signal-node-detail">
         {detail && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>

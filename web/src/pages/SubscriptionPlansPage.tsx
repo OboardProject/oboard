@@ -1363,7 +1363,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
         </div>
       </Dialog>
 
-      <Dialog isOpen={editOpen} onClose={() => { editSessionRef.current++; setEditOpen(false) }} title={`修改套餐：${plan?.name || ''}`} size="lg" className="signal-plan-form">
+      <Dialog isOpen={editOpen} onClose={() => { editSessionRef.current++; setEditOpen(false) }} title={`修改套餐：${plan?.name || ''}`} placement="right" drawerSize="wide" className="signal-plan-form">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <form id="edit-plan-form" className="form" onSubmit={e => { e.preventDefault(); void saveSettings() }}>
             <FormField label="名称" required>
@@ -1489,7 +1489,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
       <PlanNodeNameDialog node={nameNode} busy={nameBusy} error={nameError} onClose={() => setNameNode(null)} onSave={value => savePlanNodeName(value)} />
 
-      <Dialog isOpen={viewRevision !== null} onClose={() => setViewRevision(null)} title={viewRevision ? `版本 ${formatPlanVersion(viewRevision.revision?.created_at)} 详情` : ''} size="lg">
+      <Dialog isOpen={viewRevision !== null} onClose={() => setViewRevision(null)} title={viewRevision ? `版本 ${formatPlanVersion(viewRevision.revision?.created_at)} 详情` : ''} placement="right" drawerSize="wide">
         {viewRevision && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p className="muted" style={{ margin: 0 }}>
@@ -1518,7 +1518,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
         )}
       </Dialog>
 
-      <Dialog isOpen={historyOpen} onClose={() => setHistoryOpen(false)} title={plan ? `版本历史与变更：${plan.name}` : '版本历史'} size="lg">
+      <Dialog isOpen={historyOpen} onClose={() => setHistoryOpen(false)} title={plan ? `版本历史与变更：${plan.name}` : '版本历史'} placement="right" drawerSize="wide">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
             <h4 style={{ marginTop: 0, marginBottom: 8 }}>版本历史</h4>

@@ -136,7 +136,7 @@ export function ConfigHealthDialog({ client, canCleanup, onClose, onCleaned }: C
     void run(true)
   }
 
-  return <Dialog isOpen onClose={() => { if (!busy) onClose() }} title="配置体检" size="lg" footer={<>
+  return <Dialog isOpen onClose={() => { if (!busy) onClose() }} title="配置体检" placement="right" drawerSize="wide" footer={<>
     <button type="button" className="ghost" disabled={busy} onClick={onClose}>关闭</button>
     <button type="button" className="ghost" disabled={busy || selected.size === 0} onClick={() => void run(false)}>预览改动</button>
     <button type="button" className={destructive && confirmingDestructive ? 'danger' : ''} disabled={!canCleanup || busy || selected.size === 0} aria-busy={busy} onClick={onPrimary}>{primaryLabel}</button>

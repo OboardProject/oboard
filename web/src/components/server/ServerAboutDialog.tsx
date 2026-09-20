@@ -69,7 +69,7 @@ export function ServerAboutDialog({ server, onClose }: { server: Server; onClose
   const isOnline = String(server.status||'').toLowerCase()==='online'
   const region = serverRegionCode(server)
   return (
-    <MotionDialogPanel onCancel={onClose} className="server-detail-dialog server-about-dialog">
+    <MotionDialogPanel onCancel={onClose} className="server-detail-dialog server-about-dialog" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel={`关于 · ${server.name || `服务器 #${server.id}`}`}>
       <header className="dialog-head server-detail-head">
         <div className="server-detail-title">
           <RegionFlag code={region} size={28} />

@@ -41,7 +41,7 @@ function ServerTasksSession({ server, client, onClose }: ServerTasksDialogProps)
   })
 
   return (
-    <MotionDialogPanel onCancel={onClose} className="server-tasks-dialog server-workspace-dialog">
+    <MotionDialogPanel onCancel={onClose} className="server-tasks-dialog server-workspace-dialog" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel={`任务记录 · ${server.name || `服务器 #${server.id}`}`}>
       <header className="dialog-head">
         <div><h2>任务记录 · {server.name || `服务器 #${server.id}`}</h2><p className="muted">最近 {tasks.length} 条执行记录</p></div>
         <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭">×</button>

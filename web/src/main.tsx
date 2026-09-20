@@ -7556,7 +7556,7 @@ function AgentLogsDialog({ server, data, client, onClose }: { server: Server; da
       setOperation('')
     }
   }
-  return <MotionDialogPanel onCancel={onClose} className="logs-dialog">
+  return <MotionDialogPanel onCancel={onClose} className="logs-dialog" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel={`${server.name || '服务器'} 日志`}>
       <header className="dialog-head">
         <div><h2 id="agent-logs-title">{server.name || '服务器'} 日志</h2><p className="muted">按需拉取 Agent 和内核最近日志。内容会自动脱敏。</p></div>
         <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
@@ -7701,7 +7701,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
     }
   }
   const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide">
+  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel="添加服务器">
       <header className="dialog-head">
         <div><h2 id="server-dialog-title">添加服务器</h2><p className="muted">填写基本信息后即可创建，其余设置可按需调整。</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
@@ -7893,7 +7893,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
     }
   }
   const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide">
+  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel="服务器设置">
       <header className="dialog-head">
         <div><h2 id="server-edit-title">服务器设置</h2><p className="muted">按顶部标签设置 {server.name}。</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>

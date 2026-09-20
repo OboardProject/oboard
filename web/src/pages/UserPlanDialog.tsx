@@ -282,7 +282,8 @@ function UserPlanDialogSession({ isOpen, user, binding, plans, client, onRefresh
       isOpen={isOpen}
       onClose={onClose}
       title={`套餐与例外：${user.username}`}
-      size="xl"
+      placement="right"
+      drawerSize="wide"
       className="user-plan-dialog"
       footer={<Button variant="outline" onClick={onClose}>关闭</Button>}
     >
