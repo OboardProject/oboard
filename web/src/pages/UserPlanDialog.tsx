@@ -300,7 +300,7 @@ function UserPlanDialogSession({ isOpen, user, binding, plans, client, onRefresh
                 </Select>
                 <DateTimePicker value={startsAt} onChange={value => { draftDirty.current = true; setStartsAt(value) }} placeholder="生效时间（可选）" aria-label="生效时间" title="生效时间" />
                 <DateTimePicker value={expiresAt} onChange={value => { draftDirty.current = true; setExpiresAt(value) }} placeholder="到期时间（可选）" aria-label="到期时间" title="到期时间" />
-                <Button size="sm" disabled={!planID || applyBusy || unconfirmed} onClick={() => void applyAssignment()}>{applyBusy ? '保存中…' : '保存套餐'}</Button>
+                <Button size="sm" aria-label="保存分配" disabled={!planID || applyBusy || unconfirmed} onClick={() => void applyAssignment()}>{applyBusy ? '保存中…' : '保存套餐'}</Button>
               </div>
             </section>
             <section className="card-custom user-plan-dialog-card">
