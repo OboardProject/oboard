@@ -21,14 +21,10 @@ export function Tasks({ tasks, servers, client, loading: pageLoading }: TasksPro
   const refreshedTime = lastRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   return <Panel title="任务与部署">
     <div className="section-toolbar">
-      <div>
-        <h3>任务中心</h3>
-        <p className="muted">先看各服务器最新版本的执行结果，再按任务类型查看详情。历史重试默认折叠。</p>
-      </div>
       <div className="section-actions">
-        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : 'is-active'}`} title={hasActiveTasks ? '进行中的任务通过 HTTP 每 3 秒更新' : '任务状态通过 HTTP 每 15 秒更新'}>
+        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : 'is-active'}`} title={hasActiveTasks ? '每 3 秒更新' : '每 15 秒更新'}>
           <span className="live-refresh-dot" aria-hidden="true" />
-          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : 'HTTP 自动刷新已开启'}</span>
+          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : '自动更新'}</span>
           {refreshedTime ? <time dateTime={lastRefreshedAt?.toISOString()}>更新于 {refreshedTime}</time> : null}
         </div>
       </div>

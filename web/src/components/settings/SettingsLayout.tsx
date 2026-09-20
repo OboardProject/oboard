@@ -1,4 +1,6 @@
-import { useRef, type ReactNode } from 'react'
+import { cloneElement, isValidElement, useId, useRef, type ReactNode } from 'react'
+import { Select } from '../ui/select'
+import './signal-settings.css'
 import { ChevronDown } from 'lucide-react'
 import { Switch } from '../ui/switch'
 import { FieldHelp } from '../ui/form-field'
@@ -43,13 +45,17 @@ type SettingsRowProps = {
 }
 
 export function SettingsRow({ label, description, children, htmlFor, className = '' }: SettingsRowProps) {
+  const generatedID = useId()
+  const control = isValidElement<{ id?: string; 'aria-label'?: string }>(children) &&
+    (children.type === 'input' || children.type === 'textarea' || children.type === 'select' || children.type === Select) ? children : null
+  const controlID = htmlFor || control?.props.id || (control ? generatedID : undefined)
   return (
-    <div className={`settings-row${className ? ` ${className}` : ''}`}>
+    <div className={`settings-row signal-settings-row${className ? ` ${className}` : ''}`}>
       <div className="settings-row-copy settings-heading">
-        {htmlFor ? <label htmlFor={htmlFor}><strong>{label}</strong></label> : <strong>{label}</strong>}
+        {controlID ? <label htmlFor={controlID}><strong>{label}</strong></label> : <strong>{label}</strong>}
         {description && <FieldHelp label={typeof label === 'string' ? label : '设置项'} hint={description} placement="bottom" />}
       </div>
-      <div className="settings-row-control">{children}</div>
+      <div className="settings-row-control">{control ? cloneElement(control, { id: controlID, 'aria-label': control.props['aria-label'] || (typeof label === 'string' ? label : undefined) }) : children}</div>
     </div>
   )
 }
@@ -136,7 +142,7 @@ export function SettingsDisclosure({ title, description, summary, children, defa
   }
 
   return (
-    <details ref={detailsRef} className={`settings-disclosure${className ? ` ${className}` : ''}`} open={defaultOpen || undefined}>
+    <details ref={detailsRef} className={`settings-disclosure signal-settings-disclosure${className ? ` ${className}` : ''}`} open={defaultOpen || undefined}>
       <summary onClick={handleSummaryClick}>
         <span className="settings-disclosure-copy">
           <strong>{title}</strong>

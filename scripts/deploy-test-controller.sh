@@ -24,7 +24,7 @@ Environment:
   OBOARD_BASE_PATH=/abc Optional path prefix for every Controller endpoint.
   SSH_PORT=22           SSH port; overridden by third argument.
   OBOARD_FORCE_BUILD=1  Rebuild matching release artifact before upload.
-  OBOARD_INSTALL_SCRIPTS=1  Also install the optional script worker runtime.
+  OBOARD_INSTALL_PLUGINS=1  Also install the optional plugin worker runtime.
   OBOARD_ARTIFACT_VERSION=dev  Override artifact version, e.g. for dev builds.
   OBOARD_AGENT_RELEASE_DIR=...    Directory containing a signed Agent release.
   OBOARD_RELEASE_PUBLIC_KEY=...   Matching Ed25519 public key for that release.
@@ -174,7 +174,7 @@ upload_artifact "$artifact" "$REMOTE_TMP"
 
 echo "==> Installing and starting OBoard controller on $SSH_TARGET"
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "OBOARD_HTTP_PORT='$HTTP_PORT' OBOARD_PUBLIC_PORT='$PUBLIC_PORT' OBOARD_BASE_PATH='$BASE_PATH' OBOARD_SESSION_SECRET_NEW='$session_secret' OBOARD_ARCHIVE='$REMOTE_TMP' OBOARD_INSTALL_SCRIPTS='${OBOARD_INSTALL_SCRIPTS:-0}' bash -s" <<'REMOTE'
+  "OBOARD_HTTP_PORT='$HTTP_PORT' OBOARD_PUBLIC_PORT='$PUBLIC_PORT' OBOARD_BASE_PATH='$BASE_PATH' OBOARD_SESSION_SECRET_NEW='$session_secret' OBOARD_ARCHIVE='$REMOTE_TMP' OBOARD_INSTALL_PLUGINS='${OBOARD_INSTALL_PLUGINS:-0}' bash -s" <<'REMOTE'
 set -euo pipefail
 
 if [ "$(id -u)" != "0" ]; then
@@ -192,12 +192,12 @@ trap cleanup EXIT
 
 tar -xzf "$OBOARD_ARCHIVE" -C "$work"
 
-install_scripts=0
-case "${OBOARD_INSTALL_SCRIPTS:-0}" in
-  1|true|yes) install_scripts=1 ;;
+install_plugins=0
+case "${OBOARD_INSTALL_PLUGINS:-0}" in
+  1|true|yes) install_plugins=1 ;;
 esac
-if [ "$install_scripts" != 1 ] && [ -f /etc/systemd/system/oboard-script-worker.service ]; then
-  install_scripts=1
+if [ "$install_plugins" != 1 ] && [ -f /etc/systemd/system/oboard-plugin-worker.service ]; then
+  install_plugins=1
 fi
 
 if ! id oboard >/dev/null 2>&1; then
@@ -213,8 +213,8 @@ fi
 if [ -f "$work/bin/oboard-ai-worker" ]; then
   install -m 0755 "$work/bin/oboard-ai-worker" /opt/oboard/oboard-ai-worker
 fi
-if [ "$install_scripts" = 1 ] && [ -f "$work/bin/oboard-script-worker" ]; then
-  install -m 0755 "$work/bin/oboard-script-worker" /opt/oboard/oboard-script-worker
+if [ "$install_plugins" = 1 ] && [ -f "$work/bin/oboard-plugin-worker" ]; then
+  install -m 0755 "$work/bin/oboard-plugin-worker" /opt/oboard/oboard-plugin-worker
 fi
 rm -rf /opt/oboard/web/dist.new
 cp -R "$work/web/dist" /opt/oboard/web/dist.new
@@ -284,8 +284,8 @@ fi
 if ! grep -q '^OBOARD_AI_WORKER_SOCKET=' /opt/oboard/config/controller.env; then
   printf 'OBOARD_AI_WORKER_SOCKET=/run/oboard/ai-worker/rpc.sock\n' >> /opt/oboard/config/controller.env
 fi
-if ! grep -q '^OBOARD_SCRIPT_WORKER_SOCKET=' /opt/oboard/config/controller.env; then
-  printf 'OBOARD_SCRIPT_WORKER_SOCKET=/run/oboard/script-worker/rpc.sock\n' >> /opt/oboard/config/controller.env
+if ! grep -q '^OBOARD_PLUGIN_WORKER_SOCKET=' /opt/oboard/config/controller.env; then
+  printf 'OBOARD_PLUGIN_WORKER_SOCKET=/run/oboard/plugin-worker/rpc.sock\n' >> /opt/oboard/config/controller.env
 fi
 if ! grep -q '^OBOARD_BACKUP_DIR=' /opt/oboard/config/controller.env; then
   printf 'OBOARD_BACKUP_DIR=/opt/oboard/data/backups\n' >> /opt/oboard/config/controller.env
@@ -296,8 +296,8 @@ cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-c
 if [ -f "$work/deploy/systemd/oboard-ai-worker.service" ]; then
   cp "$work/deploy/systemd/oboard-ai-worker.service" /etc/systemd/system/oboard-ai-worker.service
 fi
-if [ "$install_scripts" = 1 ] && [ -f "$work/deploy/systemd/oboard-script-worker.service" ]; then
-  cp "$work/deploy/systemd/oboard-script-worker.service" /etc/systemd/system/oboard-script-worker.service
+if [ "$install_plugins" = 1 ] && [ -f "$work/deploy/systemd/oboard-plugin-worker.service" ]; then
+  cp "$work/deploy/systemd/oboard-plugin-worker.service" /etc/systemd/system/oboard-plugin-worker.service
 fi
 if [ -f "$work/deploy/systemd/oboard-controller-updater.service" ]; then
   cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
@@ -313,9 +313,9 @@ if [ -f /etc/systemd/system/oboard-ai-worker.service ]; then
   systemctl enable oboard-ai-worker >/dev/null
   systemctl restart oboard-ai-worker
 fi
-if [ "$install_scripts" = 1 ] && [ -f /etc/systemd/system/oboard-script-worker.service ]; then
-  systemctl enable oboard-script-worker >/dev/null
-  systemctl restart oboard-script-worker
+if [ "$install_plugins" = 1 ] && [ -f /etc/systemd/system/oboard-plugin-worker.service ]; then
+  systemctl enable oboard-plugin-worker >/dev/null
+  systemctl restart oboard-plugin-worker
 fi
 sleep 1
 systemctl --no-pager --full status oboard-controller | sed -n '1,18p'

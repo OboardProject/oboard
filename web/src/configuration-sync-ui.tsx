@@ -1,5 +1,5 @@
-import { useEffect, useId, useMemo, useState } from 'react'
-import { AlertTriangle, Check, Info, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Info, RefreshCw } from 'lucide-react'
 
 import { Dialog } from './components/ui/dialog'
 import { configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailedRows, configurationSyncFailureIssues, configurationSyncPresentation, type ConfigurationSyncRow, type ConfigurationSyncServerRef } from './configuration-sync'
@@ -25,14 +25,12 @@ function serverDisplayName(serverID: number, names: Map<number, string>) {
 
 export function ConfigurationSyncStatus({ rows, saving = false, retrying = false, canOperate = true, servers = [], inbounds = [], onRetry, onNavigate, onLocateInbound }: ConfigurationSyncStatusProps) {
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const popoverID = useId()
   const presentation = configurationSyncPresentation(rows, saving, retrying, servers)
   const failed = useMemo(() => configurationSyncFailedRows(rows, servers), [rows, servers])
   const busyRows = useMemo(() => configurationSyncBusyRows(rows, servers), [rows, servers])
   const issues = useMemo(() => configurationSyncFailureIssues(failed), [failed])
   const serverNames = useMemo(() => new Map(servers.map(server => [Number(server.id), String(server.name || '').trim()])), [servers])
   const inboundByID = useMemo(() => new Map(inbounds.map(inbound => [Number(inbound.id), inbound])), [inbounds])
-  const showBusyPopover = failed.length === 0 && busyRows.length > 0
   useEffect(() => {
     if (failed.length === 0) setDetailsOpen(false)
   }, [failed.length])
@@ -53,15 +51,15 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
           <AlertTriangle size={15} aria-hidden="true" />
           <span>{presentation.label}</span>
         </button>
-        <Dialog isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} title="配置同步失败" size="lg" className="configuration-sync-dialog">
+        <Dialog isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} title="需要处理" size="lg" className="configuration-sync-dialog">
           <div id="configuration-sync-failure-dialog" className="configuration-sync-dialog-body">
             <div className="configuration-sync-summary">
               <AlertTriangle size={20} aria-hidden="true" />
               <div>
-                <strong>{issues.every(issue => issue.kind === 'busy') ? '同步准备被主控数据库写锁打断' : '最新配置在部署准备阶段被阻塞'}</strong>
+                <strong>部分配置尚未完成同步</strong>
                 <p>{issues.every(issue => issue.kind === 'busy')
-                  ? `主控在准备 ${failed.length} 个同步任务时遇到短暂写锁冲突。这不是这些服务器各自的配置错误。`
-                  : `${issues.length} 个配置问题阻塞了 ${failed.length} 个同步任务。这不表示 ${failed.length} 台服务器各自都有问题。`}</p>
+                  ? `${failed.length} 个同步任务暂时中断，不是这些服务器各自的配置错误。`
+                  : `${issues.length} 个问题影响了 ${failed.length} 个同步任务，不表示每台服务器各自都有问题。`}</p>
               </div>
             </div>
             <ol className="configuration-sync-issue-list">
@@ -92,7 +90,7 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
                     <summary>查看本轮被阻塞的同步任务</summary>
                     <ul>{issue.serverIDs.map(serverID => <li key={serverID}>{serverDisplayName(serverID, serverNames)}</li>)}</ul>
                   </details>
-                  {issue.rawError && <details><summary>查看原始错误</summary><code>{issue.rawError}</code></details>}
+                  {issue.rawError && <details><summary>诊断详情</summary><code>{issue.rawError}</code></details>}
                   {issue.inboundID && onLocateInbound
                     ? <button type="button" className="ghost configuration-sync-target" onClick={() => { setDetailsOpen(false); onLocateInbound(issue.inboundID!) }}>定位并选中「{inboundName || `入口 #${issue.inboundID}`}」</button>
                     : onNavigate && <button type="button" className="ghost configuration-sync-target" onClick={() => { setDetailsOpen(false); onNavigate(issue.targetTab) }}>{issue.targetLabel}</button>}
@@ -112,27 +110,19 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
     )
   }
   return (
-    <div
-      className={`deploy-status-pill ${saving || presentation.busy ? 'info' : presentation.tone === 'ok' ? 'ok' : 'warn'}${showBusyPopover ? ' has-popover' : ''}`}
-      aria-live="polite"
-      aria-describedby={showBusyPopover ? popoverID : undefined}
-      tabIndex={showBusyPopover ? 0 : undefined}
-    >
-      {saving || presentation.busy ? <RefreshCw size={15} className="spin" aria-hidden="true" /> : presentation.tone === 'ok' ? <Check size={16} aria-hidden="true" /> : <Info size={16} aria-hidden="true" />}
-      <span>{presentation.label}</span>
-      {showBusyPopover && (
-        <div id={popoverID} role="tooltip" className="configuration-sync-popover">
-          <strong>正在同步的服务器</strong>
-          <ul>
-            {busyRows.map(item => (
-              <li key={item.server_id}>
-                {serverDisplayName(item.server_id, serverNames)}
-                <small>{configurationSyncBusyStateLabel(item.state)}</small>
-              </li>
-            ))}
-          </ul>
+    <>
+      <button type="button" className="deploy-status-pill details-trigger" onClick={() => setDetailsOpen(true)} aria-haspopup="dialog" aria-expanded={detailsOpen}>
+        <Info size={15} aria-hidden="true" />
+        <span>需要处理</span>
+      </button>
+      <Dialog isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} title="需要处理" size="lg" className="configuration-sync-dialog">
+        <div className="configuration-sync-dialog-body">
+          <p>当前没有需要处理的配置同步问题。</p>
+          {rows.length === 0 && <p className="muted">尚无配置同步记录，这不代表所有服务均已验证可用。</p>}
+          {busyRows.length > 0 && <details><summary>查看进行中的同步</summary><ul>{busyRows.map(item => <li key={item.server_id}>{serverDisplayName(item.server_id, serverNames)} · {configurationSyncBusyStateLabel(item.state)}</li>)}</ul></details>}
+          {onNavigate && <button type="button" className="ghost" onClick={() => { setDetailsOpen(false); onNavigate('tasks') }}>查看任务</button>}
         </div>
-      )}
-    </div>
+      </Dialog>
+    </>
   )
 }

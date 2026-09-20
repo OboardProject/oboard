@@ -34,7 +34,7 @@ type VerifyRestoreOptions struct {
 
 // VerifyRestore only prepares an isolated copy. It never commits a restore or starts Controller workers.
 func VerifyRestore(ctx context.Context, options VerifyRestoreOptions) (report RestoreVerification, err error) {
-	for _, name := range []string{"archive_format", "decryption_and_files", "version_compatibility", "database_source", "database_migration", "database_integrity", "secret_reencryption", "final_integrity", "cleanup"} {
+	for _, name := range []string{"archive_format", "decryption_and_files", "version_compatibility", "database_source", "database_migration", "database_integrity", "secret_reencryption", "plugin_webhook_reencryption", "final_integrity", "cleanup"} {
 		report.Checks = append(report.Checks, RestoreCheck{Name: name, Status: "not_run"})
 	}
 	report.Checks = append(report.Checks, RestoreCheck{Name: "offline_configuration_rebuild", Status: "unsupported"}, RestoreCheck{Name: "external_services_and_node_takeover", Status: "unsupported"})
@@ -144,6 +144,7 @@ func prepareRestore(ctx context.Context, archivePath, password, targetVersion, t
 	}{
 		{"database_integrity", func() error { return restored.CheckIntegrity(ctx) }},
 		{"secret_reencryption", func() error { return restored.RewrapEncryptedSecrets(ctx, sourceSecret, targetSecret) }},
+		{"plugin_webhook_reencryption", func() error { return restored.RestorePluginWebhooks(ctx, sourceSecret, targetSecret) }},
 		{"final_integrity", func() error { return restored.CheckIntegrity(ctx) }},
 	} {
 		if err = check(step.name, step.run()); err != nil {

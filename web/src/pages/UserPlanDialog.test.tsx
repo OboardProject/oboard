@@ -104,7 +104,8 @@ describe('UserPlanDialog', () => {
 
     expect(request).toHaveBeenCalledWith('/users/plan-assignment/apply', expect.objectContaining({ method: 'POST' }))
     expect(request.mock.calls.some(([path]) => path === '/users/plan-assignment/preview')).toBe(false)
-    expect(document.body.textContent).toContain('已保存分配：变更 #33')
+    expect(document.body.textContent).toContain('已保存套餐分配')
+    expect(document.body.textContent).not.toContain('（queued）')
   })
 
   it('does not claim a failure when the answer never came back', async () => {
@@ -218,7 +219,7 @@ describe('UserPlanDialog', () => {
     expect(request.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
     expect(refresh).toHaveBeenCalled()
     expect(document.querySelector('.user-plan-dialog')?.textContent).toContain('未绑定套餐')
-    expect(document.querySelector('.user-plan-dialog')?.textContent).toContain('已提交移除套餐（变更 #34）')
+    expect(document.querySelector('.user-plan-dialog')?.textContent).toContain('已提交移除套餐')
   })
 
   it('resolves authorization names even for denied nodes outside the effective list', async () => {
@@ -258,6 +259,19 @@ describe('UserPlanDialog', () => {
     await flushEffects()
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('服务暂时不可用')
     expect(document.querySelector('[aria-label="移除套餐 标准套餐"]')).toBeTruthy()
-    expect(confirm?.disabled).toBe(false)
+    expect(confirm?.disabled).toBe(true)
+  })
+
+  it('preserves a dirty assignment when the binding refreshes in the background', async () => {
+    const client = { request: vi.fn(async (path: string) => path.includes('/nodes') ? { nodes: [] } : { user_node_exceptions: [] }) }
+    const plans = [{ id: 1, name: '套餐一', enabled: true }, { id: 2, name: '套餐二', enabled: true }, { id: 3, name: '套餐三', enabled: true }]
+    const render = (planID: number) => root.render(<UserPlanDialog isOpen user={{ id: 7, username: 'TEST' }} binding={{ user_id: 7, plan_id: planID }} plans={plans} client={client} onClose={() => undefined} />)
+    await act(async () => render(1))
+    await flushEffects()
+    const select = document.querySelector<HTMLSelectElement>('[aria-label="分配套餐"]')!
+    act(() => { select.value = '2'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+    await act(async () => render(3))
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="分配套餐"]')?.value).toBe('2')
+    expect(document.querySelector('.user-plan-dialog')?.textContent).toContain('套餐三')
   })
 })

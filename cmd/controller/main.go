@@ -137,11 +137,11 @@ func main() {
 	if err := app.StartAIWorkerRPC(ctx, aiWorkerSocket); err != nil {
 		log.Printf("configure AI Worker RPC: %v", err)
 	}
-	scriptWorkerSocket := env("OBOARD_SCRIPT_WORKER_SOCKET", "/run/oboard/script-worker/rpc.sock")
-	if err := app.StartScriptWorkerRPC(ctx, scriptWorkerSocket); err != nil {
-		log.Printf("configure Script Worker RPC: %v", err)
+	pluginWorkerSocket := env("OBOARD_PLUGIN_WORKER_SOCKET", "/run/oboard/plugin-worker/rpc.sock")
+	if err := app.StartPluginWorkerRPC(ctx, pluginWorkerSocket); err != nil {
+		log.Printf("configure Plugin Worker RPC: %v", err)
 	}
-	go app.StartScriptScheduler(ctx)
+	go app.StartPluginScheduler(ctx)
 	app.SetControllerBackupRestart(stop)
 	if err := app.StartStealthTransport(ctx); err != nil {
 		log.Printf("stealth agent transport: %v", err)

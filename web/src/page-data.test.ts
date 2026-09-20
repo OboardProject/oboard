@@ -93,6 +93,37 @@ describe('PageDataRequestCoordinator', () => {
     expect(requests.pending('foreground')).toBe(foregroundRequest)
   })
 
+  it.each(['cancel', 'cancelPrefetch', 'cancelPrefetches'] as const)('invalidates a late response when %s cannot stop its transport', async cancel => {
+    const requests = new PageDataRequestCoordinator<string>()
+    const stale = deferred<string>()
+    const old = requests.request('servers', () => stale.promise, { priority: 'prefetch' })
+    if (cancel === 'cancelPrefetches') requests.cancelPrefetches()
+    else requests[cancel]('servers')
+    const fresh = await requests.request('servers', async () => 'fresh', { priority: 'foreground' })
+    stale.resolve('old')
+    expect(requests.isCurrent('servers', await old)).toBe(false)
+    expect(requests.isCurrent('servers', fresh)).toBe(true)
+  })
+
+  it('invalidates already-completed responses on reset and subsequent loads', async () => {
+    const requests = new PageDataRequestCoordinator<string>()
+    const first = await requests.request('servers', async () => 'first')
+    const second = await requests.request('servers', async () => 'second')
+    expect(requests.isCurrent('servers', first)).toBe(false)
+    requests.reset()
+    expect(requests.isCurrent('servers', second)).toBe(false)
+  })
+
+  it('never cancels a prefetch promoted to foreground', async () => {
+    const requests = new PageDataRequestCoordinator<string>()
+    const pending = deferred<string>()
+    const first = requests.request('servers', () => pending.promise, { priority: 'prefetch' })
+    expect(requests.request('servers', async () => 'duplicate', { priority: 'foreground' })).toBe(first)
+    requests.cancelPrefetch('servers')
+    pending.resolve('current')
+    expect(requests.isCurrent('servers', await first)).toBe(true)
+  })
+
   it('keeps the target prefetch while cancelling unrelated speculative requests', () => {
     const requests = new PageDataRequestCoordinator<string>()
     const target = deferred<string>()

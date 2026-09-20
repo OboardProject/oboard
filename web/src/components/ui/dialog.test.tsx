@@ -22,6 +22,7 @@ describe('Dialog modal stack', () => {
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
+    container.id = 'root'
     document.body.appendChild(container)
     root = createRoot(container)
   })
@@ -32,6 +33,7 @@ describe('Dialog modal stack', () => {
     document.body.querySelectorAll('.dialog-layer').forEach(element => element.remove())
     document.body.style.overflow = ''
     document.body.style.paddingRight = ''
+    vi.unstubAllGlobals()
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
@@ -56,6 +58,10 @@ describe('Dialog modal stack', () => {
       </Dialog>,
     ))
     expect(document.querySelector('.dialog-layer')).not.toBeNull()
+    expect(document.querySelector<HTMLElement>('[role="dialog"]')?.inert).toBe(true)
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-modal')).toBeNull()
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(onClose).toHaveBeenCalledTimes(1)
 
     await settle(EXIT_WAIT_MS)
     expect(document.querySelector('.dialog-layer')).toBeNull()
@@ -195,6 +201,42 @@ describe('Dialog modal stack', () => {
     expect(document.querySelector('[role="menu"]')).toBeNull()
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the application inert until the last surface has exited', async () => {
+    container.inert = false
+    await act(async () => root.render(<Dialog isOpen onClose={() => {}} title="编辑"><input /></Dialog>))
+    expect(container.inert).toBe(true)
+    expect(document.querySelector<HTMLElement>('[role="dialog"]')?.closest('#root')).toBeNull()
+    act(() => root.render(<Dialog isOpen={false} onClose={() => {}}><input /></Dialog>))
+    expect(container.inert).toBe(true)
+    await settle(EXIT_WAIT_MS)
+    expect(container.inert).toBe(false)
+  })
+
+  it('does not suppress pinch zoom or close while an IME composition is active', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<Dialog isOpen onClose={onClose}><input autoFocus /></Dialog>))
+    const panel = document.querySelector<HTMLElement>('[role="dialog"]')!
+    const gesture = new Event('gesturestart', { bubbles: true, cancelable: true })
+    const touch = new Event('touchstart', { bubbles: true, cancelable: true })
+    Object.defineProperty(touch, 'touches', { value: [{}, {}] })
+    panel.dispatchEvent(gesture)
+    panel.dispatchEvent(touch)
+    expect(gesture.defaultPrevented).toBe(false)
+    expect(touch.defaultPrevented).toBe(false)
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('focuses the panel on touch devices without opening the software keyboard', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query === '(pointer: coarse)', media: query,
+      addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {},
+    })))
+    await act(async () => root.render(<Dialog isOpen onClose={() => {}} title="编辑"><input aria-label="名称" /></Dialog>))
+    await settle(30)
+    expect(document.activeElement?.getAttribute('role')).toBe('dialog')
   })
 
   it('traps forward and reverse Tab navigation inside the top dialog', async () => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { createPopoverPortal as createPortal } from '../ui/modal-layer'
 import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, Gauge, RefreshCw, MoreVertical } from 'lucide-react'
 import type { Server } from '../proxy-path/types'
@@ -19,6 +19,8 @@ type Item = {
 
 export function ServerActionMenu({ server, role = 'viewer', onAction }: { server: Server; role?: Role; onAction: (type: string, server: Server) => void }) {
   const [isOpen, setIsOpen] = useState(false)
+  const menuID = useId()
+  const initialFocus = useRef<'first' | 'last'>('first')
   const ref = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -66,7 +68,7 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
     const openBelow = roomBelow >= height || roomBelow >= roomAbove
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))
     const top = openBelow
-      ? Math.min(rect.bottom + 6, window.innerHeight - height - 8)
+      ? Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - height - 8))
       : Math.max(8, rect.top - height - 6)
     setMenuPosition({ top, left })
   }
@@ -74,7 +76,11 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
   useEffect(() => {
     if (!isOpen) return
     updateMenuPosition()
-    const frame = window.requestAnimationFrame(updateMenuPosition)
+    const frame = window.requestAnimationFrame(() => {
+      updateMenuPosition()
+      const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+      if (items?.length) items[initialFocus.current === 'last' ? items.length - 1 : 0].focus()
+    })
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null
       if (target && ref.current && !ref.current.contains(target) && !menuRef.current?.contains(target)) {
@@ -82,7 +88,9 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
       }
     }
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && (menuRef.current?.contains(event.target as Node) || event.target === buttonRef.current)) {
+        event.preventDefault()
+        event.stopPropagation()
         setIsOpen(false)
         buttonRef.current?.focus()
       }
@@ -107,26 +115,35 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
         type="button"
         onClick={(e) => {
           e.stopPropagation()
-          if (!isOpen) updateMenuPosition()
+          if (!isOpen) { initialFocus.current = 'first'; updateMenuPosition() }
           setIsOpen(!isOpen)
+        }}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          event.stopPropagation()
+          initialFocus.current = event.key === 'ArrowUp' ? 'last' : 'first'
+          updateMenuPosition()
+          setIsOpen(true)
         }}
         className="ghost icon-button"
         style={{
-          width: '28px',
-          height: '28px',
-          borderRadius: '50%',
+          width: '44px',
+          height: '44px',
+          borderRadius: 'var(--radius-sm)',
           border: '1px solid var(--border-color)',
           display: 'grid',
           placeContent: 'center',
           cursor: 'pointer',
           backgroundColor: isOpen ? 'var(--bg-control)' : 'var(--bg-card)',
           color: 'var(--text-primary)',
-          transition: 'all 0.15s',
+          transition: 'background-color 0.1s, border-color 0.1s',
         }}
         title="服务器操作"
         aria-label="打开服务器操作菜单"
         aria-haspopup="menu"
         aria-expanded={isOpen}
+        aria-controls={isOpen ? menuID : undefined}
       >
         <MoreVertical size={16} aria-hidden="true" />
       </button>
@@ -135,11 +152,35 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
           ref={menuRef}
           className="server-actions-menu action-menu-portal server-actions-menu-v2"
           role="menu"
+          id={menuID}
+          aria-label={`${server.name || '服务器'}操作`}
+          onKeyDown={event => {
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              event.stopPropagation()
+              setIsOpen(false)
+              buttonRef.current?.focus()
+              return
+            }
+            if (event.key === 'Tab') {
+              setIsOpen(false)
+              buttonRef.current?.focus()
+              return
+            }
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') || [])
+            const index = items.findIndex(item => item === document.activeElement)
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+            items[next]?.focus()
+          }}
           style={{
             position: 'fixed',
             top: menuPosition.top,
             left: menuPosition.left,
             width: 224,
+            maxHeight: 'calc(100dvh - 16px)',
+            overflowY: 'auto',
           }}
         >
           {visibleGroups.map((group, groupIdx) => (
@@ -156,12 +197,14 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
                       type="button"
                       role="menuitem"
                       disabled={disabled}
-                      title={disabled ? 'Agent 当前离线' : item.label}
+                      title={disabled ? enrolled ? 'Agent 当前离线' : '请先安装并连接 Agent' : item.label}
+                      style={{ minHeight: 44 }}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (disabled) return
-                        onAction(item.type, server)
                         setIsOpen(false)
+                        buttonRef.current?.focus()
+                        onAction(item.type, server)
                       }}
                       className={item.danger ? 'danger' : disabled ? 'disabled' : ''}
                     >

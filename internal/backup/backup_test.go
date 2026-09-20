@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -88,6 +89,26 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 	if err := source.CreateDNSCredential(ctx, credential); err != nil {
 		t.Fatal(err)
 	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	user := &model.User{Username: "restore-plugin", PasswordHash: "test", Role: model.RoleAdmin, Status: "active", ProxyUUID: "restore-plugin-uuid", ProxyPassword: "test"}
+	must(source.CreateUser(ctx, user))
+	plugin := model.Plugin{Name: "restore plugin", OwnerUserID: user.ID, Status: model.PluginStatusEnabled}
+	must(source.CreatePlugin(ctx, &plugin))
+	revision := model.PluginRevision{PluginID: plugin.ID, Runtime: "oboard-js-v1", SDKVersion: "oboard-sdk-v1", SchemaVersion: 1, Source: "function main(){}", SourceDigest: "test-digest", ManifestJSON: json.RawMessage(`{}`), AuthorUserID: user.ID}
+	must(source.SavePluginDraft(ctx, &revision))
+	binding := model.PluginTriggerBinding{PluginID: plugin.ID, RevisionID: revision.ID, Name: "restore-hook", Kind: "event", SpecJSON: json.RawMessage(`{}`), CreatedByUserID: user.ID}
+	must(source.CreatePluginTrigger(ctx, &binding))
+	grant := model.PluginGrant{PluginID: plugin.ID, RevisionID: revision.ID, BindingID: &binding.ID, CapabilitiesJSON: json.RawMessage(`[]`), ResourceScopeJSON: json.RawMessage(`{}`), ApprovedByUserID: user.ID}
+	must(source.CreatePluginGrant(ctx, &grant))
+	hook := model.PluginWebhook{ID: "restore-test-hook", PluginID: plugin.ID, BindingID: binding.ID, BindingRevision: binding.BindingRevision, RevisionID: revision.ID, GrantID: grant.ID, CreatedByUserID: user.ID}
+	hook.SecretEncrypted, err = security.EncryptSecret(sourceSecret, model.PluginWebhookSecretPurpose(hook.ID), "hook-test-secret")
+	must(err)
+	must(source.CreatePluginWebhook(ctx, &hook))
 	backupSettingsPlain := `{"recovery_password":"backup-password","remote":{"access_key":"access","secret_key":"secret"}}`
 	backupSettingsWrapped, err := security.EncryptSecret(sourceSecret, "controller_backup_secret_config", backupSettingsPlain)
 	if err != nil {
@@ -146,6 +167,17 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
+	restoredHook, err := restored.GetPluginWebhook(ctx, hook.ID)
+	must(err)
+	hookSecret, err := security.DecryptSecret(targetSecret, model.PluginWebhookSecretPurpose(hook.ID), restoredHook.SecretEncrypted)
+	if err != nil || hookSecret != "hook-test-secret" || restoredHook.Enabled || restoredHook.Generation <= hook.Generation {
+		t.Fatal("restored webhook was not re-encrypted and invalidated", err)
+	}
+	restoredGrant, err := restored.GetPluginGrant(ctx, grant.ID)
+	must(err)
+	if restoredGrant.RevokedAt == nil {
+		t.Fatal("restore preserved plugin authorization")
+	}
 	settings, err := restored.ListSettings(ctx)
 	if err != nil || settings["backup-value"] != "present" {
 		t.Fatalf("restored settings = %#v, err=%v", settings, err)

@@ -6,10 +6,10 @@ const (
 	RemoteAccessModeStandard = "standard"
 	RemoteAccessModeHardened = "hardened"
 
-	PrivilegeRemoteOperations          = "remote_operations"
-	PrivilegeRemoteExec                = "remote_exec"
-	PrivilegeRemoteShell               = "remote_shell"
-	PrivilegeRemoteInteractive         = "remote_interactive"
+	PrivilegeRemoteOperations         = "remote_operations"
+	PrivilegeRemoteExec               = "remote_exec"
+	PrivilegeRemoteShell              = "remote_shell"
+	PrivilegeRemoteInteractive        = "remote_interactive"
 	PrivilegeServerRemoteAccessManage = "server_remote_access_manage"
 
 	ApprovalPolicyPrivilegedGrant = "privileged_grant"
@@ -34,28 +34,28 @@ const (
 	RemoteOperationLogs           = "logs"
 	RemoteOperationDiagnostics    = "diagnostics"
 
-	StepUpPurposeRemoteTerminal       = "remote_terminal"
-	StepUpPurposeGrantMCPExec         = "grant_mcp_exec"
-	StepUpPurposeGrantMCPRawShell     = "grant_mcp_raw_shell"
-	StepUpPurposeGrantMCPOperations   = "grant_mcp_operations"
-	StepUpPurposeGrantMCPInteractive  = "grant_mcp_interactive"
-	StepUpPurposePrivilegedGrant      = "privileged_grant"
+	StepUpPurposeRemoteTerminal      = "remote_terminal"
+	StepUpPurposeGrantMCPExec        = "grant_mcp_exec"
+	StepUpPurposeGrantMCPRawShell    = "grant_mcp_raw_shell"
+	StepUpPurposeGrantMCPOperations  = "grant_mcp_operations"
+	StepUpPurposeGrantMCPInteractive = "grant_mcp_interactive"
+	StepUpPurposePrivilegedGrant     = "privileged_grant"
 
-	RemoteAccessAuditTerminalOpen            = "terminal_open"
-	RemoteAccessAuditTerminalClose           = "terminal_close"
-	RemoteAccessAuditTerminalDenied          = "terminal_denied"
-	RemoteAccessAuditMCPRemoteOperation      = "mcp_remote_operation"
-	RemoteAccessAuditMCPExec                 = "mcp_exec"
-	RemoteAccessAuditMCPShell                = "mcp_shell"
-	RemoteAccessAuditMCPInteractiveOpen      = "mcp_interactive_open"
-	RemoteAccessAuditMCPInteractiveClose     = "mcp_interactive_close"
-	RemoteAccessAuditMCPInteractiveIO        = "mcp_interactive_io"
-	RemoteAccessAuditMCPExecDenied           = "mcp_exec_denied"
-	RemoteAccessAuditPrivilegedGrantCreated  = "privileged_grant_created"
-	RemoteAccessAuditPrivilegedGrantUpdated  = "privileged_grant_updated"
-	RemoteAccessAuditPrivilegedGrantRevoked  = "privileged_grant_revoked"
-	RemoteAccessAuditAgentLocalGateDenied    = "agent_local_gate_denied"
-	RemoteAccessAuditServerPolicyUpdated     = "remote_access.server_policy.updated"
+	RemoteAccessAuditTerminalOpen           = "terminal_open"
+	RemoteAccessAuditTerminalClose          = "terminal_close"
+	RemoteAccessAuditTerminalDenied         = "terminal_denied"
+	RemoteAccessAuditMCPRemoteOperation     = "mcp_remote_operation"
+	RemoteAccessAuditMCPExec                = "mcp_exec"
+	RemoteAccessAuditMCPShell               = "mcp_shell"
+	RemoteAccessAuditMCPInteractiveOpen     = "mcp_interactive_open"
+	RemoteAccessAuditMCPInteractiveClose    = "mcp_interactive_close"
+	RemoteAccessAuditMCPInteractiveIO       = "mcp_interactive_io"
+	RemoteAccessAuditMCPExecDenied          = "mcp_exec_denied"
+	RemoteAccessAuditPrivilegedGrantCreated = "privileged_grant_created"
+	RemoteAccessAuditPrivilegedGrantUpdated = "privileged_grant_updated"
+	RemoteAccessAuditPrivilegedGrantRevoked = "privileged_grant_revoked"
+	RemoteAccessAuditAgentLocalGateDenied   = "agent_local_gate_denied"
+	RemoteAccessAuditServerPolicyUpdated    = "remote_access.server_policy.updated"
 )
 
 const StepUpPurposeRemoteTerminalSettings = "remote_terminal_settings"
@@ -67,10 +67,10 @@ type RemoteAccessReport struct {
 }
 
 type RemoteAccessLocalAllow struct {
-	RemoteTerminal     bool `json:"remote_terminal"`
-	MCPEnabled         bool `json:"mcp_enabled"`
-	ScriptsEnabled     bool `json:"scripts_enabled"`
-	HostPowerEnabled   bool `json:"host_power_enabled"`
+	RemoteTerminal   bool `json:"remote_terminal"`
+	MCPEnabled       bool `json:"mcp_enabled"`
+	PluginsEnabled   bool `json:"plugins_enabled"`
+	HostPowerEnabled bool `json:"host_power_enabled"`
 }
 
 type ServerRemoteAccessPolicy struct {

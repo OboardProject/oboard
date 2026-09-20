@@ -1,0 +1,26 @@
+{
+  "plugin_id": "example.batch-operations",
+  "name": "批量运维面板",
+  "version": "1.0.0",
+  "description": "预览指定节点并在显式确认后重启 OBoard 托管服务；不包含主机关机或任意 Shell。",
+  "schema_version": 1,
+  "runtime": "oboard-js-v1",
+  "sdk_version": "oboard-sdk-v1",
+  "entry": "main",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "server_ids": { "type": "string", "minLength": 1, "maxLength": 200 },
+      "service": { "enum": ["oboard-agent", "oboard-sb"] },
+      "confirm": { "type": "boolean" }
+    },
+    "required": ["server_ids", "service", "confirm"],
+    "additionalProperties": false
+  },
+  "config_schema": { "type": "object", "additionalProperties": false },
+  "env": [],
+  "secrets": [],
+  "capabilities": ["servers.get", "services.restart", "operations.get"],
+  "resource_types": ["servers"],
+  "limits": { "timeout_seconds": 30, "sdk_calls": 15, "manage_actions": 5 }
+}

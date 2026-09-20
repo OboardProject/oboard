@@ -16,7 +16,7 @@ export function ServerNetworkDialog({ server, initialTab='overview', data, clien
   const isOnline = String(server.status||'').toLowerCase()==='online'
   const offline = enrolled && !isOnline
   const neverEnrolled = !enrolled
-  const isViewer = String(role)==='viewer'
+  const isViewer = role !== 'admin' && role !== 'operator'
 
   const tabs: Array<{id:Tab,label:string; disabled?:boolean; hint?:string}> = [
     { id:'overview', label:'连接概况' },
@@ -31,12 +31,14 @@ export function ServerNetworkDialog({ server, initialTab='overview', data, clien
   const benchmarks = (data.dns_benchmarks||[]).filter((x:any)=> Number(x.server_id)===Number(server.id))
 
   const handleSaveNetwork=async(patch:any)=>{
-    const result = await client.request(`/servers/${server.id}`, { method:'PATCH', body: JSON.stringify({ ...server, ...patch }) })
+    if (isViewer) return
+    const result = await client.request(`/servers/${server.id}`, { method:'PATCH', body: JSON.stringify(patch) })
     onUpdated?.()
     notify?.('网络设置已保存','success')
     return result
   }
   const handleResetTraffic=async()=>{
+    if (isViewer) return
     notify?.('正在清零流量...','info')
     // caller should implement reset, but we do inline
     try{
@@ -49,11 +51,11 @@ export function ServerNetworkDialog({ server, initialTab='overview', data, clien
   return (
     <ServerWorkspaceDialog server={server} title="网络工具" tabs={tabs as any} activeTab={tab} onTabChange={(id)=>setTab(id as Tab)} onClose={onClose}>
       {tab==='overview' && <NetworkOverviewTab server={server} />}
-      {tab==='traffic' && <NetworkTrafficTab server={server} onResetTraffic={()=>void handleResetTraffic()} disabled={false} />}
-      {tab==='settings' && <NetworkSettingsTab server={server} onSave={handleSaveNetwork} disabled={false} />}
-      {tab==='dns' && <NetworkDNSTab server={server} policy={policy} lists={lists} benchmarks={benchmarks} client={client} notify={notify} />}
-      {tab==='mtu' && <NetworkMTUTab server={server} client={client} onSaved={onUpdated} />}
-      {tab==='diagnostics' && <NetworkDiagnosticsTab server={server} client={client} notify={notify} disabled={offline||neverEnrolled} disabledReason={neverEnrolled? '未接入 Agent，无法执行诊断' : offline? 'Agent 当前离线' : undefined} />}
+      {tab==='traffic' && <NetworkTrafficTab server={server} onResetTraffic={()=>void handleResetTraffic()} disabled={isViewer} />}
+      {tab==='settings' && <NetworkSettingsTab server={server} onSave={handleSaveNetwork} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
+      {tab==='dns' && <NetworkDNSTab server={server} policy={policy} lists={lists} benchmarks={benchmarks} client={client} notify={notify} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
+      {tab==='mtu' && <NetworkMTUTab server={server} client={client} onSaved={onUpdated} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
+      {tab==='diagnostics' && <NetworkDiagnosticsTab server={server} client={client} notify={notify} disabled={isViewer||offline||neverEnrolled} disabledReason={isViewer ? '当前账号只有查看权限' : neverEnrolled? '未接入 Agent，无法执行诊断' : offline? 'Agent 当前离线' : undefined} />}
     </ServerWorkspaceDialog>
   )
 }

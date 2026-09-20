@@ -9,11 +9,13 @@ export type MutationCoordinatorRefresh = (resources: string[]) => Promise<void>
 export function useMutationCoordinator(refresh?: MutationCoordinatorRefresh | null): MutationCoordinator {
   const refreshRef = React.useRef(refresh)
   refreshRef.current = refresh
-  return React.useMemo(() => createMutationCoordinator({
+  const coordinator = React.useMemo(() => createMutationCoordinator({
     refresh: async resources => {
       const current = refreshRef.current
       if (!current) return
       await current(resources)
     },
   }), [])
+  React.useEffect(() => () => coordinator.reset(), [coordinator])
+  return coordinator
 }

@@ -3,12 +3,14 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   base: './',
+  cacheDir: process.env.OBOARD_WEB_CACHE_DIR || '../../.cache/vite',
   plugins: [react()],
   build: {
     rolldownOptions: {
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return
+          if (id.includes('/@xterm/')) return 'terminal'
           if (id.includes('/reactflow/') || id.includes('/@reactflow/')) return 'graph'
           if (id.includes('/motion/') || id.includes('/motion-dom/') || id.includes('/motion-utils/') || id.includes('/framer-motion/')) return 'motion'
           if (id.includes('/lucide-react/')) return 'icons'

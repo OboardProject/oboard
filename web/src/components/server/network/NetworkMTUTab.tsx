@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Select } from '../../ui/select'
 import { FormField } from '../../ui/form-field'
 import type { Server } from '../../proxy-path/types'
@@ -17,6 +17,8 @@ export function NetworkMTUTab({ server, client, onSaved, disabled, disabledReaso
     }
   })
   const [saving, setSaving]=useState(false)
+  const [saveError, setSaveError]=useState('')
+  const submitting = useRef(false)
   const [detecting, setDetecting]=useState(false)
   const [detectResult, setDetectResult]=useState<any>(null)
   const [history, setHistory]=useState<any[]>([])
@@ -34,8 +36,10 @@ export function NetworkMTUTab({ server, client, onSaved, disabled, disabledReaso
   }, [client, server.id])
 
   const save=async()=>{
-    if(saving|| disabled) return
+    if(submitting.current || disabled) return
+    submitting.current = true
     setSaving(true)
+    setSaveError('')
     try{
       const payload={
         mtu_mode: value.mtu_mode,
@@ -44,9 +48,11 @@ export function NetworkMTUTab({ server, client, onSaved, disabled, disabledReaso
         mtu_probe_port: Math.max(1, Math.min(65535, Number(value.mtu_probe_port)||443)),
         mtu_overhead_bytes: Math.max(0, Number(value.mtu_overhead_bytes)||0),
       }
-      await client.request(`/servers/${server.id}`, { method:'PATCH', body: JSON.stringify({ ...server, ...payload }) })
+      await client.request(`/servers/${server.id}`, { method:'PATCH', body: JSON.stringify(payload) })
       onSaved?.()
-    } finally{ setSaving(false) }
+    } catch (error: unknown) {
+      setSaveError(error instanceof Error ? error.message : '未能确认保存结果，输入已保留。请刷新服务器状态后核实。')
+    } finally{ submitting.current = false; setSaving(false) }
   }
 
   const detectNow=async()=>{
@@ -121,6 +127,7 @@ export function NetworkMTUTab({ server, client, onSaved, disabled, disabledReaso
           </FormField>
           {disabled && <small className="muted">{disabledReason}</small>}
         </div>
+        {saveError && <p role="alert" className="danger-text">{saveError}</p>}
         <div className="server-workspace-actions">
           <button type="button" className="ghost" disabled={saving|| disabled} onClick={()=>void save()}>{saving? '保存中...':'保存设置'}</button>
           <button type="button" disabled={detecting|| disabled} onClick={()=>void detectNow()}>{detecting? '检测中...':'立即检测 MTU'}</button>

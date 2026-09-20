@@ -1,6 +1,6 @@
 import * as React from "react"
 import { m, useReducedMotion } from "motion/react"
-import { ModalSurface } from "./modal-layer"
+import { ModalSurface, type ModalPlacement, type DrawerSize } from "./modal-layer"
 import type { SurfaceMotion } from "./surface-motion"
 
 const easeOut = [0.22, 1, 0.36, 1] as const
@@ -48,6 +48,8 @@ export function MotionDialogPanel({
   ariaLabel = "对话框",
   restoreFocus,
   surfaceMotion,
+  placement,
+  drawerSize,
   "aria-labelledby": ariaLabelledBy,
 }: {
   onCancel: () => void
@@ -56,6 +58,8 @@ export function MotionDialogPanel({
   ariaLabel?: string
   restoreFocus?: HTMLElement | null
   surfaceMotion?: SurfaceMotion
+  placement?: ModalPlacement
+  drawerSize?: DrawerSize
   "aria-labelledby"?: string
 }) {
   return (
@@ -66,6 +70,8 @@ export function MotionDialogPanel({
       ariaLabelledBy={ariaLabelledBy}
       restoreFocus={restoreFocus}
       surfaceMotion={surfaceMotion}
+      placement={placement}
+      drawerSize={drawerSize}
     >
       {children}
     </ModalSurface>
@@ -117,7 +123,7 @@ export function MotionCard({
   children,
   className = "",
   tag = "div",
-  hoverEffect = true,
+  hoverEffect = false,
   ...props
 }: {
   children: React.ReactNode

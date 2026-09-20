@@ -1,0 +1,12 @@
+.dashboard-shortcuts { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.5rem; }
+.dashboard-shortcuts button { display: inline-flex; align-items: center; gap: .5rem; }
+.dashboard-results { margin-top: 1.75rem; }
+.dashboard-result-state { display: grid; gap: .25rem; text-align: right; font-variant-numeric: tabular-nums; }
+.dashboard-result-state > span { color: var(--text); font-size: .8125rem; }
+.dashboard-results .activity-item { display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto; gap: 1rem; }
+@media (max-width: 600px) {
+  .dashboard-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-shortcuts button { justify-content: flex-start; }
+  .dashboard-results .activity-item { gap: .5rem; }
+  .dashboard-results .activity-item strong { overflow-wrap: anywhere; }
+}

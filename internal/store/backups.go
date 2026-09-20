@@ -110,6 +110,9 @@ func (s *Store) RewrapEncryptedSecrets(ctx context.Context, sourceSecret, target
 	if err := rewrapColumn(ctx, tx, `select id,signing_secret_encrypted from subscription_relays where signing_secret_encrypted<>''`, `update subscription_relays set signing_secret_encrypted=?,updated_at=? where id=?`, sourceSecret, targetSecret, "subscription-relay-signing-secret"); err != nil {
 		return err
 	}
+	if err := rewrapPluginSecrets(ctx, tx, sourceSecret, targetSecret); err != nil {
+		return err
+	}
 	if err := rewrapProxyCredentials(ctx, tx, sourceSecret, targetSecret); err != nil {
 		return err
 	}

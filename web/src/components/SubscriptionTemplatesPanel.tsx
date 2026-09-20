@@ -3,6 +3,7 @@ import { FileCode2, RotateCcw } from 'lucide-react'
 import { useDialogs } from './ui/dialog-context'
 import { Dialog } from './ui/dialog'
 import { SettingsDisclosure } from './settings/SettingsLayout'
+import { useSettingsEditorClose } from './settings/useSettingsEditorClose'
 
 export type SubscriptionClientTemplate = {
   format: string
@@ -24,16 +25,28 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
   const [draft, setDraft] = useState('')
   const [preview, setPreview] = useState('')
   const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const closeEditor = useSettingsEditorClose({ busy: Boolean(busy), dirty: Boolean(editing) && draft !== editing?.content, onClose: () => setEditing(null) })
 
-  const refresh = async () => {
+  const refresh = async (isActive = () => true) => {
     const result = await client.request('/subscription-templates')
-    setItems(result.subscription_templates || [])
+    if (isActive()) { setItems(result.subscription_templates || []); setLoadError('') }
+  }
+
+  const retry = async () => {
+    setLoading(true)
+    try { await refresh() }
+    catch (error: any) { setLoadError(String(error?.message || error || '加载模板失败')) }
+    finally { setLoading(false) }
   }
 
   useEffect(() => {
     let active = true
     setLoading(true)
-    refresh().catch(error => notify(String(error?.message || error || '加载模板失败'), 'error')).finally(() => {
+    refresh(() => active).catch(error => {
+      if (active) setLoadError(String(error?.message || error || '加载模板失败'))
+    }).finally(() => {
       if (active) setLoading(false)
     })
     return () => { active = false }
@@ -41,6 +54,7 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
 
   const openEditor = (item: SubscriptionClientTemplate) => {
     setEditing(item)
+    setError('')
     setDraft(item.content)
     setPreview('')
   }
@@ -48,9 +62,11 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
   const run = async (key: string, action: () => Promise<void>) => {
     if (busy) return
     setBusy(key)
+    setError('')
     try {
       await action()
     } catch (error: any) {
+      setError(String(error?.message || error || '操作失败'))
       notify(String(error?.message || error || '操作失败'), 'error')
     } finally {
       setBusy('')
@@ -80,6 +96,7 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
     notify('模板已保存，下次订阅拉取立即生效', 'success')
     setEditing(saved)
     setDraft(saved.content)
+    setPreview('')
     await refresh()
   })
 
@@ -107,10 +124,11 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
     <>
       <SettingsDisclosure
         title="客户端模板"
-        description="自定义客户端配置和分组，节点信息由系统自动填入。"
+        className="signal-templates"
+        defaultOpen
         summary={summaryText}
       >
-        {loading ? <p className="muted" style={{ margin: '14px 0 0' }}>正在加载模板...</p> : (
+        {loading ? <div className="settings-loading" role="status"><span>正在加载模板…</span><div /><div /><div /></div> : loadError ? <div className="settings-feedback"><p role="alert">{loadError}</p><button type="button" className="ghost" onClick={() => void retry()}>重新加载</button></div> : !items.length ? <p className="settings-feedback">暂无可用模板</p> : (
           <div className="subscription-template-list">
             {items.map(item => (
               <button key={item.format} type="button" className="subscription-template-row" onClick={() => openEditor(item)}>
@@ -118,25 +136,26 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
                   <strong>{item.label}</strong>
                   <span className="muted">{item.format} · {item.source === 'custom' ? '自定义' : '系统'} · 版本 {item.revision || 0}</span>
                 </div>
-                <span className={`status-pill ${item.source === 'custom' ? 'warning' : 'ok'}`}>{item.source === 'custom' ? (item.builtin_updated ? '基于旧系统模板' : '自定义') : '系统默认'}</span>
+                <span className={`status-pill ${item.builtin_updated ? 'warning' : 'neutral'}`}>{item.source === 'custom' ? (item.builtin_updated ? '基于旧系统模板' : '自定义') : '系统默认'}</span>
               </button>
             ))}
           </div>
         )}
       </SettingsDisclosure>
       {editing && (
-        <Dialog isOpen={Boolean(editing)} onClose={() => setEditing(null)} title={`${editing.label} 模板`} size="xl">
-          <div className="subscription-template-editor">
+        <Dialog isOpen={Boolean(editing)} onClose={() => void closeEditor()} className="signal-settings-dialog" title={`${editing.label} 模板`} size="xl">
+          <div className="subscription-template-editor" aria-busy={Boolean(busy)}>
             <p className="muted">来源 {editing.source === 'custom' ? '自定义' : '系统'} · 版本 {editing.revision || 0} · 系统摘要 {editing.builtin_digest.slice(0, 12)}{editing.base_builtin_digest ? ` · 自定义基于 ${editing.base_builtin_digest.slice(0, 12)}` : ''}</p>
             {editing.builtin_updated && <p className="danger-text">系统模板已有新版，当前自定义模板仍基于旧系统模板，不会自动覆盖。</p>}
             <p className="muted">可用标记：{(editing.markers || []).join(' ')}</p>
-            <textarea className="monospace-input subscription-template-textarea" value={draft} onChange={event => setDraft(event.target.value)} spellCheck={false} aria-label={`${editing.label} 模板内容`} />
-            {preview && <pre className="subscription-template-preview">{preview}</pre>}
+            <textarea className="monospace-input subscription-template-textarea" disabled={Boolean(busy)} value={draft} onChange={event => { setDraft(event.target.value); setPreview(''); setError('') }} spellCheck={false} aria-label={`${editing.label} 模板内容`} />
+            {preview && <section aria-label="合成节点预览"><h4>合成节点预览</h4><pre className="subscription-template-preview">{preview}</pre></section>}
+            {error && <p className="settings-feedback" role="alert">{error}</p>}
             <footer className="dialog-actions">
               <button type="button" className="ghost" onClick={validate} disabled={Boolean(busy)}>{busy === 'validate' ? '校验中...' : '校验'}</button>
               <button type="button" className="ghost" onClick={renderPreview} disabled={Boolean(busy)}>{busy === 'preview' ? '预览中...' : '预览'}</button>
-              {editing.source === 'custom' && <button type="button" className="ghost" onClick={reset} disabled={Boolean(busy)}><RotateCcw size={14} />{busy === 'reset' ? '恢复中...' : '恢复系统默认'}</button>}
-              <button type="button" onClick={save} disabled={Boolean(busy)}><FileCode2 size={14} />{busy === 'save' ? '保存中...' : '保存'}</button>
+              {editing.source === 'custom' && <button type="button" className="danger-ghost" onClick={reset} disabled={Boolean(busy)}><RotateCcw size={14} />{busy === 'reset' ? '恢复中...' : '恢复系统默认'}</button>}
+              <button type="button" onClick={save} disabled={Boolean(busy) || draft === editing.content}><FileCode2 size={14} />{busy === 'save' ? '保存中...' : '保存'}</button>
             </footer>
           </div>
         </Dialog>

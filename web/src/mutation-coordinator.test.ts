@@ -43,25 +43,30 @@ describe('mutation coordinator', () => {
     expect(state).toEqual({ name: 'original', note: 'annotated' })
   })
 
-  it('does not let a slower earlier response land on a newer one', async () => {
+  it('serializes explicitly queued saves so the server cannot finish A after B', async () => {
     const state = { value: 'original' }
     const first = deferred<string>()
     const second = deferred<string>()
     const coordinator = createMutationCoordinator()
     const older = coordinator.submit({
       key: 'server:1',
+      concurrency: 'queue',
       optimistic: () => { const previous = state.value; state.value = 'first'; return () => { state.value = previous } },
       run: () => first.promise,
     })
     const newer = coordinator.submit({
       key: 'server:1',
+      concurrency: 'queue',
       optimistic: () => { const previous = state.value; state.value = 'second'; return () => { state.value = previous } },
       run: () => second.promise,
     })
+    await Promise.resolve()
+    expect(state.value).toBe('first')
     second.resolve('second-applied')
-    expect((await newer).outcome).toBe('applied')
+    expect(state.value).toBe('first')
     first.resolve('first-applied')
-    expect((await older).outcome).toBe('superseded')
+    expect((await older).outcome).toBe('applied')
+    expect((await newer).outcome).toBe('applied')
     expect(state.value).toBe('second')
   })
 
@@ -84,7 +89,9 @@ describe('mutation coordinator', () => {
     expect(coordinator.state().unknown).toBe(1)
     expect(coordinator.unknownResources()).toEqual(['servers'])
     expect(states).toContain(1)
-    coordinator.confirm(result.id)
+    expect(coordinator.confirm(result.id, { operationID: 'unrelated', outcome: 'applied' })).toBe(false)
+    expect(coordinator.state().unknown).toBe(1)
+    coordinator.confirm(result.id, { operationID: result.id, outcome: 'applied' })
     expect(coordinator.state().unknown).toBe(0)
   })
 
@@ -109,6 +116,62 @@ describe('mutation coordinator', () => {
     })
     expect(result.outcome).toBe('unknown')
     expect(state.value).toBe('original')
+  })
+
+  it('does not replay a duplicate command while it is in flight', async () => {
+    const pending = deferred<string>()
+    const run = vi.fn(() => pending.promise)
+    const coordinator = createMutationCoordinator()
+    const first = coordinator.submit({ key: 'rotate:1', run })
+    const duplicate = await coordinator.submit({ key: 'rotate:1', run })
+    expect(duplicate.outcome).toBe('superseded')
+    expect(run).toHaveBeenCalledTimes(1)
+    pending.resolve('done')
+    expect((await first).outcome).toBe('applied')
+  })
+
+  it('blocks queued and later writes behind an unknown outcome without retrying', async () => {
+    const pending = deferred<string>()
+    const coordinator = createMutationCoordinator()
+    const first = coordinator.submit({ key: 'server:1', run: () => pending.promise })
+    const run = vi.fn(async () => 'B')
+    const second = coordinator.submit({ key: 'server:1', concurrency: 'queue', run })
+    pending.reject(new Error('lost response'))
+    const unknown = await first
+    expect((await second).id).toBe(unknown.id)
+    expect((await coordinator.submit({ key: 'server:1', run })).outcome).toBe('unknown')
+    expect(run).not.toHaveBeenCalled()
+    expect(coordinator.state()).toEqual({ pending: 0, unknown: 1 })
+  })
+
+  it('does not turn refresh failure into save failure or wait for a read', async () => {
+    const refresh = deferred<void>()
+    const onRefreshError = vi.fn()
+    const coordinator = createMutationCoordinator({ refresh: () => refresh.promise, onRefreshError })
+    expect((await coordinator.submit({ key: 'a', resources: ['servers'], run: async () => 'ok' })).outcome).toBe('applied')
+    refresh.reject(new Error('read failed'))
+    await Promise.resolve()
+    expect(onRefreshError).toHaveBeenCalledOnce()
+  })
+
+  it('ignores old completions after reset, including rollback and refresh', async () => {
+    const request = deferred<void>()
+    const undo = vi.fn()
+    const refresh = vi.fn()
+    const coordinator = createMutationCoordinator({ refresh })
+    const result = coordinator.submit({ key: 'a', resources: ['servers'], optimistic: () => undo, run: () => request.promise })
+    await Promise.resolve()
+    coordinator.reset()
+    request.reject(httpError(409))
+    expect((await result).outcome).toBe('superseded')
+    expect(undo).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
+    expect(coordinator.state()).toEqual({ pending: 0, unknown: 0 })
+  })
+
+  it('does not mistake an undefined rejection for success', async () => {
+    const coordinator = createMutationCoordinator()
+    expect((await coordinator.submit({ key: 'a', run: () => Promise.reject(undefined) })).outcome).toBe('unknown')
   })
 
   it('tracks in-flight operations so a page can show saving state', async () => {

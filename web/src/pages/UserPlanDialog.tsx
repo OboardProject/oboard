@@ -18,6 +18,7 @@ type Binding = { user_id: number; plan_id: number; status?: string; starts_at?: 
 type EffectiveNode = { key: string; node_type: string; node_id: number; name?: string; source: string; plan_id?: number; plan_name?: string; effect?: string; reason?: string; expires_at?: string }
 type Exception = { id: number; user_id: number; node_type: string; node_id: number; effect: 'allow' | 'deny'; reason: string; status?: string; starts_at?: string; expires_at?: string }
 type CatalogNode = { type: string; id: number; key: string; name: string; entry_protocol?: string; exit_region?: string }
+const exceptionStatusLabels: Record<string, string> = { active: '有效', pending: '处理中', revoking: '撤销中', revoked: '已撤销', expired: '已到期' }
 
 function toLocalInputValue(iso?: string) {
   if (!iso) return ''
@@ -39,7 +40,11 @@ function fmtDate(iso?: string) {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh, onClose }: {
+export function UserPlanDialog(props: React.ComponentProps<typeof UserPlanDialogSession>) {
+  return <UserPlanDialogSession key={`${props.user.id}:${props.isOpen}`} {...props} />
+}
+
+function UserPlanDialogSession({ isOpen, user, binding, plans, client, onRefresh, onClose }: {
   isOpen: boolean
   user: { id: number; username: string }
   binding?: Binding
@@ -64,13 +69,24 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
   const [changeID, setChangeID] = React.useState<number | null>(null)
   const [unconfirmed, setUnconfirmed] = React.useState(false)
   const { status: deliveryStatus, snapshot: changeSnapshot } = useAccessChangeStatus(client, changeID)
+  const draftDirty = React.useRef(false)
+  const bindingBase = React.useRef(binding?.plan_id || 0)
+  const submissionBusy = React.useRef(false)
+  const readSequence = React.useRef(0)
+  const searchSequence = React.useRef(0)
+  const draft = React.useRef({ planID, startsAt, expiresAt })
+  draft.current = { planID, startsAt, expiresAt }
+  const exceptionDraft = React.useRef(exForm)
+  exceptionDraft.current = exForm
 
   const reload = async () => {
+    const read = ++readSequence.current
     try {
       const [nres, xres] = await Promise.all([
         client.request<{ nodes: EffectiveNode[] }>(`/users/${user.id}/nodes`),
         client.request<{ user_node_exceptions: Exception[] }>(`/user-node-exceptions?user_id=${user.id}`),
       ])
+      if (read !== readSequence.current) return
       setNodes(nres.nodes || [])
       setExceptions(xres.user_node_exceptions || [])
       const names: Record<string, string> = {}
@@ -85,10 +101,11 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
           if (res.node?.name) names[key] = res.node.name
         } catch { /* Keep the authorization removable if its node is unavailable. */ }
       }))
+      if (read !== readSequence.current) return
       setExceptionNames(names)
       await onRefresh?.()
     } catch (e: any) {
-      setMessage(e?.message || String(e))
+      if (read === readSequence.current) setMessage(e?.message || String(e))
     }
   }
   useRegisterPageRefresh(() => {
@@ -133,6 +150,8 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
   }, [isOpen, user.id])
 
   React.useEffect(() => {
+    if (draftDirty.current) return
+    bindingBase.current = binding?.plan_id || 0
     setPlanID(binding?.plan_id || 0)
     setStartsAt(toLocalInputValue(binding?.starts_at))
     setExpiresAt(toLocalInputValue(binding?.expires_at))
@@ -143,22 +162,19 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
   }, [isOpen, changeID, changeSnapshot?.status])
 
   const applyAssignment = async (remove = false) => {
+    if (submissionBusy.current || unconfirmed) return
     if (!remove && !planID) { setMessage('请先选择套餐'); return }
+    const snapshot = draft.current
+    submissionBusy.current = true
     setApplyBusy(true)
     setMessage('')
     // The plan this dialog is showing. The server only applies the change if
     // the user is still on it, so an assignment made from a stale view is
     // reported instead of quietly replacing someone else's.
-    const expected = { [String(user.id)]: binding?.plan_id || 0 }
-    const target = remove ? 0 : planID
+    const expected = { [String(user.id)]: bindingBase.current }
     const outcome = await coordinator.submit<any>({
       key: `user-plan:${user.id}`,
       resources: ['user-plan'],
-      optimistic: () => {
-        const previous = planID
-        setPlanID(target)
-        return () => setPlanID(previous)
-      },
       run: () => client.request<any>('/users/plan-assignment/apply', {
         method: 'POST',
         body: JSON.stringify(remove
@@ -166,6 +182,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
           : { user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt), expected_plan_ids: expected }),
       }),
     })
+    submissionBusy.current = false
     setApplyBusy(false)
     if (outcome.outcome === 'superseded') return
     if (outcome.outcome === 'unknown') {
@@ -175,42 +192,48 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
       // re-read and asks them to confirm.
       const reason = (outcome.error as { message?: string } | undefined)?.message || String(outcome.error)
       setUnconfirmed(true)
-      setMessage(`提交结果未知（${reason}），已为你刷新为最新状态，请确认是否已生效`)
+      setMessage(`提交结果未知（${reason}）。输入已保留，请关闭并重新打开核对结果；不会自动重试。`)
       return
     }
     if (outcome.outcome === 'rejected') {
       const error = outcome.error as { status?: number; message?: string } | undefined
       if (error?.status === 409) {
-        setMessage('该用户的套餐已被其他人修改，已为你刷新为最新状态，请确认后再提交')
+        setMessage('该用户的套餐已被其他人修改，你的输入已保留。请关闭并重新打开查看最新内容后再修改。')
       } else {
         setMessage('应用失败：' + (error?.message || String(outcome.error)))
       }
       return
     }
     const res = outcome.value || {}
+    if (JSON.stringify(draft.current) === JSON.stringify(snapshot)) {
+      draftDirty.current = false
+    }
+    bindingBase.current = remove ? 0 : snapshot.planID
     setUnconfirmed(false)
     if (res.access_change_id) setChangeID(res.access_change_id)
     setRemoveOpen(false)
     setMessage(remove
-      ? `已提交移除套餐${res.access_change_id ? `（变更 #${res.access_change_id}）` : ''}`
+      ? '已提交移除套餐'
       : res.status === 'scheduled'
-      ? `已排定：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
-      : res.access_change_id ? `已保存分配：变更 #${res.access_change_id}（${res.status}）` : '已保存')
+      ? `已保存，将于 ${fmtDate(res.activate_at)} 生效`
+      : draftDirty.current ? '已保存提交的内容；当前还有未保存的修改。' : '已保存套餐分配')
   }
 
   const searchNodes = async (query: string) => {
+    const read = ++searchSequence.current
     setSearchQuery(query)
     if (!query.trim()) { setSearchResults([]); return }
     try {
       const params = new URLSearchParams({ query, page: '1', page_size: '50' })
       const res = await client.request<{ nodes: CatalogNode[] }>('/assignable-nodes?' + params.toString())
-      setSearchResults(res.nodes || [])
-    } catch { setSearchResults([]) }
+      if (read === searchSequence.current) setSearchResults(res.nodes || [])
+    } catch { if (read === searchSequence.current) setSearchResults([]) }
   }
 
   const createException = async () => {
     const node = searchResults.find(n => n.key === exForm.node_key)
     if (!node) { setMessage('请先搜索并选择节点'); return }
+    const snapshot = exForm
     setExBusy(true)
     setMessage('')
     try {
@@ -224,10 +247,12 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
         method: 'POST',
         body: JSON.stringify(payload),
       })
-      setExForm({ node_key: '', effect: 'allow', reason: '', expires_at: '' })
-      setSearchResults([])
+      if (JSON.stringify(exceptionDraft.current) === JSON.stringify(snapshot)) {
+        setExForm({ node_key: '', effect: 'allow', reason: '', expires_at: '' })
+        setSearchResults([])
+      }
       if (res.access_change_id) setChangeID(res.access_change_id)
-      setMessage(res.access_change_id ? `已创建例外，正在部署（变更 #${res.access_change_id}）` : '已创建例外')
+      setMessage('已保存节点授权')
       await reload()
     } catch (e: any) {
       setMessage('创建失败：' + (e?.message || String(e)))
@@ -262,20 +287,20 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
       footer={<Button variant="outline" onClick={onClose}>关闭</Button>}
     >
       <div className="user-plan-dialog-stack">
-        {message && <p role="status" className="user-plan-dialog-message" style={{ color: message.includes('失败') ? 'var(--color-danger)' : unconfirmed ? 'var(--color-warning, #d97706)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
+        {message && <p role="status" className="user-plan-dialog-message" style={{ color: message.includes('失败') ? 'var(--color-danger)' : unconfirmed ? 'var(--color-warning)' : 'var(--text-strong)' }}>{message}</p>}
         {changeID ? <AuthorizationStatusBadge status={deliveryStatus} /> : null}
         <div className="user-plan-dialog-layout">
           <div className="user-plan-dialog-col">
             <section className="card-custom user-plan-dialog-card">
               <h3>套餐分配</h3>
               <div className="user-plan-dialog-assign">
-                <Select aria-label="分配套餐" value={planID} onChange={e => setPlanID(Number(e.target.value))}>
+                <Select aria-label="分配套餐" value={planID} onChange={e => { draftDirty.current = true; setPlanID(Number(e.target.value)) }}>
                   <option value={0}>选择套餐</option>
                   {plans.filter(p => p.enabled).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </Select>
-                <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="生效时间（可选）" aria-label="生效时间" title="生效时间" />
-                <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（可选）" aria-label="到期时间" title="到期时间" />
-                <Button size="sm" disabled={!planID || applyBusy} onClick={() => void applyAssignment()}>{applyBusy ? '保存中…' : '保存套餐'}</Button>
+                <DateTimePicker value={startsAt} onChange={value => { draftDirty.current = true; setStartsAt(value) }} placeholder="生效时间（可选）" aria-label="生效时间" title="生效时间" />
+                <DateTimePicker value={expiresAt} onChange={value => { draftDirty.current = true; setExpiresAt(value) }} placeholder="到期时间（可选）" aria-label="到期时间" title="到期时间" />
+                <Button size="sm" disabled={!planID || applyBusy || unconfirmed} onClick={() => void applyAssignment()}>{applyBusy ? '保存中…' : '保存套餐'}</Button>
               </div>
             </section>
             <section className="card-custom user-plan-dialog-card">
@@ -284,7 +309,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
                 <div>
                   <div className="section-toolbar">
                     <Badge variant={currentPlan.enabled ? 'success' : 'secondary'}>{currentPlan.name}</Badge>
-                    <Button variant="outline" size="sm" disabled={applyBusy} onClick={() => setRemoveOpen(true)} aria-label={`移除套餐 ${currentPlan.name}`}><Trash2 size={14} /> 移除套餐</Button>
+                    <Button variant="outline" size="sm" disabled={applyBusy || unconfirmed} onClick={() => setRemoveOpen(true)} aria-label={`移除套餐 ${currentPlan.name}`}><Trash2 size={14} /> 移除套餐</Button>
                   </div>
                   <p className="muted">开始 {fmtDate(binding?.starts_at)} · 到期 {fmtDate(binding?.expires_at)}</p>
                 </div>
@@ -309,7 +334,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
               <div className="section-toolbar">
                 <div>
                   <h3>用户授权</h3>
-                  <p className="muted">allow 先部署凭据再对订阅可见；deny 立即隐藏并撤销。时间留空则永久有效。</p>
+                  <p className="muted">允许：添加该节点的访问权限。拒绝：从订阅隐藏并撤销访问。到期时间留空则长期有效。</p>
                 </div>
                 <Button variant="ghost" size="icon" onClick={() => void reload()} aria-label="刷新授权" title="刷新授权"><RefreshCw size={14} /></Button>
               </div>
@@ -321,7 +346,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
                       <tr key={ex.id}>
                         <td>{exceptionName(ex)}</td>
                         <td><Badge variant={ex.effect === 'allow' ? 'success' : 'destructive'}>{ex.effect === 'allow' ? '允许' : '拒绝'}</Badge></td>
-                        <td><Badge variant="outline">{ex.status || 'active'}</Badge></td>
+                        <td><Badge variant="outline">{exceptionStatusLabels[ex.status || 'active'] || '状态待确认'}</Badge></td>
                         <td className="muted">{ex.reason}</td>
                         <td className="muted">{fmtDate(ex.expires_at)}</td>
                         <td>
@@ -363,7 +388,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
     <Dialog isOpen={isOpen && removeOpen} onClose={() => { if (!applyBusy) setRemoveOpen(false) }} title="移除用户套餐" size="sm"
       footer={<>
         <Button variant="outline" disabled={applyBusy} onClick={() => setRemoveOpen(false)}>取消</Button>
-        <Button variant="destructive" disabled={applyBusy} onClick={() => void applyAssignment(true)}>{applyBusy ? '移除中…' : '确认移除'}</Button>
+        <Button variant="destructive" disabled={applyBusy || unconfirmed} onClick={() => void applyAssignment(true)}>{applyBusy ? '移除中…' : '确认移除'}</Button>
       </>}
     >
       <p>将移除 {user.username} 的「{currentPlan?.name}」套餐分配，并撤销来自该套餐的节点权限。套餐本身和单独设置的用户授权会保留。</p>

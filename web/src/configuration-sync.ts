@@ -55,9 +55,9 @@ function describeConfigurationSyncError(rawError: string) {
   if (isConfigurationSyncBusyError(rawError)) {
     return {
       kind: 'busy' as const,
-      title: '主控数据库正忙',
-      explanation: '配置已经保存。主控在生成下发任务时遇到短暂的数据库写锁冲突，不是节点配置错误，也不需要改拓扑或服务器环境。',
-      resolution: '直接重试同步即可。新版本会自动等待写锁并重试，不再把这类冲突显示成配置失败。',
+      title: '配置同步暂时中断',
+      explanation: '配置已经保存，但后续同步尚未完成。这不是节点配置错误，不需要修改代理链路。',
+      resolution: '请重试同步。如果再次中断，可在任务记录中查看原因。',
       targetTab: 'tasks' as const,
       targetLabel: '查看任务记录',
     }
@@ -80,10 +80,10 @@ function describeConfigurationSyncError(rawError: string) {
   return {
     kind: 'config' as const,
     title: '配置生成或下发失败',
-    explanation: rawError || 'Controller 没有返回具体错误信息。',
-    resolution: '请在「任务部署中心」查看对应任务和服务器日志，修正配置或运行环境后再重试。',
+    explanation: '后续配置同步未完成，相关服务器可能仍在使用此前的配置。具体原因请展开诊断详情。',
+    resolution: '请在「任务」查看对应记录，确认原因并处理后再重试。',
     targetTab: 'tasks' as const,
-    targetLabel: '打开任务部署中心',
+    targetLabel: '打开任务',
   }
 }
 
@@ -153,8 +153,8 @@ export function configurationSyncBusyRows(rows: ConfigurationSyncRow[], servers:
   return rows.filter(item => (configurationSyncBusyStates as readonly string[]).includes(item.state) && configurationSyncAgentReachable(item, servers))
 }
 
-export function configurationSyncFailedRows(rows: ConfigurationSyncRow[], servers: ConfigurationSyncServerRef[] = []): ConfigurationSyncRow[] {
-  return rows.filter(item => item.state === 'failed' && configurationSyncAgentReachable(item, servers))
+export function configurationSyncFailedRows(rows: ConfigurationSyncRow[], _servers: ConfigurationSyncServerRef[] = []): ConfigurationSyncRow[] {
+  return rows.filter(item => item.state === 'failed')
 }
 
 export function configurationSyncBusyStateLabel(state: string) {
@@ -169,15 +169,16 @@ export function configurationSyncPresentation(rows: ConfigurationSyncRow[], savi
   const active = configurationSyncBusyRows(rows, servers)
   const reachable = rows.filter(item => configurationSyncAgentReachable(item, servers))
   const synced = reachable.length > 0 && reachable.every(item => item.state === 'synced')
-  if (saving) return { tone: 'info', label: '正在保存...', retryServerIDs: [], busy: true }
-  if (retrying) return { tone: 'info', label: '正在重试同步...', retryServerIDs: failed.map(item => item.server_id), busy: true }
   if (failed.length > 0) {
     const issueCount = configurationSyncFailureIssues(failed).length
-    return { tone: 'danger', label: `配置同步被阻塞 · ${issueCount} 个问题`, retryServerIDs: failed.map(item => item.server_id), busy: false }
+    return { tone: 'danger', label: `需要处理 · ${issueCount}`, retryServerIDs: failed.map(item => item.server_id), busy: retrying }
   }
+  if (saving) return { tone: 'info', label: '正在保存...', retryServerIDs: [], busy: true }
+  if (retrying) return { tone: 'info', label: '正在重试同步...', retryServerIDs: [], busy: true }
   if (active.length > 0) return { tone: 'info', label: `正在同步 ${active.length} 台服务器`, retryServerIDs: [], busy: true }
-  if (synced) return { tone: 'ok', label: '配置已同步', retryServerIDs: [], busy: false }
-  return { tone: 'warn', label: '配置已保存', retryServerIDs: [], busy: false }
+  if (synced && reachable.length === rows.length) return { tone: 'ok', label: '配置已同步', retryServerIDs: [], busy: false }
+  if (rows.some(item => (configurationSyncBusyStates as readonly string[]).includes(item.state))) return { tone: 'info', label: '等待服务器连接', retryServerIDs: [], busy: false }
+  return { tone: 'info', label: '暂无配置同步信息', retryServerIDs: [], busy: false }
 }
 
 const mutationCollections: Record<string, { collection: string; singular: string }> = {
@@ -201,13 +202,13 @@ const mutationCollections: Record<string, { collection: string; singular: string
 }
 
 export function isConfigurationMutationPath(path: string) {
-  const normalized = path.replace(/^\/api\/(?:v1|v2\/ui|v2)\//, '')
+  const normalized = path.replace(/^\/api\/v1\/(?:ui\/)?/, '')
   const parts = normalized.split('/').filter(Boolean)
   return Boolean(mutationCollections[parts[0] || ''])
 }
 
 function mutationResource(path: string) {
-  const normalized = path.replace(/^\/api\/(?:v1|v2\/ui|v2)\//, '')
+  const normalized = path.replace(/^\/api\/v1\/(?:ui\/)?/, '')
   const parts = normalized.split('/').filter(Boolean)
   const resource = mutationCollections[parts[0] || '']
   return resource ? { ...resource, id: Number(parts[1] || 0) } : null
@@ -239,10 +240,19 @@ export function mergeConfigurationMutationResponse<T extends Record<string, any>
 
 export function mergeConfigurationSyncResponse<T extends Record<string, any>>(current: T, response: any): T {
   if (!response || !Array.isArray(response.configuration_sync)) return current
+  if (response.desired_revision != null && Number(response.desired_revision) < Number(current.desired_revision || 0)) return current
+  const previous = new Map<number, ConfigurationSyncRow>((current.configuration_sync || []).map((row: ConfigurationSyncRow) => [row.server_id, row]))
+  const rows = response.configuration_sync.map((row: ConfigurationSyncRow) => {
+    const known = previous.get(row.server_id)
+    if (!known) return row
+    if (Number(row.desired_revision || 0) < Number(known.desired_revision || 0)) return known
+    if (Number(row.desired_revision || 0) === Number(known.desired_revision || 0) && Number(row.config_version || 0) < Number(known.config_version || 0)) return known
+    return row
+  })
   return {
     ...current,
     desired_revision: response.desired_revision ?? current.desired_revision,
-    configuration_sync: response.configuration_sync,
+    configuration_sync: rows,
   }
 }
 

@@ -23,32 +23,32 @@ describe('ConfigurationSyncStatus', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
-  it('renders immediate local saving feedback and updates to synced state', () => {
+  it('keeps normal saving and synchronization quiet behind a stable issue entry', () => {
     act(() => root.render(<ConfigurationSyncStatus rows={[]} saving />))
-    expect(container.textContent).toContain('正在保存...')
-    expect(container.querySelector('[aria-live="polite"]')).not.toBeNull()
+    expect(container.textContent).toBe('需要处理')
+    expect(container.querySelector('.spin')).toBeNull()
 
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'synced' }]} />))
-    expect(container.textContent).toContain('配置已同步')
-    expect(container.querySelector('[aria-live="polite"]')).not.toBeNull()
+    expect(container.textContent).toBe('需要处理')
+    expect(container.querySelector('[aria-live]')).toBeNull()
   })
 
   it('renders only failed retry action and clears it after the failed state is reconciled', () => {
     const retry = vi.fn()
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'failed', error: 'prepare failed' }, { server_id: 2, state: 'synced' }]} onRetry={retry} />))
     const button = container.querySelector('button') as HTMLButtonElement | null
-    expect(button?.textContent).toContain('配置同步被阻塞 · 1 个问题')
+    expect(button?.textContent).toContain('需要处理 · 1')
     act(() => button?.click())
     const retryButton = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent?.includes('重新尝试 1 个同步任务'))
     act(() => retryButton?.click())
     expect(retry).toHaveBeenCalledTimes(1)
 
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'pending' }]} />))
-    expect(container.querySelector('button')).toBeNull()
-    expect(container.textContent).toContain('正在同步 1 台服务器')
+    expect(container.querySelector('button')?.textContent).toBe('需要处理')
+    expect(container.textContent).not.toContain('正在同步')
   })
 
-  it('lists currently syncing servers in a hover popover', () => {
+  it('shows in-progress details only after an explicit keyboard-accessible action', () => {
     act(() => root.render(<ConfigurationSyncStatus
       rows={[
         { server_id: 1, state: 'running' },
@@ -58,19 +58,18 @@ describe('ConfigurationSyncStatus', () => {
       ]}
       servers={[{ id: 1, name: '东京入口', status: 'online', agent_id: 'agent-1' }, { id: 2, name: '香港出口', status: 'online', agent_id: 'agent-2' }, { id: 3, name: '新加坡', status: 'online', agent_id: 'agent-3' }]}
     />))
-    const pill = container.querySelector('.deploy-status-pill.has-popover') as HTMLElement | null
-    const popover = container.querySelector('[role="tooltip"]') as HTMLElement | null
-    expect(container.textContent).toContain('正在同步 3 台服务器')
-    expect(pill).not.toBeNull()
-    expect(pill?.getAttribute('aria-describedby')).toBe(popover?.id)
-    expect(popover?.textContent).toContain('正在同步的服务器')
-    expect(popover?.textContent).toContain('东京入口')
-    expect(popover?.textContent).toContain('香港出口')
-    expect(popover?.textContent).toContain('服务器 #4')
-    expect(popover?.textContent).toContain('下发中')
-    expect(popover?.textContent).toContain('排队中')
-    expect(popover?.textContent).toContain('等待中')
-    expect(popover?.textContent).not.toContain('新加坡')
+    expect(container.querySelector('[role="tooltip"]')).toBeNull()
+    expect(container.textContent).not.toContain('东京入口')
+    act(() => container.querySelector('button')?.click())
+    const details = document.body.querySelector('details')
+    expect(details?.textContent).toContain('查看进行中的同步')
+    expect(details?.textContent).toContain('东京入口')
+    expect(details?.textContent).toContain('香港出口')
+    expect(details?.textContent).toContain('服务器 #4')
+    expect(details?.textContent).toContain('下发中')
+    expect(details?.textContent).toContain('排队中')
+    expect(details?.textContent).toContain('等待中')
+    expect(details?.textContent).not.toContain('新加坡')
   })
 
   it('does not wait on offline or unenrolled servers', () => {
@@ -86,8 +85,8 @@ describe('ConfigurationSyncStatus', () => {
         { id: 3, name: '9929', status: 'online', agent_id: 'agent-9929' },
       ]}
     />))
-    expect(container.textContent).toContain('配置已同步')
-    expect(container.textContent).not.toContain('正在同步')
+    expect(container.textContent).toBe('需要处理')
+    expect(container.textContent).not.toContain('配置已同步')
     expect(container.querySelector('[role="tooltip"]')).toBeNull()
     expect(container.textContent).not.toContain('OC DE')
     expect(container.textContent).not.toContain('排队中')
@@ -100,7 +99,7 @@ describe('ConfigurationSyncStatus', () => {
 
     act(() => root.render(<ConfigurationSyncStatus rows={[]} saving servers={[{ id: 1, name: '东京入口' }]} />))
     expect(container.querySelector('[role="tooltip"]')).toBeNull()
-    expect(container.textContent).toContain('正在保存...')
+    expect(container.textContent).toBe('需要处理')
 
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'failed', error: 'prepare failed' }]} servers={[{ id: 1, name: '东京入口' }]} />))
     expect(container.querySelector('[role="tooltip"]')).toBeNull()
@@ -128,7 +127,7 @@ describe('ConfigurationSyncStatus', () => {
     expect(document.body.textContent).toContain('东京入口')
     expect(document.body.textContent).toContain('VLESS · 0.0.0.0:443')
     expect(document.body.textContent).toContain('东京直出 ↔ 备用直出')
-    expect(document.body.textContent).toContain('这不表示 2 台服务器各自都有问题')
+    expect(document.body.textContent).toContain('不表示每台服务器各自都有问题')
     expect(document.body.textContent).toContain('东京入口')
     expect(document.body.textContent).toContain('香港出口')
     expect(document.body.textContent?.split(repeated)).toHaveLength(2)
@@ -150,8 +149,9 @@ describe('ConfigurationSyncStatus', () => {
       onRetry={retry}
     />))
     act(() => (container.querySelector('button') as HTMLButtonElement).click())
-    expect(document.body.textContent).toContain('同步准备被主控数据库写锁打断')
-    expect(document.body.textContent).toContain('主控数据库正忙')
+    expect(document.body.textContent).toContain('部分配置尚未完成同步')
+    expect(document.body.textContent).toContain('配置同步暂时中断')
+    expect(document.body.querySelector('details code')?.textContent).toContain('SQLITE_BUSY')
     expect(document.body.textContent).toContain('不是这些服务器各自的配置错误')
     expect(document.body.textContent).not.toContain('修正配置或运行环境')
     const retryButton = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent?.includes('重新尝试 17 个同步任务'))

@@ -43,6 +43,6 @@ it('reports a controller error on a write as unconfirmed rather than failed', as
   const client = createClient('token')
   await expect(client.request('/users/7/subscription-token/rotate', { method: 'POST' })).rejects.toMatchObject({
     unknownOutcome: true,
-    message: expect.stringContaining('请刷新确认是否已生效'),
+    message: expect.stringContaining('确认前不要重复提交'),
   })
 })

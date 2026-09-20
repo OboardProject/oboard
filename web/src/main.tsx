@@ -1,3 +1,6 @@
+import './styles/management-lists.css'
+import './styles/resource-forms.css'
+import './styles/dashboard.css'
 import { ControllerBackupPanel } from './features/backups/Backups'
 import { Tasks, taskServerLabel } from './features/tasks/Tasks'
 import { Panel } from './shared/Panel'
@@ -8,7 +11,9 @@ import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './compone
 import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
 import { ServerMonitoringTargetDialog } from './components/server/ServerMonitoringTargetDialog'
-import { ReturnLatencyPage } from './components/server/ReturnLatencyPage'
+import { lazyDialog, lazySurface } from './components/ui/lazy-surface'
+import { useMobileNavigation } from './hooks/use-mobile-navigation'
+const ReturnLatencyPage = lazySurface(() => import('./components/server/ReturnLatencyPage').then(module => ({ default: module.ReturnLatencyPage })))
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createPopoverPortal } from './components/ui/modal-layer'
@@ -109,6 +114,7 @@ import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-bind
 import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
+import './styles/signin.css'
 import './components/proxy-path/ProxyCanvas.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
@@ -140,20 +146,21 @@ import { Dialog } from './components/ui/dialog'
 import { DialogContext, useDialogs, type DialogApi, type DialogState } from './components/ui/dialog-context'
 import { FormField, FieldHelp, TrafficLimitInput } from './components/ui/form-field'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
-import { MCPAccessPage } from './features/mcp/MCPAccessPage'
+const MCPAccessPage = lazySurface(() => import('./features/mcp/MCPAccessPage').then(module => ({ default: module.MCPAccessPage })))
 import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion } from 'motion/react'
 import { MotionPage, MotionDialogPanel, MotionList, MotionCard } from './components/ui/motion'
 import { CustomSelect } from './components/ui/CustomSelect'
 import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
-import { AgentSettingsPanel } from './components/AgentSettingsPanel'
-import { RemoteAccessSettings } from './components/remote-access/RemoteAccessSettings'
+const AgentSettingsPanel = lazySurface(() => import('./components/AgentSettingsPanel').then(module => ({ default: module.AgentSettingsPanel })))
+const RemoteAccessSettings = lazySurface(() => import('./components/remote-access/RemoteAccessSettings').then(module => ({ default: module.RemoteAccessSettings })))
 import { RemoteAccessStatus } from './components/remote-access/RemoteAccessStatus'
-import { TerminalWorkspace } from './components/remote-access/TerminalWorkspace'
-import { AboutSettingsPanel } from './components/AboutSettingsPanel'
-import { NodePresetsPanel, type NodePreset } from './components/NodePresetsPanel'
-import { SubscriptionTemplatesPanel } from './components/SubscriptionTemplatesPanel'
+const TerminalWorkspace = lazyDialog(() => import('./components/remote-access/TerminalWorkspace').then(module => ({ default: module.TerminalWorkspace })), '远程终端')
+const AboutSettingsPanel = lazySurface(() => import('./components/AboutSettingsPanel').then(module => ({ default: module.AboutSettingsPanel })))
+import type { NodePreset } from './components/NodePresetsPanel'
+const NodePresetsPanel = lazySurface(() => import('./components/NodePresetsPanel').then(module => ({ default: module.NodePresetsPanel })))
+const SubscriptionTemplatesPanel = lazySurface(() => import('./components/SubscriptionTemplatesPanel').then(module => ({ default: module.SubscriptionTemplatesPanel })))
 import { StealthTransportSettings } from './components/settings/StealthTransportSettings'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
@@ -250,7 +257,7 @@ import {
   automationConnectArtifacts,
   normalizeAutomationControllerURL,
 } from './automation-connect'
-import { ProviderEditor } from './components/ai-provider/ProviderEditor'
+const ProviderEditor = lazySurface(() => import('./components/ai-provider/ProviderEditor').then(module => ({ default: module.ProviderEditor })))
 import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
 import { dashboardServerTrafficBytes } from './dashboard-traffic'
@@ -282,13 +289,14 @@ import {
   type DNSBulkPatch,
   type DNSBulkResult,
 } from './dns-bulk'
-import { NodeAssignmentsPage } from './pages/NodeAssignmentsPage'
-import { NodeWorkspacePage } from './pages/NodeWorkspacePage'
-import { SubscriptionPlansPage } from './pages/SubscriptionPlansPage'
-import { UserPlanDialog } from './pages/UserPlanDialog'
-import { UserDashboardPage, type UserDashboardOverview } from './pages/UserDashboardPage'
-import { AccountPage } from './pages/AccountPage'
-import { ScriptsWorkspace } from './features/scripts/ScriptsWorkspace'
+const NodeAssignmentsPage = lazySurface(() => import('./pages/NodeAssignmentsPage').then(module => ({ default: module.NodeAssignmentsPage })))
+const NodeWorkspacePage = lazySurface(() => import('./pages/NodeWorkspacePage').then(module => ({ default: module.NodeWorkspacePage })))
+const SubscriptionPlansPage = lazySurface(() => import('./pages/SubscriptionPlansPage').then(module => ({ default: module.SubscriptionPlansPage })))
+const UserPlanDialog = lazyDialog(() => import('./pages/UserPlanDialog').then(module => ({ default: module.UserPlanDialog })), '用户套餐')
+import type { UserDashboardOverview } from './pages/UserDashboardPage'
+const UserDashboardPage = lazySurface(() => import('./pages/UserDashboardPage').then(module => ({ default: module.UserDashboardPage })))
+const AccountPage = lazySurface(() => import('./pages/AccountPage').then(module => ({ default: module.AccountPage })))
+const PluginsWorkspace = lazySurface(() => import('./features/plugins/PluginsWorkspace').then(module => ({ default: module.PluginsWorkspace })))
 import { automationLandingTab, isAutomationNavTab, navTabVisible as automationEntryVisible } from './automation-nav'
 
 const appBasePath = (() => {
@@ -1281,14 +1289,18 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   notifications: { label: '通知中心', desc: '', group: '' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计中心', desc: '汇总订阅更新、连接活动和管理操作，识别异常并提供可追溯的处理依据。', group: '运维' },
-  automation: { label: '自动化', desc: '管理脚本、MCP、审批策略、变更集与内置 AI。', group: '系统' },
-  scripts: { label: '脚本', desc: '管理受限 JavaScript 脚本、触发器和执行记录。', group: '系统' },
-  'script-triggers': { label: '脚本触发器', desc: '查看脚本定时与状态触发器。', group: '系统' },
-  'script-runs': { label: '脚本执行', desc: '查看脚本执行记录与动作阶段。', group: '系统' },
+  automation: { label: '自动化', desc: '管理插件、MCP、审批策略、变更集与内置 AI。', group: '系统' },
+  plugins: { label: '插件', desc: '管理受限 JavaScript 插件、触发器和执行记录。', group: '系统' },
+  'plugin-triggers': { label: '插件触发器', desc: '查看插件定时与状态触发器。', group: '系统' },
+  'plugin-runs': { label: '插件执行', desc: '查看插件执行记录与动作阶段。', group: '系统' },
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
-  { label: '', tabs: ['dashboard', 'servers', 'return-latency', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
+  { label: '', tabs: ['dashboard'] },
+  { label: '网络', tabs: ['servers', 'proxy-paths', 'return-latency', 'dns', 'dns-records'] },
+  { label: '访问', tabs: ['users', 'plans', 'nodes'] },
+  { label: '运维', tabs: ['tasks', 'audit', 'notifications', 'automation'] },
+  { label: '', tabs: ['settings', 'account'] },
 ]
 
 function navTabVisible(tab: string, role: Role) {
@@ -1300,7 +1312,7 @@ const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
-  scripts: 'operator', 'script-triggers': 'operator', 'script-runs': 'operator',
+  plugins: 'operator', 'plugin-triggers': 'operator', 'plugin-runs': 'operator',
   nodes: 'none',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
@@ -1406,7 +1418,7 @@ function getTabIcon(x: string) {
   if (x === 'tasks') return <CheckSquare size={18} />
   if (x === 'audit') return <ClipboardList size={18} />
   if (x === 'automation') return <Bot size={18} />
-  if (x === 'scripts' || x === 'script-triggers' || x === 'script-runs') return <Code size={18} />
+  if (x === 'plugins' || x === 'plugin-triggers' || x === 'plugin-runs') return <Code size={18} />
   if (x === 'dns') return <Globe size={18} />
   if (x === 'dns-records') return <Database size={18} />
   if (x === 'settings') return <SettingsIcon size={18} />
@@ -2022,28 +2034,8 @@ export function App() {
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
-  // Lock body scroll when mobile menu is open
-  useEffect(() => {
-    if (isSidebarOpen && isMobile) {
-      document.body.style.overflow = "hidden"
-    } else {
-      document.body.style.overflow = ""
-    }
-    return () => {
-      document.body.style.overflow = ""
-    }
-  }, [isSidebarOpen, isMobile])
-
-  // Handle Escape key to close mobile menu
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isMobile && isSidebarOpen) {
-        setIsSidebarOpen(false)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isMobile, isSidebarOpen])
+  const sidebarRef = useRef<HTMLElement>(null)
+  useMobileNavigation(sidebarRef, isMobile && isSidebarOpen, () => setIsSidebarOpen(false))
 
   const requestPageData = (page: string, forceFresh = false, priority: 'foreground' | 'prefetch' | 'background' = 'background') => {
     return pageRequestsRef.current.request(page, signal => client.request(`/page-data?page=${encodeURIComponent(page)}`, signal ? { signal } : {}), { forceFresh, priority })
@@ -2533,19 +2525,19 @@ export function App() {
   }} />
 
   const tabTitles: { [key: string]: string } = {
-    dashboard: '系统总览',
+    dashboard: '总览',
     servers: '服务器管理',
     'return-latency': '网络探测',
     'proxy-paths': '代理拓扑',
-    users: '用户与分组管理',
+    users: '用户与分组',
     plans: '套餐管理',
     dns: 'DNS 设置',
     'dns-records': '域名解析',
     nodes: '节点',
     notifications: '通知中心',
-    tasks: '任务部署中心',
+    tasks: '任务',
     audit: '审计中心',
-    settings: '面板系统设置',
+    settings: '设置',
     account: '我的账户',
   }
 
@@ -2606,12 +2598,14 @@ export function App() {
             />
           )}
           <aside
+            ref={sidebarRef}
             id="sidebar"
             className={`sidebar ${isSidebarOpen ? 'open' : ''}`}
             role={isMobile ? 'dialog' : 'navigation'}
             aria-label="系统菜单"
             aria-modal={isMobile ? 'true' : undefined}
             aria-hidden={isMobile ? !isSidebarOpen : undefined}
+            inert={isMobile && !isSidebarOpen}
           >
             <div className="brand">
               <img className="brand-mark" src={logo} alt="OBoard" width={34} height={34} />
@@ -2660,6 +2654,7 @@ export function App() {
                   onPointerEnter={() => preloadIntent(x === 'automation' ? automationLandingTab() : x)}
                   onFocus={() => preloadIntent(x === 'automation' ? automationLandingTab() : x)}
                   key={x}
+                  aria-current={(x === 'automation' ? isAutomationNavTab(tab) : tab === x) ? 'page' : undefined}
                   title={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
                   aria-label={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
                 >
@@ -2849,92 +2844,23 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
   }
 
   return (
-    <div className="login-screen">
-      <section className="login-hero" aria-label="产品介绍">
-        <div className="login-hero-grid" />
-        <div className="login-hero-topline">
-          <span>OBOARD</span>
-          <span className="login-hero-dot">·</span>
-          <span>控制台</span>
-        </div>
-
-        <div className="login-hero-network">
-          <svg className="login-hero-svg" viewBox="0 0 640 640" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path d="M120 180 L320 280 L520 160" stroke="rgba(255,255,255,0.14)" strokeWidth="1.2" strokeDasharray="5 7" />
-            <path d="M160 460 L320 280 L480 470" stroke="rgba(255,255,255,0.12)" strokeWidth="1.2" strokeDasharray="5 7" />
-            <path d="M120 180 L160 460" stroke="rgba(255,255,255,0.1)" strokeWidth="1.2" strokeDasharray="5 7" />
-            <path d="M520 160 L480 470" stroke="rgba(255,255,255,0.1)" strokeWidth="1.2" strokeDasharray="5 7" />
-            <circle cx="120" cy="180" r="18" stroke="rgba(255,255,255,0.28)" strokeWidth="1.2" />
-            <circle cx="120" cy="180" r="4" fill="rgba(255,255,255,0.85)" />
-            <circle cx="320" cy="280" r="28" stroke="rgba(255,255,255,0.22)" strokeWidth="1.2" />
-            <circle cx="320" cy="280" r="8" fill="rgba(255,255,255,0.9)" />
-            <circle cx="520" cy="160" r="16" stroke="rgba(255,255,255,0.24)" strokeWidth="1.2" />
-            <circle cx="520" cy="160" r="4" fill="rgba(255,255,255,0.8)" />
-            <circle cx="160" cy="460" r="14" stroke="rgba(255,255,255,0.2)" strokeWidth="1.2" />
-            <circle cx="160" cy="460" r="3.5" fill="rgba(255,255,255,0.75)" />
-            <circle cx="480" cy="470" r="14" stroke="rgba(255,255,255,0.2)" strokeWidth="1.2" />
-            <circle cx="480" cy="470" r="3.5" fill="rgba(255,255,255,0.75)" />
-          </svg>
-
-          <div className="login-float-card login-float-server">
-            <div className="login-float-head">
-              <span>服务器</span>
-              <span className="login-online"><i />在线</span>
-            </div>
-            <strong>oboard-node-01</strong>
-            <div className="login-meter"><span>CPU</span><div className="login-meter-bar"><i style={{ width: '42%' }} /></div><em>42%</em></div>
-            <div className="login-meter"><span>内存</span><div className="login-meter-bar"><i style={{ width: '68%' }} /></div><em>68%</em></div>
-            <div className="login-meter"><span>磁盘</span><div className="login-meter-bar"><i style={{ width: '21%' }} /></div><em>21%</em></div>
-          </div>
-
-          <div className="login-float-card login-float-regions">
-            <div className="login-float-head"><span>节点</span><i className="login-pulse" /></div>
-            <strong>12 个地区</strong>
-            <div className="login-region-chips">
-              {['HK', 'SG', 'TYO', 'NRT', 'LAX', 'FRA'].map(x => <span key={x}>{x}</span>)}
-            </div>
-          </div>
-
-          <div className="login-float-card login-float-term">
-            <div className="login-float-head">
-              <span>终端</span>
-              <span className="login-term-dots"><i /><i /><i /></span>
-            </div>
-            <pre>{`$ ssh root@oboard-node-01
-$ uptime
-已运行 42 天，负载 0.18
-$ _`}</pre>
-          </div>
-        </div>
-
-        <div className="login-hero-copy">
-          <h1>OBOARD</h1>
-          <p>高性能代理基础设施，一键编排、按需部署。</p>
-          <div className="login-hero-meta">
-            <span>账户访问</span>
-          </div>
-        </div>
-
-        <div className="login-hero-footer">
-          <span>© {new Date().getFullYear()} OBoard</span>
-          <ThemeSelector value={theme} onChange={onThemeChange} variant="hero" />
-        </div>
-      </section>
-
-      <section className="login-panel">
-        <motion.div
-          className="login-panel-card"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <div className="login-panel-kicker">{loginStep === 'totp' ? '双重认证' : registerMode ? '注册' : '登录'}</div>
-          <h2>{loginStep === 'totp' ? '确认是你本人' : registerMode ? '创建账号' : '欢迎回来'}</h2>
-          <p className="login-panel-desc">{loginStep === 'totp' ? '输入认证器中的六位验证码，也可以使用一枚恢复码。' : registerMode ? '注册后需管理员分配用户组才能访问控制台。' : '请输入账号信息以访问控制台。'}</p>
+    <div className="signin-screen">
+      <header className="signin-header">
+        <a className="signin-brand" href={appPath('/')} aria-label="OBoard">
+          <img src={logo} alt="" width={32} height={32} />
+          <span>OBoard</span>
+        </a>
+        <ThemeSelector value={theme} onChange={onThemeChange} variant="login" />
+      </header>
+      <main className="signin-main">
+        <section className="signin-card" aria-label={loginStep === 'totp' ? '验证身份' : registerMode ? '创建账号' : '登录'}>
+          <h1>{loginStep === 'totp' ? '验证身份' : registerMode ? '创建账号' : '登录'}</h1>
+          {loginStep === 'totp' && <p className="login-panel-desc">输入认证器验证码或恢复码。</p>}
+          {registerMode && <p className="login-panel-desc">注册后需管理员分配访问权限。</p>}
 
           <form className="login-form-hyvps" onSubmit={registerMode ? handleRegister : handleSubmit}>
             {loginStep === 'password' ? <><label className="login-field">
-              <span className="sr-only">用户名</span>
+              <span className="signin-field-label">用户名</span>
               <div className="login-input-wrap">
                 <User size={16} className="login-input-leading" aria-hidden="true" />
                 <input
@@ -2949,7 +2875,7 @@ $ _`}</pre>
             </label>
 
             <label className="login-field">
-              <span className="sr-only">密码</span>
+              <span className="signin-field-label">密码</span>
               <div className="login-input-wrap">
                 <Lock size={16} className="login-input-leading" aria-hidden="true" />
                 <input
@@ -2957,7 +2883,7 @@ $ _`}</pre>
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="密码"
-                  autoComplete="current-password"
+                  autoComplete={registerMode ? 'new-password' : 'current-password'}
                   required
                   aria-label="密码"
                 />
@@ -2974,7 +2900,7 @@ $ _`}</pre>
 
             {registerMode && <>
               <label className="login-field">
-                <span className="sr-only">昵称</span>
+                <span className="signin-field-label">昵称（可选）</span>
                 <div className="login-input-wrap">
                   <User size={16} className="login-input-leading" aria-hidden="true" />
                   <input
@@ -2988,7 +2914,7 @@ $ _`}</pre>
                 </div>
               </label>
               <label className="login-field">
-                <span className="sr-only">确认密码</span>
+                <span className="signin-field-label">确认密码</span>
                 <div className="login-input-wrap">
                   <Lock size={16} className="login-input-leading" aria-hidden="true" />
                   <input
@@ -3003,7 +2929,7 @@ $ _`}</pre>
                 </div>
               </label>
             </>}</> : <label className="login-field">
-              <span className="sr-only">验证码或恢复码</span>
+              <span className="signin-field-label">验证码或恢复码</span>
               <div className="login-input-wrap">
                 <Smartphone size={16} className="login-input-leading" aria-hidden="true" />
                 <input
@@ -3018,10 +2944,10 @@ $ _`}</pre>
               </div>
             </label>}
 
-            {registerNotice && <div className="login-notice">{registerNotice}</div>}
-            {error && <div className="login-error">{error}</div>}
+            {registerNotice && <div className="login-notice" role="status">{registerNotice}</div>}
+            {error && <div className="login-error" role="alert">{error}</div>}
 
-            <button type="submit" className="login-submit" disabled={isLoading}>
+            <button type="submit" className="login-submit" disabled={isLoading} aria-busy={isLoading}>
               {isLoading ? '处理中…' : loginStep === 'totp' ? '验证并登录' : registerMode ? '注册' : '登录'}
             </button>
 
@@ -3030,13 +2956,12 @@ $ _`}</pre>
               <button type="button" className="login-passkey" onClick={() => void loginWithPasskey()} disabled={isLoading}><Fingerprint size={17} />使用通行密钥</button>
             </>}
             {loginStep === 'totp' && <button type="button" className="login-back" onClick={backToPassword} disabled={isLoading}>返回密码登录</button>}
-            {loginStep === 'password' && registrationAvailable !== false && <button type="button" className="login-back login-register-toggle" onClick={toggleRegisterMode} disabled={isLoading}>{registerMode ? '已有账号？返回登录' : '没有账号？立即注册'}</button>}
+            {loginStep === 'password' && registrationAvailable === true && <button type="button" className="login-back login-register-toggle" onClick={toggleRegisterMode} disabled={isLoading}>{registerMode ? '已有账号？返回登录' : '没有账号？立即注册'}</button>}
           </form>
 
-          {/* Shown when the left hero (and its theme control) is hidden on narrow screens. */}
-          <ThemeSelector value={theme} onChange={onThemeChange} variant="login" />
-        </motion.div>
-      </section>
+
+        </section>
+      </main>
     </div>
   )
 }
@@ -3150,8 +3075,8 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
   const dialogs = useDialogs()
   const role = data?.session?.role || data?.current_user?.role
   const isAdmin = canManageAdministratorAccounts(role)
-  const isScriptsView = tab !== 'automation' || !isAdmin
-  const scriptTab = tab === 'script-triggers' || tab === 'script-runs' ? tab : 'scripts'
+  const isPluginsView = tab !== 'automation' || !isAdmin
+  const pluginTab = tab === 'plugin-triggers' || tab === 'plugin-runs' ? tab : 'plugins'
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
   const [working, setWorking] = useState('')
   const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })
@@ -3174,13 +3099,13 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
     if (tab === 'automation' && !isAdmin) goTab(automationLandingTab())
   }, [tab, isAdmin])
   useEffect(() => {
-    if (!isScriptsView) void refresh()
-  }, [isScriptsView])
-  useRegisterPageRefresh(() => { if (!isScriptsView) return refresh() })
+    if (!isPluginsView) void refresh()
+  }, [isPluginsView])
+  useRegisterPageRefresh(() => { if (!isPluginsView) return refresh() })
   useEffect(() => {
-    if (isScriptsView) return
+    if (isPluginsView) return
     if (realtimeRevision > 0 && (realtimeResources.includes('automation') || realtimeResources.includes('all'))) void refresh()
-  }, [realtimeRevision, realtimeResources, isScriptsView])
+  }, [realtimeRevision, realtimeResources, isPluginsView])
 
   const closeConnectDialog = () => {
     setConnectDialogOpen(false)
@@ -3204,18 +3129,18 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
     if (tab !== 'automation') goTab('automation')
   }
   return <Panel className="automation-panel">
-    <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
-      <button className={isScriptsView ? 'active' : ''} onClick={() => goTab(automationLandingTab())}><Code size={15} />脚本</button>
+    <div className="audit-console-tabs automation-tabs" role="group" aria-label="自动化视图">
+      <button type="button" aria-pressed={isPluginsView} className={isPluginsView ? 'active' : ''} onClick={() => goTab(automationLandingTab())}><Code size={15} />插件</button>
       {isAdmin && <>
-        <button className={!isScriptsView && view === 'access' ? 'active' : ''} onClick={() => openAdminView('access')}><Key size={15} />访问凭据</button>
-        <button className={!isScriptsView && view === 'changes' ? 'active' : ''} onClick={() => openAdminView('changes')}><Workflow size={15} />审批与变更</button>
-        <button className={!isScriptsView && view === 'ai' ? 'active' : ''} onClick={() => openAdminView('ai')}><Bot size={15} />AI Provider</button>
+        <button type="button" aria-pressed={!isPluginsView && view === 'access'} className={!isPluginsView && view === 'access' ? 'active' : ''} onClick={() => openAdminView('access')}><Key size={15} />访问凭据</button>
+        <button type="button" aria-pressed={!isPluginsView && view === 'changes'} className={!isPluginsView && view === 'changes' ? 'active' : ''} onClick={() => openAdminView('changes')}><Workflow size={15} />审批与变更</button>
+        <button type="button" aria-pressed={!isPluginsView && view === 'ai'} className={!isPluginsView && view === 'ai' ? 'active' : ''} onClick={() => openAdminView('ai')}><Bot size={15} />AI Provider</button>
       </>}
     </div>
-    {isScriptsView && <div className="automation-scripts" style={{ marginTop: 14, minWidth: 0 }}><ScriptsWorkspace tab={scriptTab} data={data} client={client} notify={notify} onNavigate={goTab} /></div>}
-    {!isScriptsView && view === 'access' && <>
+    {isPluginsView && <div className="automation-plugins" style={{ marginTop: 14, minWidth: 0 }}><PluginsWorkspace tab={pluginTab} data={data} client={client} notify={notify} onNavigate={goTab} /></div>}
+    {!isPluginsView && view === 'access' && <>
       <div className="automation-access-toolbar">
-        <div><strong>MCP 客户端</strong><span>通过 OAuth 登录并授权当前用户的访问权限。</span></div>
+        <div><strong>MCP 客户端</strong></div>
         <button type="button" onClick={() => openConnectDialog()}><Cable size={15} />接入客户端</button>
       </div>
       <MCPAccessPage
@@ -3225,7 +3150,7 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
         confirm={dialogs.confirm}
       />
     </>}
-    {!isScriptsView && view === 'changes' && <div className="automation-grid automation-changes-grid">
+    {!isPluginsView && view === 'changes' && <div className="automation-grid automation-changes-grid">
       <section className="settings-card automation-changesets">
         <div className="settings-card-head"><div><h3>Changeset</h3><p className="muted">校验计划哈希、影响范围并执行已批准变更。</p></div></div>
         <div className="automation-list">{snapshot.changesets.length ? snapshot.changesets.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.reason || item.id}</strong><span>{item.operations.map((operation: any) => operation.capability).join(' · ')}</span><small>{item.status} · 风险 {item.risk_class} · {formatTableTime(item.created_at)}</small></div><div>{item.status === 'draft' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'validate')} title="校验" aria-label="校验"><ShieldCheck size={15} /></button>}{item.status === 'awaiting_approval' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'approve')} title="批准" aria-label="批准"><BadgeCheck size={15} /></button>}{item.status === 'approved' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'apply')} title="执行" aria-label="执行"><Play size={15} /></button>}</div></div>) : <p className="muted">暂无变更集</p>}</div>
@@ -3237,7 +3162,7 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
           : <p className="muted">暂无调用记录</p>}
       </section>
     </div>}
-    {!isScriptsView && view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
+    {!isPluginsView && view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
     <AnimatePresence>{connectDialogOpen && <MotionDialogPanel onCancel={closeConnectDialog} className="automation-dialog automation-connect-dialog">
       <header className="dialog-head"><div><h2>接入 MCP 客户端</h2><p className="muted">使用当前主控公开地址生成用户级配置。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeConnectDialog} aria-label="关闭" title="关闭"><XIcon /></button></header>
       <div className="dialog-body automation-connect-body">
@@ -3757,12 +3682,13 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     const targetPolicy = nextPolicy ?? subscriptionAgePolicy
     await runSave('subscription-age', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: targetPolicy }) })
+      setSubscriptionAgePolicy(targetPolicy)
     }, '订阅加密策略已保存')
   }
   const saveSubscriptionAlwaysUseDomainHost = async (nextValue: boolean) => {
-    setSubscriptionAlwaysUseDomainHost(nextValue)
     await runSave('subscription-host', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_always_use_domain_host: nextValue }) })
+      setSubscriptionAlwaysUseDomainHost(nextValue)
     }, nextValue ? '已改为始终使用域名作为 Host' : '静态单栈入口将使用 IP 作为 Host')
   }
   const saveControllerLogs = async () => {
@@ -3916,7 +3842,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
           <SettingsRow label="加密策略" description="仅影响 Mihomo 格式。">
-            <Select variant="segmented" value={subscriptionAgePolicy} onChange={e => { const next = e.target.value as 'optional' | 'required'; setSubscriptionAgePolicy(next); void saveSubscriptionAgePolicy(next) }} disabled={saving === 'subscription-age'} aria-label="Age 加密策略">
+            <Select variant="segmented" value={subscriptionAgePolicy} onChange={e => { const next = e.target.value as 'optional' | 'required'; void saveSubscriptionAgePolicy(next) }} disabled={Boolean(saving)} aria-label="Age 加密策略">
               <option value="optional">用户可选</option><option value="required">强制开启</option>
             </Select>
           </SettingsRow>
@@ -3929,7 +3855,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             description="开启后，已配置解析的入口使用域名；关闭时，固定单栈入口使用 IP，其他入口仍用域名。"
             checked={subscriptionAlwaysUseDomainHost}
             onChange={checked => void saveSubscriptionAlwaysUseDomainHost(checked)}
-            disabled={saving === 'subscription-host'}
+            disabled={Boolean(saving)}
             ariaLabel="优先使用域名"
           />
         </SettingsGroup>
@@ -5262,7 +5188,7 @@ function defaultCertificateAccountEmail(rawDomains: unknown) {
 
 function CertificateLogDialog({ certificate, onClose }: { certificate: Certificate; onClose: () => void }) {
   const log = String(certificate.last_error || '').trim()
-  return <MotionDialogPanel onCancel={onClose} className="certificate-log-dialog">
+  return <MotionDialogPanel onCancel={onClose} className="certificate-log-dialog" placement="right" drawerSize="wide" ariaLabel="签发日志">
     <header className="dialog-head"><div><h2>签发日志</h2><p className="muted">{certificate.name} · {certificate.domains.join(' · ')}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body certificate-log-body">
       <div className="certificate-log-meta"><span className={`status-pill ${certificate.status === 'ready' ? 'ok' : certificate.status === 'failed' ? 'warning' : ''}`}>{certificateLabelValue(certificate.status)}</span><span>{certificate.last_renewal_attempt_at ? `最近尝试：${formatTableTime(certificate.last_renewal_attempt_at)}` : '尚未开始签发'}</span></div>
@@ -5984,7 +5910,7 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
     }
   }
   const showEvidence = (item: AuditReviewEvidence) => dialogs.alert({ title: item.ref, message: <div className="raw-log-copy"><CopyBlock value={JSON.stringify(item.payload || {}, null, 2)} /></div> })
-  return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog ai-review-detail-dialog">
+  return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog ai-review-detail-dialog" placement="right" drawerSize="wide" ariaLabel="辅助分析详情">
     <header className="dialog-head"><div><h2>辅助分析详情</h2><p className="muted">{formatTableTime(detail.review.created_at)} · {auditReviewStatusLabel(detail.review.status, verdict)}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body ai-review-detail-body">
       <div className="ai-review-detail-meta"><span>{auditReviewEvidenceLabel(detail.review.evidence_types)}</span><span>{detail.review.resolved_user_ids.length} 个用户</span><span>{detail.review.resolved_server_ids.length} 台服务器</span><span>{detail.review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'}</span><span>{detail.review.completed_job_count}/{detail.review.job_count} 个任务完成</span></div>
@@ -6124,15 +6050,13 @@ function AuditLogs({ data, loading, embedded = false }: any) {
   return embedded ? content : <Panel title="审计日志">{content}</Panel>
 }
 
-function Dashboard({ data, loading, displayName: preferredDisplayName, client, canCleanup, onCleaned }: any) {
+function Dashboard({ data, loading, client, canCleanup, onCleaned }: any) {
   const [configHealthOpen, setConfigHealthOpen] = useState(false)
   const configHealth = configHealthSummaryOf(data)
   const summary = data.summary || {}
   const servers = data.servers || []
-  const displayName = String(preferredDisplayName || data.current_user?.nickname || data.current_user?.username || 'Admin')
 
   const totalServers = summary.servers_total ?? summary.servers ?? summary.server_count ?? servers.length ?? 0
-  const serverCountWatermark = String(Math.max(0, Number(totalServers) || 0)).padStart(2, '0')
   const onlineServers = summary.servers_online ?? summary.online_agents ?? summary.online_servers ?? servers.filter((s: any) => s.status === 'online').length ?? 0
   const offlineServers = Math.max(0, Number(totalServers) - Number(onlineServers))
   const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
@@ -6164,33 +6088,17 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
 
   return (
     <div className="dashboard-page">
-      <section className="dash-welcome">
-        <div className="dash-welcome-copy">
-          <div className="dash-welcome-kicker">
-            <span>总览</span>
-            <span className="dot" />
-            <span>{formatDashDate()}</span>
-          </div>
-          <h1>欢迎回来,{displayName}</h1>
-          <p>以下是您的服务器、任务和近期活动概览。在几秒内部署配置或管理您的服务器集群。</p>
-        </div>
-        <div className="dash-welcome-actions">
-          <button type="button" onClick={() => goTab('servers')}>
-            <HardDrive size={15} />
-            <span>管理服务器</span>
-          </button>
-        </div>
-        <div className="dash-watermark" aria-hidden="true">{serverCountWatermark}</div>
-      </section>
-
+      <nav className="dashboard-shortcuts" aria-label="快捷操作">
+        {quickActions.map(item => <button key={item.key} type="button" className="ghost" onClick={() => goTab(item.key)}>{item.icon}<span>{item.title}</span></button>)}
+      </nav>
       <section className="stat-row">
         <div className="stat-cell">
           <div className="stat-cell-head">
             <span>我的服务器</span>
             <ServerIcon size={16} />
           </div>
-          <strong>{totalServers}</strong>
-          <small>{onlineServers} 台运行中，{offlineServers} 台已停止</small>
+          <strong>{loading && !servers.length ? '—' : totalServers}</strong>
+          <small>{onlineServers} 台在线 · {offlineServers} 台未在线</small>
         </div>
         <div className="stat-cell">
           <div className="stat-cell-head">
@@ -6205,7 +6113,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
             <span>活跃流量</span>
             <Zap size={16} />
           </div>
-          <strong>{totalTraffic}</strong>
+          <strong>{loading && !servers.length ? '—' : totalTraffic}</strong>
           <small>{totalServers} 台服务器 · 当前账期累计</small>
         </div>
       </section>
@@ -6220,31 +6128,12 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
         />
       )}
 
-      <section className="dash-lower">
+      <section className="dashboard-results">
         <div>
           <div className="dash-section-head">
             <div>
-              <h2>快捷操作</h2>
-              <p>直达最常用的功能</p>
-            </div>
-          </div>
-          <div className="quick-grid">
-            {quickActions.map(item => (
-              <button key={item.key} type="button" className="quick-card" onClick={() => goTab(item.key)}>
-                <div className="quick-card-icon">{item.icon}</div>
-                <strong>{item.title}</strong>
-                <span>{item.desc}</span>
-                <em>打开 →</em>
-              </button>
-            ))}
-          </div>
-        </div>
+              <h2>最新执行结果</h2>
 
-        <div>
-          <div className="dash-section-head">
-            <div>
-              <h2>最近活动</h2>
-              <p>您账户上的最新事件</p>
             </div>
             <button type="button" className="linkish" onClick={() => goTab('tasks')}>查看全部 →</button>
           </div>
@@ -6255,13 +6144,13 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
               recentTasks.map((tsk: any) => (
                 <div className="activity-item" key={tsk.id}>
                   <div className="activity-icon">
-                    {tsk.status === 'running' ? <RefreshCw size={14} /> : tsk.status === 'succeeded' ? <Check size={14} /> : <Info size={14} />}
+                    {tsk.status === 'running' ? <RefreshCw size={14} /> : tsk.status === 'success' ? <Check size={14} /> : <Info size={14} />}
                   </div>
                   <div>
                     <strong>{tsk.title}</strong>
                     <span>{tsk.subtitle}</span>
                   </div>
-                  <time>{formatTableTime(tsk.createdAt)}</time>
+                  <div className="dashboard-result-state"><span>{tsk.status === 'running' ? '进行中' : tsk.status === 'success' ? '已完成' : '失败'}</span><time>{formatTableTime(tsk.createdAt)}</time></div>
                 </div>
               ))
             )}
@@ -9335,7 +9224,7 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
       : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'
 
   return (
-    <MotionDialogPanel onCancel={onClose} className="server-detail-dialog">
+    <MotionDialogPanel onCancel={onClose} className="server-detail-dialog" placement="right" drawerSize="wide" ariaLabel={`${server.name || '服务器'}详情`}>
       <header className="dialog-head server-detail-head">
         <div className="server-detail-title">
           <RegionFlag code={serverRegionCode(server)} size={28} />
@@ -12558,7 +12447,7 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
     return importedNodes.filter(node => {
       const code = nodeRegionCode(node)
       if (nodeRegion !== 'all' && (nodeRegion === '' ? Boolean(code) : code !== nodeRegion)) return false
-      if (nodeStatusFilter === 'offline') return false
+      if (nodeStatusFilter !== 'all') return false
       if (!normalizedQuery) return true
       return [node.name, node.protocol, node.target_address, String(node.target_port), `imported-${node.id}`, code, regionLabel(code)]
         .some(value => String(value || '').toLowerCase().includes(normalizedQuery))
@@ -12624,7 +12513,7 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
       </div>
     </>}
   </aside>
-  <AnimatePresence>{nodePickerOpen && <MotionDialogPanel onCancel={closeNodePicker} className="graph-node-picker-dialog">
+  <AnimatePresence>{nodePickerOpen && <MotionDialogPanel onCancel={closeNodePicker} className="graph-node-picker-dialog" placement="right" drawerSize="wide" ariaLabel="选择节点">
     <header className="dialog-head">
       <div><h2>添加其他服务器</h2><p className="muted">选择已有服务器或导入节点放入画布；同一服务器可以多次添加。</p></div>
       <button className="ghost dialog-close icon-button" onClick={closeNodePicker} aria-label="关闭" title="关闭"><X /></button>
@@ -12653,21 +12542,21 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
                 <button
                   type="button"
                   className={`graph-palette-pill${nodeTypeFilter === 'all' ? ' selected' : ''}`}
-                  onClick={() => setNodeTypeFilter('all')}
+                  aria-pressed={nodeTypeFilter === 'all'} onClick={() => setNodeTypeFilter('all')}
                 >
                   全部
                 </button>
                 <button
                   type="button"
                   className={`graph-palette-pill${nodeTypeFilter === 'server' ? ' selected' : ''}`}
-                  onClick={() => setNodeTypeFilter('server')}
+                  aria-pressed={nodeTypeFilter === 'server'} onClick={() => setNodeTypeFilter('server')}
                 >
                   服务器 <small>{availableServers.length}</small>
                 </button>
                 <button
                   type="button"
                   className={`graph-palette-pill${nodeTypeFilter === 'imported' ? ' selected' : ''}`}
-                  onClick={() => setNodeTypeFilter('imported')}
+                  aria-pressed={nodeTypeFilter === 'imported'} onClick={() => setNodeTypeFilter('imported')}
                 >
                   导入节点 <small>{importedNodes.length}</small>
                 </button>
@@ -12677,21 +12566,21 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
               <button
                 type="button"
                 className={`graph-palette-pill${nodeStatusFilter === 'all' ? ' selected' : ''}`}
-                onClick={() => setNodeStatusFilter('all')}
+                aria-pressed={nodeStatusFilter === 'all'} onClick={() => setNodeStatusFilter('all')}
               >
                 全部状态
               </button>
               <button
                 type="button"
                 className={`graph-palette-pill${nodeStatusFilter === 'online' ? ' selected' : ''}`}
-                onClick={() => setNodeStatusFilter('online')}
+                aria-pressed={nodeStatusFilter === 'online'} onClick={() => setNodeStatusFilter('online')}
               >
                 在线
               </button>
               <button
                 type="button"
                 className={`graph-palette-pill${nodeStatusFilter === 'offline' ? ' selected' : ''}`}
-                onClick={() => setNodeStatusFilter('offline')}
+                aria-pressed={nodeStatusFilter === 'offline'} onClick={() => setNodeStatusFilter('offline')}
               >
                 离线
               </button>
@@ -16777,13 +16666,13 @@ function Inbounds({ data, client, load }: any) {
     const probe = latestInboundProbeSummary(data, inbound.id)
     return { id: inbound.id, name: inbound.name, protocol: inbound.protocol, endpoint: formatInboundDisplayEndpoint(data, inbound), probe_status: probe.label, probe_detail: probe.detail, enabled: inbound.enabled, _raw: inbound }
   })
-  return <Panel title="入口节点"><p className="muted">每个入口节点都是一条代理拓扑的第一个节点。保存后会自动协调相关服务器，在线入口会自动检查本机监听和公网端口。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/inbounds', { method: 'POST', body: JSON.stringify(f) }) }} /><Table rows={rows} actions={(r: any) => <><button onClick={async () => { await client.request(`/inbounds/${r._raw.id}/probe`, { method: 'POST', body: '{}' }); await load() }}>立即探测</button><button onClick={() => remove(client, `/inbounds/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /></Panel>
+  return <Panel title="入口节点"><p className="muted">每个入口节点都是一条代理拓扑的第一个节点。保存后会自动协调相关服务器，在线入口会自动检查本机监听和公网端口。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/inbounds', { method: 'POST', body: JSON.stringify(f) }); await load() }} /><Table rows={rows} actions={(r: any) => <><button onClick={async () => { await client.request(`/inbounds/${r._raw.id}/probe`, { method: 'POST', body: '{}' }); await load() }}>立即探测</button><button onClick={() => remove(client, `/inbounds/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /></Panel>
 }
 
 function Outbounds({ data, client, load }: any) {
   const dialogs = useDialogs()
   const [f, setF] = useState({ server_id: 0, name: 'next-hop', protocol: 'vless', target_address: '', target_port: 443, config_json: '{}', enabled: true })
-  return <Panel title="出口 / 下一跳"><p className="muted">出口可以是本机 direct，也可以是后续链路要使用的下一跳协议；保存后会自动协调相关服务器。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/outbounds', { method: 'POST', body: JSON.stringify(f) }) }} outbound /><Table rows={data.outbounds || []} actions={(r: Outbound) => <button onClick={() => remove(client, `/outbounds/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
+  return <Panel title="出口 / 下一跳"><p className="muted">出口可以是本机 direct，也可以是后续链路要使用的下一跳协议；保存后会自动协调相关服务器。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/outbounds', { method: 'POST', body: JSON.stringify(f) }); await load() }} outbound /><Table rows={data.outbounds || []} actions={(r: Outbound) => <button onClick={() => remove(client, `/outbounds/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
 }
 
 function RoutingRules({ data, client, load }: any) {
@@ -17853,7 +17742,7 @@ function UserTrafficLedgerDialog({ user, client, onCancel }: { user: User; clien
     if (['stale', 'recovering'].includes(status)) return 'var(--color-warning)'
     return 'var(--text-secondary)'
   }
-  return <MotionDialogPanel aria-labelledby="user-traffic-ledger-title" onCancel={onCancel} className="user-form-dialog">
+  return <MotionDialogPanel aria-labelledby="user-traffic-ledger-title" onCancel={onCancel} className="user-form-dialog" placement="right" drawerSize="wide">
     <header className="dialog-head">
       <div>
         <h2 id="user-traffic-ledger-title">流量明细</h2>
@@ -18699,7 +18588,7 @@ function DNSBenchmarkHistoryDialog({ servers, client, onClose }: { servers: Serv
     ? '正在加载测试记录'
     : `${records.length} 条记录 · ${groups.length} 台服务器`
 
-  return <MotionDialogPanel onCancel={onClose} className="dns-benchmark-history-dialog">
+  return <MotionDialogPanel onCancel={onClose} className="dns-benchmark-history-dialog" placement="right" drawerSize="wide" ariaLabel="DNS 测试记录">
     <header className="dialog-head">
       <div><h2>测试记录</h2><p className="muted">{subtitle}</p></div>
       <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
@@ -19029,13 +18918,20 @@ function MTU({ data, client, load, notify }: any) {
     const name = servers.find((s: Server) => s.id === f.server_id)?.name || '服务器'
     notify?.(`已创建 ${name} 的 MTU 检测，请在任务中心查看结果`, 'success')
   }
-  return <Panel title="MTU 检测"><p className="muted">MTU 检测会交叉校验出口网卡 MTU、系统路由 MTU、tracepath PMTU、DF ping 二分探测和 TCP 可达性。仅检测模式只记录建议值；应用模式会要求 Agent 修改网卡 MTU，通常需要 root/CAP_NET_ADMIN，容器环境建议优先使用仅检测。</p><div className="form"><Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select variant="segmented" value={f.mode} onChange={e => setF({ ...f, mode: e.target.value })}>{mtuModes.filter(x => x !== 'disabled').map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select><input value={f.target_host} onChange={e => setF({ ...f, target_host: e.target.value })} placeholder="目标主机，空为默认" /><input value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口，空为默认" /><input value={f.interface_name} onChange={e => setF({ ...f, interface_name: e.target.value })} placeholder="网卡名，可选" /><input value={f.overhead_bytes} onChange={e => setF({ ...f, overhead_bytes: Number(e.target.value) })} placeholder="额外开销字节" /><input value={f.desired_mtu} onChange={e => setF({ ...f, desired_mtu: Number(e.target.value) })} placeholder="目标 MTU，0 为自动" /><input value={f.sample_count} onChange={e => setF({ ...f, sample_count: Number(e.target.value) })} placeholder="采样次数" /><input value={f.timeout_ms} onChange={e => setF({ ...f, timeout_ms: Number(e.target.value) })} placeholder="超时毫秒" /><button onClick={submit}>检测/应用</button></div><Table rows={data.mtu_detections || []} /></Panel>
+  return <Panel title="MTU 检测"><p className="muted">MTU 检测会交叉校验出口网卡 MTU、系统路由 MTU、tracepath PMTU、DF ping 二分探测和 TCP 可达性。仅检测模式只记录建议值；应用模式会要求 Agent 修改网卡 MTU，通常需要 root/CAP_NET_ADMIN，容器环境建议优先使用仅检测。</p><div className="form signal-resource-form"><FormField label="服务器"><Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><Select variant="segmented" value={f.mode} onChange={e => setF({ ...f, mode: e.target.value })}>{mtuModes.filter(x => x !== 'disabled').map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select><FormField label="目标主机，空为默认"><input value={f.target_host} onChange={e => setF({ ...f, target_host: e.target.value })} placeholder="目标主机，空为默认" /></FormField><FormField label="目标端口，空为默认"><input type="number" value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口，空为默认" /></FormField><FormField label="网卡名，可选"><input value={f.interface_name} onChange={e => setF({ ...f, interface_name: e.target.value })} placeholder="网卡名，可选" /></FormField><FormField label="额外开销字节"><input type="number" value={f.overhead_bytes} onChange={e => setF({ ...f, overhead_bytes: Number(e.target.value) })} placeholder="额外开销字节" /></FormField><FormField label="目标 MTU，0 为自动"><input type="number" value={f.desired_mtu} onChange={e => setF({ ...f, desired_mtu: Number(e.target.value) })} placeholder="目标 MTU，0 为自动" /></FormField><FormField label="采样次数"><input type="number" value={f.sample_count} onChange={e => setF({ ...f, sample_count: Number(e.target.value) })} placeholder="采样次数" /></FormField><FormField label="超时毫秒"><input type="number" value={f.timeout_ms} onChange={e => setF({ ...f, timeout_ms: Number(e.target.value) })} placeholder="超时毫秒" /></FormField><button onClick={submit}>检测/应用</button></div><Table rows={data.mtu_detections || []} /></Panel>
 }
 
 function PortForwards({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
 	const [f, setF] = useState({ name: 'forward-1', source_server_id: 0, target_server_id: 0, listen_ip: '0.0.0.0', listen_port: 443, target_address: '', target_port: 443, protocol: 'tcp' as ForwardProtocol, backend: 'realm' as ForwardBackend, probe_mode: 'periodic' as ProbeMode, probe_interval_seconds: 300, priority: 100, config_json: '{}', enabled: true })
-  const submit = async () => { await client.request('/port-forwards', { method: 'POST', body: JSON.stringify(f) }) }
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const submit = async () => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try { await client.request('/port-forwards', { method: 'POST', body: JSON.stringify(f) }); await load() } catch (error: any) { setError(localizeErrorMessage(error?.message || error)) } finally { setBusy(false) }
+  }
   const forwardRows = (data.port_forwards || []).map((forward: PortForward) => {
     const probe = latestForwardProbe(data, forward.id)
     return { id: forward.id, name: forward.name, source_server_id: forward.source_server_id, target_server_id: forward.target_server_id, protocol: forward.protocol, listen_port: forward.listen_port, target_port: forward.target_port, probe_status: !probe ? '等待探测' : probe.available ? `正常 · ${probe.latency_ms}ms` : '转发异常', checked_at: probe?.created_at || '', enabled: forward.enabled, _raw: forward }
@@ -19045,14 +18941,21 @@ function PortForwards({ data, client, load, notify }: any) {
     const forward = (data.port_forwards || []).find((x: PortForward) => x.id === probe.port_forward_id)
     return { id: probe.id, name: forward?.name || `转发 ${probe.port_forward_id}`, mode: probe.mode, probe_status: probe.available ? '正常' : '异常', latency_ms: probe.latency_ms, p95_latency_ms: details.p95, jitter_ms: details.jitter, success_count: details.successCount, sample_count: probe.sample_count, checked_at: probe.created_at, error: probe.error }
   })
-  return <Panel title="端口转发"><p className="muted">下发后自动检查源端监听，并从 A 节点连续 5 次连接 B 节点目标端口，回报平均延迟、P95、抖动和成功率。周期模式默认每 5 分钟复检。转发由源服务器上随 Agent 安装的 OBoard Realm 执行。</p><div className="form"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={f.listen_ip} onChange={e => setF({ ...f, listen_ip: e.target.value })} placeholder="监听 IP" /><input value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /><input value={f.target_address} onChange={e => setF({ ...f, target_address: e.target.value })} placeholder="目标地址，可选" /><input value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /><Select variant="segmented" value={f.protocol} onChange={e => setF({ ...f, protocol: e.target.value as ForwardProtocol })}>{forwardProtocols.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select><Select value={f.probe_mode} onChange={e => setF({ ...f, probe_mode: e.target.value as ProbeMode })}>{probeModes.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select><input value={f.probe_interval_seconds} onChange={e => setF({ ...f, probe_interval_seconds: Number(e.target.value) })} placeholder="探测间隔秒" /><input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div><Table rows={forwardRows} actions={(r: any) => <><button onClick={() => void probeForwardNow(client, r._raw, load, notify)}>立即探测</button><button onClick={() => remove(client, `/port-forwards/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /><h3>探测结果</h3><Table rows={probeRows} /></Panel>
+  return <Panel title="端口转发"><p className="muted">下发后自动检查源端监听，并从 A 节点连续 5 次连接 B 节点目标端口，回报平均延迟、P95、抖动和成功率。周期模式默认每 5 分钟复检。转发由源服务器上随 Agent 安装的 OBoard Realm 执行。</p><div className="form signal-resource-form"><FormField label="名称"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /></FormField><FormField label="源服务器"><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="目标服务器"><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="监听 IP"><input value={f.listen_ip} onChange={e => setF({ ...f, listen_ip: e.target.value })} placeholder="监听 IP" /></FormField><FormField label="监听端口"><input type="number" value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /></FormField><FormField label="目标地址，可选"><input value={f.target_address} onChange={e => setF({ ...f, target_address: e.target.value })} placeholder="目标地址，可选" /></FormField><FormField label="目标端口"><input type="number" value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /></FormField><FormField label="协议"><Select variant="segmented" value={f.protocol} onChange={e => setF({ ...f, protocol: e.target.value as ForwardProtocol })}>{forwardProtocols.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select></FormField><FormField label="探测方式"><Select value={f.probe_mode} onChange={e => setF({ ...f, probe_mode: e.target.value as ProbeMode })}>{probeModes.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select></FormField><FormField label="探测间隔秒"><input type="number" value={f.probe_interval_seconds} onChange={e => setF({ ...f, probe_interval_seconds: Number(e.target.value) })} placeholder="探测间隔秒" /></FormField><FormField label="优先级"><input type="number" value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /></FormField><FormField label="JSON 配置"><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /></FormField><button type="button" onClick={() => void submit()} disabled={busy}>{busy ? '创建中…' : '创建'}</button>{error && <p className="danger-text" role="alert">{error}</p>}</div><Table rows={forwardRows} actions={(r: any) => <><button onClick={() => void probeForwardNow(client, r._raw, load, notify)}>立即探测</button><button onClick={() => remove(client, `/port-forwards/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /><h3>探测结果</h3><Table rows={probeRows} /></Panel>
 }
 
 function Tunnels({ data, client, load }: any) {
   const dialogs = useDialogs()
   const [f, setF] = useState({ name: 'tunnel-1', source_server_id: 0, target_server_id: 0, type: 'wireguard' as TunnelType, local_address: '', peer_address: '', listen_port: 0, target_endpoint: '', target_port: 0, priority: 100, config_json: '{}', enabled: true })
-  const submit = async () => { await client.request('/tunnels', { method: 'POST', body: JSON.stringify(f) }) }
-  return <Panel title="隧道"><p className="muted">独立隧道使用 WireGuard。代理路径中的 SSH 由系统自动创建专用账户和密钥。</p><div className="form"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select variant="segmented" value={f.type} onChange={e => setF({ ...f, type: e.target.value as TunnelType })}><option value="wireguard">WireGuard</option></Select><input value={f.local_address} onChange={e => setF({ ...f, local_address: e.target.value })} placeholder="本地地址" /><input value={f.peer_address} onChange={e => setF({ ...f, peer_address: e.target.value })} placeholder="对端地址 / 允许 IP" /><input value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /><input value={f.target_endpoint} onChange={e => setF({ ...f, target_endpoint: e.target.value })} placeholder="目标端点，可选" /><input value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /><input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div><Table rows={data.tunnels || []} actions={(r: Tunnel) => <button onClick={() => remove(client, `/tunnels/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const submit = async () => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try { await client.request('/tunnels', { method: 'POST', body: JSON.stringify(f) }); await load() } catch (error: any) { setError(localizeErrorMessage(error?.message || error)) } finally { setBusy(false) }
+  }
+  return <Panel title="隧道"><p className="muted">独立隧道使用 WireGuard。代理路径中的 SSH 由系统自动创建专用账户和密钥。</p><div className="form signal-resource-form"><FormField label="名称"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /></FormField><FormField label="源服务器"><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="目标服务器"><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="类型"><Select variant="segmented" value={f.type} onChange={e => setF({ ...f, type: e.target.value as TunnelType })}><option value="wireguard">WireGuard</option></Select></FormField><FormField label="本地地址"><input value={f.local_address} onChange={e => setF({ ...f, local_address: e.target.value })} placeholder="本地地址" /></FormField><FormField label="对端地址 / 允许 IP"><input value={f.peer_address} onChange={e => setF({ ...f, peer_address: e.target.value })} placeholder="对端地址 / 允许 IP" /></FormField><FormField label="监听端口"><input type="number" value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /></FormField><FormField label="目标端点，可选"><input value={f.target_endpoint} onChange={e => setF({ ...f, target_endpoint: e.target.value })} placeholder="目标端点，可选" /></FormField><FormField label="目标端口"><input type="number" value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /></FormField><FormField label="优先级"><input type="number" value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /></FormField><FormField label="JSON 配置"><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /></FormField><button type="button" onClick={() => void submit()} disabled={busy}>{busy ? '创建中…' : '创建'}</button>{error && <p className="danger-text" role="alert">{error}</p>}</div><Table rows={data.tunnels || []} actions={(r: Tunnel) => <button onClick={() => remove(client, `/tunnels/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
 }
 
 const subscriptionClientIcons: Record<string, string> = {
@@ -20268,7 +20171,7 @@ function NotificationRawLogDialog({ client, onClose }: { client: ReturnType<type
     }
   }
   useEffect(() => { void load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  return <MotionDialogPanel onCancel={onClose} className="notification-raw-log-dialog">
+  return <MotionDialogPanel onCancel={onClose} className="notification-raw-log-dialog" placement="right" drawerSize="wide" aria-labelledby="notification-raw-log-title">
     <header className="dialog-head">
       <div>
         <h2 id="notification-raw-log-title">通知原始日志</h2>
@@ -20822,7 +20725,31 @@ function ProtocolForm({ value, setValue, servers, submit, outbound }: any) {
   }, [value.protocol])
   const config = parseConfig(value.config_json) || {}
   const updateConfig = (patch: Record<string, any>) => setValue({ ...value, config_json: JSON.stringify({ ...config, ...patch }, null, 2) })
-  return <div className="form"><Select value={value.server_id} onChange={e => setValue({ ...value, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={value.name} onChange={e => setValue({ ...value, name: e.target.value })} placeholder="名称" /><Select value={value.protocol} onChange={e => setValue({ ...value, protocol: e.target.value as Protocol, config_json: ensureAuthConfig(value.config_json, e.target.value as Protocol) })}>{(outbound ? proxyProtocols : protocols).map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select>{outbound ? <><input value={value.target_address} onChange={e => setValue({ ...value, target_address: e.target.value })} placeholder="目标地址" /><input value={value.target_port} onChange={e => setValue({ ...value, target_port: Number(e.target.value) })} placeholder="目标端口" /></> : <><input value={value.listen_ip} onChange={e => setValue({ ...value, listen_ip: e.target.value })} placeholder="监听 IP" /><input value={value.port} onChange={e => setValue({ ...value, port: Number(e.target.value) })} placeholder="监听端口" /></>}<AuthFields value={value} setValue={setValue} />{value.protocol === 'mieru' && <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey={outbound ? 'server_ports' : 'listen_ports'} showUserHint={!outbound} />}<textarea value={value.config_json} onChange={e => setValue({ ...value, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div>
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const save = async () => {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try { await submit() } catch (error: any) { setError(localizeErrorMessage(error?.message || error)) } finally { setBusy(false) }
+  }
+  return <div className="form signal-resource-form">
+    <FormField label="服务器"><Select value={value.server_id} onChange={e => setValue({ ...value, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>
+    <FormField label="名称"><input value={value.name} onChange={e => setValue({ ...value, name: e.target.value })} /></FormField>
+    <FormField label="协议"><Select value={value.protocol} onChange={e => setValue({ ...value, protocol: e.target.value as Protocol, config_json: ensureAuthConfig(value.config_json, e.target.value as Protocol) })}>{(outbound ? proxyProtocols : protocols).map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select></FormField>
+    {outbound ? <>
+      <FormField label="目标地址"><input value={value.target_address} onChange={e => setValue({ ...value, target_address: e.target.value })} /></FormField>
+      <FormField label="目标端口"><input type="number" min={1} max={65535} value={value.target_port} onChange={e => setValue({ ...value, target_port: Number(e.target.value) })} /></FormField>
+    </> : <>
+      <FormField label="监听 IP"><input value={value.listen_ip} onChange={e => setValue({ ...value, listen_ip: e.target.value })} /></FormField>
+      <FormField label="监听端口"><input type="number" min={1} max={65535} value={value.port} onChange={e => setValue({ ...value, port: Number(e.target.value) })} /></FormField>
+    </>}
+    <div className="resource-form-wide"><AuthFields value={value} setValue={setValue} /></div>
+    {value.protocol === 'mieru' && <div className="resource-form-wide"><MieruConfigFields config={config} updateConfig={updateConfig} rangeKey={outbound ? 'server_ports' : 'listen_ports'} showUserHint={!outbound} /></div>}
+    <div className="resource-form-wide"><FormField label="JSON 配置"><textarea rows={5} value={value.config_json} onChange={e => setValue({ ...value, config_json: e.target.value })} /></FormField></div>
+    <button type="button" onClick={() => void save()} disabled={busy}>{busy ? '创建中…' : '创建'}</button>
+    {error && <p className="danger-text" role="alert">{error}</p>}
+  </div>
 }
 
 type TableSelection = {

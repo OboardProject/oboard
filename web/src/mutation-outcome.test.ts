@@ -21,7 +21,7 @@ describe('indeterminate mutation failures', () => {
   it('rewrites the message without losing the original reason', () => {
     const error = markIndeterminateMutation(httpError(502, 'SQLITE_BUSY: database is locked'))
     expect(error.message).toContain('提交结果未知')
-    expect(error.message).toContain('请刷新确认是否已生效')
+    expect(error.message).toContain('确认前不要重复提交')
     // Callers that match on the underlying reason keep working.
     expect(error.message).toContain('database is locked')
     expect(isUnknownMutationOutcome(error)).toBe(true)
@@ -31,6 +31,15 @@ describe('indeterminate mutation failures', () => {
     const error = markIndeterminateMutation(httpError(409, '名称已存在'))
     expect(error.message).toBe('名称已存在')
     expect(isUnknownMutationOutcome(error)).toBe(false)
+  })
+
+  it('handles primitive, immutable and invalid-status errors conservatively', () => {
+    for (const error of [undefined, null, 'network error', Object.freeze(new Error('offline'))]) {
+      expect(() => markIndeterminateMutation(error)).not.toThrow()
+      expect(isIndeterminateMutationFailure(error)).toBe(true)
+    }
+    expect(isIndeterminateMutationFailure({ status: 'invalid' })).toBe(true)
+    expect(isIndeterminateMutationFailure({ status: 409, unknownOutcome: true })).toBe(true)
   })
 
   it('does not rewrite the same error twice', () => {

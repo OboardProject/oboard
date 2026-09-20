@@ -2,9 +2,10 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 import { m, usePresence, useReducedMotion } from "motion/react"
 import { trackModalViewport } from "./modal-viewport"
+import "./drawer.css"
 import { useSurfaceResize, type SurfaceMotion } from "./surface-motion"
 
-const APPICA_SPRING = [0.175, 0.885, 0.32, 1.5] as const
+const SURFACE_EASE = [0.22, 1, 0.36, 1] as const
 const BACKDROP_EASE = [0.16, 1, 0.3, 1] as const
 const POPOVER_SELECTOR = [
   '.custom-select-menu',
@@ -43,6 +44,7 @@ let layers: LayerID[] = []
 const layerOwners = new Map<LayerID, LayerID | null>()
 let bodyStyleSnapshot: BodyStyleSnapshot | null = null
 let mainStyleSnapshot: string | null = null
+let appInertSnapshot: { element: HTMLElement; inert: boolean } | null = null
 let releaseViewport: (() => void) | undefined
 let stackFocusTarget: HTMLElement | null = null
 const listeners = new Set<() => void>()
@@ -66,6 +68,11 @@ function lockBodyScroll() {
     body.style.paddingRight = `${currentPadding + scrollbarWidth}px`
   }
   body.style.overflow = "hidden"
+  const app = document.getElementById('root')
+  if (app) {
+    appInertSnapshot = { element: app, inert: app.inert }
+    app.inert = true
+  }
   releaseViewport = trackModalViewport()
 
   const main = document.querySelector<HTMLElement>('.main')
@@ -80,6 +87,10 @@ function unlockBodyScroll() {
   document.body.style.overflow = bodyStyleSnapshot.overflow
   document.body.style.paddingRight = bodyStyleSnapshot.paddingRight
   bodyStyleSnapshot = null
+  if (appInertSnapshot) {
+    appInertSnapshot.element.inert = appInertSnapshot.inert
+    appInertSnapshot = null
+  }
   releaseViewport?.()
   releaseViewport = undefined
 
@@ -179,16 +190,22 @@ export function createPopoverPortal(children: React.ReactNode, container: Elemen
 
 function focusableElements(panel: HTMLElement) {
   return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-    .filter(element => !element.hidden && element.getAttribute("aria-hidden") !== "true")
+    .filter(element => !element.closest('[hidden], [inert], [aria-hidden="true"]') &&
+      !element.matches(':disabled') && getComputedStyle(element).display !== 'none' &&
+      getComputedStyle(element).visibility !== 'hidden')
 }
 
 function focusFirst(panel: HTMLElement) {
   const requested = panel.querySelector<HTMLElement>('[autofocus]')
   const focusable = focusableElements(panel)
   const contentControl = focusable.find(element => !element.classList.contains('dialog-close'))
-  const target = requested || contentControl || focusable[0] || panel
+  const touchInput = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+  const target = requested || (touchInput ? panel : contentControl || focusable[0] || panel)
   target.focus()
 }
+
+export type ModalPlacement = "center" | "right"
+export type DrawerSize = "compact" | "wide"
 
 export interface ModalSurfaceProps {
   onClose: () => void
@@ -200,6 +217,8 @@ export interface ModalSurfaceProps {
   restoreFocus?: HTMLElement | null
   portal?: boolean
   surfaceMotion?: SurfaceMotion
+  placement?: ModalPlacement
+  drawerSize?: DrawerSize
 }
 
 export function ModalSurface({
@@ -212,6 +231,8 @@ export function ModalSurface({
   restoreFocus,
   portal = true,
   surfaceMotion = "form",
+  placement = "center",
+  drawerSize = "compact",
 }: ModalSurfaceProps) {
   const shouldReduceMotion = useReducedMotion()
   const [isPresent, safeToRemove] = usePresence()
@@ -221,7 +242,7 @@ export function ModalSurface({
     : null
   const previousFocusRef = React.useRef<HTMLElement | null>(restoreFocus || focusBeforeRender)
   const { id, index, isTopmost, count } = useModalLayer(previousFocusRef.current)
-  useSurfaceResize(panelRef, !shouldReduceMotion && isPresent && isTopmost, surfaceMotion)
+  useSurfaceResize(panelRef, placement === "center" && !shouldReduceMotion && isPresent && isTopmost, surfaceMotion)
   const capturedFocusRef = React.useRef(Boolean(restoreFocus || focusBeforeRender))
   const onCloseRef = React.useRef(onClose)
   const isTopmostRef = React.useRef(isTopmost)
@@ -234,7 +255,7 @@ export function ModalSurface({
 
   React.useEffect(() => {
     if (isPresent || !safeToRemove) return
-    const timer = window.setTimeout(safeToRemove, shouldReduceMotion ? 10 : 300)
+    const timer = window.setTimeout(safeToRemove, shouldReduceMotion ? 10 : 200)
     return () => window.clearTimeout(timer)
   }, [isPresent, safeToRemove, shouldReduceMotion])
 
@@ -258,7 +279,7 @@ export function ModalSurface({
     const handleKeyDown = (event: KeyboardEvent) => {
       const panel = panelRef.current
       const target = event.target as HTMLElement | null
-      if (!panel || !isTopmostRef.current) return
+      if (!panel || !isTopmostRef.current || event.isComposing) return
       if (isInsidePopover(target) || isInsidePopover(document.activeElement)) return
       if (event.key === "Escape") {
         const activePopover = document.querySelector('[data-popover-active="true"]')
@@ -293,28 +314,9 @@ export function ModalSurface({
     }
     document.addEventListener("keydown", handleKeyDown)
     document.addEventListener("focusin", handleFocusIn)
-    const panel = panelRef.current
-    const preventGesture = (event: Event) => {
-      event.preventDefault()
-    }
-    const preventMultiTouch = (event: TouchEvent) => {
-      if (event.touches.length > 1) {
-        event.preventDefault()
-      }
-    }
-    if (panel) {
-      panel.addEventListener("gesturestart", preventGesture as EventListener, { passive: false })
-      panel.addEventListener("gesturechange", preventGesture as EventListener, { passive: false })
-      panel.addEventListener("touchstart", preventMultiTouch as EventListener, { passive: false })
-    }
     return () => {
       document.removeEventListener("keydown", handleKeyDown)
       document.removeEventListener("focusin", handleFocusIn)
-      if (panel) {
-        panel.removeEventListener("gesturestart", preventGesture as EventListener)
-        panel.removeEventListener("gesturechange", preventGesture as EventListener)
-        panel.removeEventListener("touchstart", preventMultiTouch as EventListener)
-      }
       const previous = previousFocusRef.current
       if (!restoreOnUnmountRef.current || !previous?.isConnected) return
       window.requestAnimationFrame(() => {
@@ -325,18 +327,21 @@ export function ModalSurface({
   }, [])
 
   const reducedPanelState = { opacity: 1 }
-  const panelInitial = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }
-  const panelAnimate = shouldReduceMotion ? reducedPanelState : { opacity: 1, y: 0, scale: 1 }
-  const panelExit = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 5, scale: 0.99 }
+  const isDrawer = placement === "right"
+  const panelInitial = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }
+  const panelAnimate = shouldReduceMotion ? reducedPanelState : { opacity: 1, y: 0 }
+  const panelExit = { opacity: 0 }
   const panelTarget = isPresent ? panelAnimate : panelExit
   const layerStyle = { "--dialog-layer-index": index } as React.CSSProperties
 
   const content = (
     <m.div
       className={["dialog-layer", rootClassName].filter(Boolean).join(" ")}
+      data-modal-placement={placement}
       data-modal-index={index}
       data-modal-top={isTopmost ? "true" : "false"}
       data-modal-closing={isPresent ? "false" : "true"}
+      data-surface-kind={surfaceMotion}
       style={layerStyle}
       role="presentation"
     >
@@ -348,12 +353,13 @@ export function ModalSurface({
         initial={{ opacity: 0 }}
         animate={{ opacity: isPresent || count > 1 ? 1 : 0 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: shouldReduceMotion ? 0.01 : 0.22, ease: BACKDROP_EASE as any }}
+        transition={{ duration: shouldReduceMotion ? 0.01 : 0.18, ease: BACKDROP_EASE }}
         aria-hidden="true"
       />
       <m.section
         ref={panelRef}
         className={["dialog-panel", panelClassName].filter(Boolean).join(" ")}
+        data-drawer-size={isDrawer ? drawerSize : undefined}
         role="dialog"
         aria-modal={isInteractive ? "true" : undefined}
         aria-hidden={isInteractive ? undefined : "true"}
@@ -363,7 +369,7 @@ export function ModalSurface({
         initial={panelInitial}
         animate={panelTarget}
         exit={panelExit}
-        transition={{ duration: shouldReduceMotion ? 0.01 : 0.28, ease: APPICA_SPRING as any }}
+        transition={{ duration: shouldReduceMotion ? 0.01 : isDrawer ? 0.22 : 0.18, ease: SURFACE_EASE }}
       >
         <ModalOwnerContext.Provider value={id}>{children}</ModalOwnerContext.Provider>
       </m.section>

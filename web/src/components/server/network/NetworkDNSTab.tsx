@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Select } from '../../ui/select'
 import { Switch } from '../../ui/switch'
 import { FormField } from '../../ui/form-field'
@@ -39,15 +39,49 @@ function DNSGroupStatus({ title, selected, group }: { title:string; selected:any
   return <div className="dns-group-status"><strong>{title}</strong><span>当前首选：{selected && selected.length ? selected.map((c:any)=>c.tag||c.server).join(' · ') : '—'}</span><span>测试推荐：{best}</span></div>
 }
 
-export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notify, disabled, disabledReason }: { server: Server; policy?: ServerDNSPolicy; lists: DNSList[]; benchmarks: DNSBenchmarkResult[]; client:any; notify?:(m:string,t?:string)=>void; disabled?:boolean; disabledReason?:string }) {
+type NetworkDNSTabProps = { server: Server; policy?: ServerDNSPolicy; lists: DNSList[]; benchmarks: DNSBenchmarkResult[]; client:any; notify?:(m:string,t?:string)=>void; disabled?:boolean; disabledReason?:string }
+
+export function NetworkDNSTab(props: NetworkDNSTabProps) {
+  return <NetworkDNSSession key={props.server.id} {...props} />
+}
+
+function NetworkDNSSession({ server, policy, lists, benchmarks, client, notify, disabled, disabledReason }: NetworkDNSTabProps) {
   const [draft, setDraft]=useState(()=> dnsPolicyDraft(policy, lists))
+  const [baseline, setBaseline]=useState(draft)
+  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline)
+  const observedRevision = useRef(policy?.revision || 0)
+  const [conflict, setConflict] = useState(false)
+  const [error, setError] = useState('')
+  const busy = useRef(false)
+  const active = useRef(true)
   const [working, setWorking]=useState('')
+  useEffect(() => { active.current = true; return () => { active.current = false } }, [])
   const latest = benchmarks[0]
   const encryptedList = lists.find(l=> l.id===draft.encryptedListID)
   const bootstrapList = lists.find(l=> l.id===draft.bootstrapListID)
   const stale = isDNSPolicyStale(policy as any, lists)
 
-  useEffect(()=> setDraft(dnsPolicyDraft(policy, lists)), [policy?.revision, lists.length])
+  useEffect(() => {
+    const revision = policy?.revision || 0
+    if (revision < observedRevision.current) return
+    if (dirty || busy.current) {
+      if (revision !== observedRevision.current) setConflict(true)
+      return
+    }
+    const next = dnsPolicyDraft(policy, lists)
+    setDraft(next)
+    setBaseline(next)
+    observedRevision.current = revision
+  }, [policy?.revision, lists])
+
+  const useLatest = () => {
+    const next = dnsPolicyDraft(policy, lists)
+    setDraft(next)
+    setBaseline(next)
+    observedRevision.current = policy?.revision || 0
+    setConflict(false)
+    setError('')
+  }
 
   const save = async()=>{
     const response = await client.request(`/servers/${server.id}/dns-policy`, { method:'PUT', body: JSON.stringify({
@@ -60,21 +94,32 @@ export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notif
     return response.dns_policy as ServerDNSPolicy
   }
   const run = async(action:'save'|'test'|'test_and_apply')=>{
-    if(working || disabled) return
+    if(busy.current || disabled || conflict) return
+    busy.current = true
     setWorking(action)
+    setError('')
+    const snapshot = draft
     try{
-      await save()
+      const saved = await save()
+      if (active.current) {
+        observedRevision.current = saved.revision
+        setBaseline(snapshot)
+        setConflict(false)
+      }
       if(action!=='save'){
         const result = await client.request(`/servers/${server.id}/dns-test`, { method:'POST', body: JSON.stringify({ action })})
+        if (!active.current) return
         if(result.task?.status==='failed'){
           const f = JSON.parse(result.task.result_json||'{}')
           throw new Error(f?.error||f?.message||'暂时无法测试解析服务')
         }
         notify?.(action==='test' ? '解析测试已开始':'解析测试已开始，成功后会自动应用配置','success')
-      } else {
+      } else if (active.current) {
         notify?.('服务器 DNS 策略已保存','success')
       }
-    } catch(e:any){ notify?.(e?.message||String(e),'error') } finally{ setWorking('') }
+    } catch(e:unknown){
+      if (active.current) setError(e instanceof Error ? e.message : '未能确认本次操作结果，请刷新状态后核实。输入已保留。')
+    } finally{ busy.current = false; if (active.current) setWorking('') }
   }
 
   return (
@@ -86,6 +131,8 @@ export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notif
       </div>
       {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新测试</strong><span>旧的测试结果已停止使用。</span></div>}
       <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected||[]} group={latest?.encrypted} /> : <div className="dns-group-status"><strong>加密解析</strong><span>未启用</span><span>仅使用普通解析</span></div>}<DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected||[]} group={latest?.bootstrap} /></div>
+      {conflict && <div role="status" className="access-note warning"><strong>DNS 策略已在其他位置更新</strong><span>您的输入已保留。请先查看最新配置，再重新编辑，避免覆盖他人的修改。</span><button type="button" className="ghost" disabled={Boolean(working)} onClick={useLatest}>放弃当前草稿，载入最新配置</button></div>}
+      {error && <p role="alert" className="danger-text">{error}</p>}
       <div className="form dns-settings-form labeled-form">
         <FormField label="加密解析服务列表" full>
           <Select value={draft.encryptedListID} onChange={e=> setDraft({...draft, encryptedListID:Number(e.target.value)})} disabled={disabled}>
@@ -109,15 +156,15 @@ export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notif
           </Select>
         </FormField>
         <FormField label="每小时自动测试">
-          <Switch checked={draft.hourlyTest} onChange={checked=> setDraft({...draft, hourlyTest: checked})} ariaLabel="每小时自动测试" />
+          <Switch checked={draft.hourlyTest} onChange={checked=> setDraft({...draft, hourlyTest: checked})} disabled={disabled} ariaLabel="每小时自动测试" />
         </FormField>
         <div className="dns-list-preview"><span>{encryptedList?.candidates.map((c:any)=> dnsTransportLabel(c.transport)).join(' · ')}</span><span>{bootstrapList?.candidates.map((c:any)=> dnsTransportLabel(c.transport)).join(' · ')}</span></div>
         {disabled && <small className="muted">{disabledReason}</small>}
       </div>
       <div className="server-workspace-actions">
-        <button className="ghost" disabled={Boolean(working) || disabled} onClick={()=> void run('save')}>{working==='save'? '保存中...':'仅保存'}</button>
-        <button className="ghost" disabled={Boolean(working) || disabled} onClick={()=> void run('test')}>{working==='test'? '测试中...':'重新测试'}</button>
-        <button disabled={Boolean(working) || disabled} onClick={()=> void run('test_and_apply')}>{working==='test_and_apply'? '测试中...':'测试并应用'}</button>
+        <button className="ghost" disabled={Boolean(working) || disabled || conflict} onClick={()=> void run('save')}>{working==='save'? '保存中...':'仅保存'}</button>
+        <button className="ghost" disabled={Boolean(working) || disabled || conflict} onClick={()=> void run('test')}>{working==='test'? '测试中...':'重新测试'}</button>
+        <button disabled={Boolean(working) || disabled || conflict} onClick={()=> void run('test_and_apply')}>{working==='test_and_apply'? '测试中...':'测试并应用'}</button>
       </div>
     </div>
   )

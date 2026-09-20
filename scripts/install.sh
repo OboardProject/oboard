@@ -71,11 +71,11 @@ select_installation() {
   binary_installation_exists && INSTALLATION_EXISTS=1
 
   case "$ACTION_INPUT" in
-    ""|install|update|uninstall|enable-scripts) ;;
-    *) echo "操作方式无效，请选择安装、更新、卸载或安装脚本运行环境。" >&2; exit 1 ;;
+    ""|install|update|uninstall|enable-plugins) ;;
+    *) echo "操作方式无效，请选择安装、更新、卸载或安装插件运行环境。" >&2; exit 1 ;;
   esac
-  if [ "$ACTION_INPUT" = enable-scripts ]; then
-    ACTION=enable-scripts
+  if [ "$ACTION_INPUT" = enable-plugins ]; then
+    ACTION=enable-plugins
   elif [ "$INSTALLATION_EXISTS" = 1 ] && [ "$ACTION_INPUT" != uninstall ]; then
     ACTION=update
   else
@@ -85,7 +85,7 @@ select_installation() {
     echo "没有找到已安装的主控，请先完成安装。" >&2
     exit 1
   fi
-  if [ "$ACTION" = enable-scripts ] && [ "$INSTALLATION_EXISTS" = 0 ]; then
+  if [ "$ACTION" = enable-plugins ] && [ "$INSTALLATION_EXISTS" = 0 ]; then
     echo "没有找到已安装的主控，请先完成安装。" >&2
     exit 1
   fi
@@ -394,11 +394,11 @@ detect_virt_hint() {
   echo bare
 }
 
-script_isolation_unavailable() {
+plugin_isolation_unavailable() {
   echo "$1" | tee -a "$INSTALL_LOG"
 }
 
-script_uidmap_package() {
+plugin_uidmap_package() {
   if command -v apk >/dev/null 2>&1; then
     printf '%s\n' shadow
   elif command -v apt-get >/dev/null 2>&1; then
@@ -410,90 +410,107 @@ script_uidmap_package() {
   fi
 }
 
-ensure_script_isolation_deps() {
+ensure_plugin_isolation_deps() {
   need_bwrap=0
   need_uidmap=0
   command -v bwrap >/dev/null 2>&1 || need_bwrap=1
   command -v newuidmap >/dev/null 2>&1 || need_uidmap=1
   uidmap_pkg=
   if [ "$need_uidmap" = 1 ]; then
-    uidmap_pkg=$(script_uidmap_package)
+    uidmap_pkg=$(plugin_uidmap_package)
   fi
   if [ "$need_bwrap" = 1 ] || [ -n "$uidmap_pkg" ]; then
-    echo "  正在安装脚本隔离组件..."
+    echo "  正在安装插件隔离组件..."
   fi
   if [ "$need_bwrap" = 1 ]; then
     if ! pkg_install bubblewrap; then
-      script_isolation_unavailable "未能自动安装 bubblewrap。脚本执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
+      plugin_isolation_unavailable "未能自动安装 bubblewrap。插件执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
     fi
   fi
   if [ -n "$uidmap_pkg" ]; then
-    pkg_install "$uidmap_pkg" || script_isolation_unavailable "未能自动安装 $uidmap_pkg。非特权用户命名空间可能不可用；这不影响现有面板、Agent 和代理服务。"
+    pkg_install "$uidmap_pkg" || plugin_isolation_unavailable "未能自动安装 $uidmap_pkg。非特权用户命名空间可能不可用；这不影响现有面板、Agent 和代理服务。"
   fi
   if ! command -v bwrap >/dev/null 2>&1; then
-    script_isolation_unavailable "安装后仍未检测到 bubblewrap (bwrap)。脚本执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
+    plugin_isolation_unavailable "安装后仍未检测到 bubblewrap (bwrap)。插件执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
     return 0
   fi
   if [ ! -e /sys/fs/cgroup/cgroup.controllers ]; then
-    script_isolation_unavailable "未检测到 cgroup v2。脚本执行将保持禁用，直到具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
+    plugin_isolation_unavailable "未检测到 cgroup v2。插件执行将保持禁用，直到具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
   fi
 }
 
-prepare_script_worker_user() {
-  create_system_user oboard-scripts "$CONTROLLER_DATA_DIR"
-  if id oboard-scripts >/dev/null 2>&1 && getent group oboard >/dev/null 2>&1; then
-    usermod -aG oboard oboard-scripts 2>/dev/null || addgroup oboard-scripts oboard 2>/dev/null || true
+prepare_plugin_worker_user() {
+  create_system_user oboard-plugins "$CONTROLLER_DATA_DIR"
+  if id oboard-plugins >/dev/null 2>&1 && getent group oboard >/dev/null 2>&1; then
+    usermod -aG oboard oboard-plugins 2>/dev/null || addgroup oboard-plugins oboard 2>/dev/null || true
   fi
-  ensure_script_isolation_deps
-  set_controller_env_value OBOARD_SCRIPT_WORKER_SOCKET /run/oboard/script-worker/rpc.sock
+  ensure_plugin_isolation_deps
+  set_controller_env_value OBOARD_PLUGIN_WORKER_SOCKET /run/oboard/plugin-worker/rpc.sock
 }
 
-script_runtime_installed() {
-  [ -f /etc/systemd/system/oboard-script-worker.service ] || [ -f /etc/init.d/oboard-script-worker ]
+plugin_runtime_installed() {
+  [ -f /etc/systemd/system/oboard-plugin-worker.service ] || [ -f /etc/init.d/oboard-plugin-worker ]
 }
 
-write_script_runtime_opt_in() {
+retire_script_runtime() {
+  if [ -f /etc/systemd/system/oboard-script-worker.service ]; then
+    systemctl disable --now oboard-script-worker.service >> "$INSTALL_LOG" 2>&1 || return 1
+    rm -f /etc/systemd/system/oboard-script-worker.service || return 1
+    systemctl daemon-reload >> "$INSTALL_LOG" 2>&1 || return 1
+  fi
+  if [ -f /etc/init.d/oboard-script-worker ]; then
+    rc-service oboard-script-worker stop >> "$INSTALL_LOG" 2>&1 || return 1
+    if [ -e /etc/runlevels/default/oboard-script-worker ] || [ -L /etc/runlevels/default/oboard-script-worker ]; then
+      rc-update del oboard-script-worker default >> "$INSTALL_LOG" 2>&1 || return 1
+    fi
+    rm -f /etc/init.d/oboard-script-worker || return 1
+  fi
+  rm -f "$CONTROLLER_CONFIG_DIR/script-runtime.wanted" "$INSTALL_DIR/oboard-script-worker"
+}
+
+write_plugin_runtime_opt_in() {
   [ -n "${CONTROLLER_CONFIG_DIR:-}" ] || return 0
   install -d -m 0750 -o root -g root "$CONTROLLER_CONFIG_DIR"
-  : > "$CONTROLLER_CONFIG_DIR/script-runtime.wanted"
-  chmod 0644 "$CONTROLLER_CONFIG_DIR/script-runtime.wanted"
+  : > "$CONTROLLER_CONFIG_DIR/plugin-runtime.wanted"
+  chmod 0644 "$CONTROLLER_CONFIG_DIR/plugin-runtime.wanted"
 }
 
-script_runtime_opted_in() {
-  [ -n "${CONTROLLER_CONFIG_DIR:-}" ] && [ -f "$CONTROLLER_CONFIG_DIR/script-runtime.wanted" ]
+plugin_runtime_opted_in() {
+  [ -n "${CONTROLLER_CONFIG_DIR:-}" ] && [ -f "$CONTROLLER_CONFIG_DIR/plugin-runtime.wanted" ]
 }
 
-want_script_runtime() {
-  case "${OBOARD_INSTALL_SCRIPTS:-}" in
+want_plugin_runtime() {
+  case "${OBOARD_INSTALL_PLUGINS:-}" in
     0|false|no) return 1 ;;
     1|true|yes) return 0 ;;
   esac
-  [ "${ACTION:-}" = enable-scripts ] && return 0
-  script_runtime_opted_in
+  [ "${ACTION:-}" = enable-plugins ] && return 0
+  plugin_runtime_opted_in && plugin_runtime_installed
 }
 
-install_script_runtime() {
+install_plugin_runtime() {
   local work=$1 os=$2 service_manager=$3
-  if [ ! -f "$work/bin/oboard-script-worker" ]; then
-    echo "安装包缺少 oboard-script-worker。" >&2
+  if [ ! -f "$work/bin/oboard-plugin-worker" ]; then
+    echo "安装包缺少 oboard-plugin-worker。" >&2
     return 1
   fi
-  echo "  正在安装脚本运行环境..."
-  write_script_runtime_opt_in
-  install_file_atomic "$work/bin/oboard-script-worker" "$INSTALL_DIR/oboard-script-worker" 0755
-  prepare_script_worker_user
-  if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -f "$work/deploy/systemd/oboard-script-worker.service" ]; then
-    render_service_file "$work/deploy/systemd/oboard-script-worker.service" /etc/systemd/system/oboard-script-worker.service
-    systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
-    systemctl enable oboard-script-worker >> "$INSTALL_LOG" 2>&1
-    systemctl restart oboard-script-worker >> "$INSTALL_LOG" 2>&1
-  elif [ "$os" = linux ] && [ "$service_manager" = openrc ] && [ -f "$work/deploy/openrc/oboard-script-worker" ]; then
-    render_service_file "$work/deploy/openrc/oboard-script-worker" /etc/init.d/oboard-script-worker 0755
-    rc-update add oboard-script-worker default >> "$INSTALL_LOG" 2>&1
-    rc-service oboard-script-worker restart >> "$INSTALL_LOG" 2>&1
+  echo "  正在安装插件运行环境..."
+  install_file_atomic "$work/bin/oboard-plugin-worker" "$INSTALL_DIR/oboard-plugin-worker" 0755 || return 1
+  prepare_plugin_worker_user || return 1
+  if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -f "$work/deploy/systemd/oboard-plugin-worker.service" ]; then
+    render_service_file "$work/deploy/systemd/oboard-plugin-worker.service" /etc/systemd/system/oboard-plugin-worker.service || return 1
+    systemctl daemon-reload >> "$INSTALL_LOG" 2>&1 || return 1
+    systemctl enable oboard-plugin-worker >> "$INSTALL_LOG" 2>&1 || return 1
+    systemctl restart oboard-plugin-worker >> "$INSTALL_LOG" 2>&1 || return 1
+  elif [ "$os" = linux ] && [ "$service_manager" = openrc ] && [ -f "$work/deploy/openrc/oboard-plugin-worker" ]; then
+    render_service_file "$work/deploy/openrc/oboard-plugin-worker" /etc/init.d/oboard-plugin-worker 0755 || return 1
+    rc-update add oboard-plugin-worker default >> "$INSTALL_LOG" 2>&1 || return 1
+    rc-service oboard-plugin-worker restart >> "$INSTALL_LOG" 2>&1 || return 1
   else
-    echo "未识别可用的服务管理器，已安装脚本程序文件；请手动配置并启动 oboard-script-worker。" >&2
+    echo "未识别可用的服务管理器，插件运行环境未启用。" >&2
+    return 1
   fi
+  write_plugin_runtime_opt_in
 }
 
 create_system_user() {
@@ -1212,37 +1229,37 @@ uninstall_controller() {
       systemctl disable --now oboard-controller.service >/dev/null 2>&1 || true
       systemctl disable --now oboard-controller-updater.service >/dev/null 2>&1 || true
       systemctl disable --now oboard-ai-worker.service >/dev/null 2>&1 || true
-      systemctl disable --now oboard-script-worker.service >/dev/null 2>&1 || true
+      systemctl disable --now oboard-plugin-worker.service >/dev/null 2>&1 || true
       ;;
     openrc)
       rc-service oboard-controller stop >/dev/null 2>&1 || true
       rc-service oboard-controller-updater stop >/dev/null 2>&1 || true
       rc-service oboard-ai-worker stop >/dev/null 2>&1 || true
-      rc-service oboard-script-worker stop >/dev/null 2>&1 || true
+      rc-service oboard-plugin-worker stop >/dev/null 2>&1 || true
       rc-update del oboard-controller default >/dev/null 2>&1 || true
       rc-update del oboard-controller-updater default >/dev/null 2>&1 || true
       rc-update del oboard-ai-worker default >/dev/null 2>&1 || true
-      rc-update del oboard-script-worker default >/dev/null 2>&1 || true
+      rc-update del oboard-plugin-worker default >/dev/null 2>&1 || true
       ;;
   esac
 
   rm -f /etc/systemd/system/oboard-controller.service \
     /etc/systemd/system/oboard-controller-updater.service \
     /etc/systemd/system/oboard-ai-worker.service \
-    /etc/systemd/system/oboard-script-worker.service \
+    /etc/systemd/system/oboard-plugin-worker.service \
     /etc/init.d/oboard-controller \
     /etc/init.d/oboard-controller-updater \
     /etc/init.d/oboard-ai-worker \
-    /etc/init.d/oboard-script-worker
+    /etc/init.d/oboard-plugin-worker
   if [ "$service_manager" = systemd ]; then
     systemctl daemon-reload >/dev/null 2>&1
-    systemctl reset-failed oboard-controller.service oboard-controller-updater.service oboard-ai-worker.service oboard-script-worker.service >/dev/null 2>&1 || true
+    systemctl reset-failed oboard-controller.service oboard-controller-updater.service oboard-ai-worker.service oboard-plugin-worker.service >/dev/null 2>&1 || true
   fi
-  rm -f "$CONTROLLER_CONFIG_DIR/script-runtime.wanted" \
+  rm -f "$CONTROLLER_CONFIG_DIR/plugin-runtime.wanted" \
     "$INSTALL_DIR/oboard-controller" \
     "$INSTALL_DIR/oboard-controller-updater" \
     "$INSTALL_DIR/oboard-ai-worker" \
-    "$INSTALL_DIR/oboard-script-worker" \
+    "$INSTALL_DIR/oboard-plugin-worker" \
     "$INSTALL_DIR/oboard-controller.update-backup" \
     "$INSTALL_DIR/oboard-controller.update-new" \
     "$INSTALL_DIR/oboard-controller-updater.update-backup" \
@@ -1328,9 +1345,10 @@ install_component() {
   verify_archive_paths "$TMP_DIR/$archive"
   tar -xzf "$TMP_DIR/$archive" -C "$work" >> "$INSTALL_LOG" 2>&1
   echo "[4/4] 配置并启动主控服务"
-  if [ "$ACTION" = enable-scripts ]; then
-    install_script_runtime "$work" "$os" "$service_manager"
-    echo "脚本运行环境已安装。请回到面板启用脚本执行。"
+  retire_script_runtime || { echo "旧脚本运行环境停止失败，已中止更新。" >&2; return 1; }
+  if [ "$ACTION" = enable-plugins ]; then
+    install_plugin_runtime "$work" "$os" "$service_manager"
+    echo "插件运行环境已安装。请回到面板启用插件执行。"
     return 0
   fi
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
@@ -1367,10 +1385,10 @@ install_component() {
         start_controller_systemd
         systemctl enable oboard-ai-worker >> "$INSTALL_LOG" 2>&1
         systemctl restart oboard-ai-worker >> "$INSTALL_LOG" 2>&1
-        if want_script_runtime; then
-          install_script_runtime "$work" "$os" "$service_manager"
+        if want_plugin_runtime; then
+          install_plugin_runtime "$work" "$os" "$service_manager"
         else
-          echo "  未安装脚本运行环境（默认关闭）。"
+          echo "  未安装插件运行环境（默认关闭）。"
         fi
         clear_bootstrap_admin_password
         ;;
@@ -1412,10 +1430,10 @@ install_component() {
         start_controller_openrc
         rc-update add oboard-ai-worker default >> "$INSTALL_LOG" 2>&1
         rc-service oboard-ai-worker restart >> "$INSTALL_LOG" 2>&1
-        if want_script_runtime; then
-          install_script_runtime "$work" "$os" "$service_manager"
+        if want_plugin_runtime; then
+          install_plugin_runtime "$work" "$os" "$service_manager"
         else
-          echo "  未安装脚本运行环境（默认关闭）。"
+          echo "  未安装插件运行环境（默认关闭）。"
         fi
         clear_bootstrap_admin_password
         ;;
@@ -1446,17 +1464,18 @@ case "$COMPONENT" in
 esac
 if [ "$ACTION" = uninstall ]; then
   SERVICE_MANAGER=$(detect_service_manager)
+  retire_script_runtime || { echo "旧脚本运行环境停止失败，已中止卸载。" >&2; exit 1; }
   uninstall_controller "$SERVICE_MANAGER"
   drain_piped_script
   exit 0
 fi
-if [ "$ACTION" = update ] || [ "$ACTION" = enable-scripts ]; then
+if [ "$ACTION" = update ] || [ "$ACTION" = enable-plugins ]; then
   if [ -z "$VERSION_INPUT" ]; then
     installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' "$CONTROLLER_ENV" 2>/dev/null | tail -n1 | tr -d "'\"")
     case "$installed_channel" in
       dev) VERSION_VALUE=dev ;;
       pinned)
-        if [ "$ACTION" = enable-scripts ]; then
+        if [ "$ACTION" = enable-plugins ]; then
           VERSION_VALUE=latest
         else
           echo "当前主控使用固定版本。请设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
@@ -1477,8 +1496,8 @@ case "$COMPONENT" in
     echo "-----------"
     if [ "$ACTION" = update ]; then
       echo "正在更新，现有账号、配置和数据将保留。"
-    elif [ "$ACTION" = enable-scripts ]; then
-      echo "正在安装脚本运行环境。脚本执行开关仍保持关闭。"
+    elif [ "$ACTION" = enable-plugins ]; then
+      echo "正在安装插件运行环境。插件执行开关仍保持关闭。"
     else
       echo "正在开始安装。"
     fi

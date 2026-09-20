@@ -11,7 +11,7 @@ const (
 	APIPrincipalServiceAccount APIPrincipalType = "service_account"
 	APIPrincipalOAuth          APIPrincipalType = "oauth"
 	APIPrincipalInternalAI     APIPrincipalType = "internal_ai"
-	APIPrincipalScript         APIPrincipalType = "script"
+	APIPrincipalPlugin         APIPrincipalType = "plugin"
 )
 
 type APIPrincipal struct {
@@ -251,23 +251,23 @@ type OAuthGrant struct {
 	EffectiveRole Role   `json:"effective_role,omitempty"`
 	// ResourceBoundaryJSON is the versioned ResourceBoundary. json.RawMessage
 	// keeps it an object on the wire so management UIs can render the boundary.
-	ResourceBoundaryJSON json.RawMessage       `json:"resource_boundary"`
-	ApprovalProfileID    string                `json:"approval_profile_id"`
-	ApprovalProfile      *OAuthApprovalProfile `json:"approval_profile,omitempty"`
-	OfflineAccess        bool                  `json:"offline_access"`
-	PolicyVersion        int                   `json:"policy_version"`
-	RoleVersion          int                   `json:"role_version"`
-	ConsentVersion       int                   `json:"consent_version"`
-	Status               OAuthGrantStatus      `json:"status"`
-	ResourceKey          string                `json:"resource_key,omitempty"`
-	CreatedAt            time.Time             `json:"created_at"`
-	LastAuthorizedAt     *time.Time            `json:"last_authorized_at,omitempty"`
-	ExpiresAt            *time.Time            `json:"expires_at,omitempty"`
-	LastUsedAt           *time.Time            `json:"last_used_at,omitempty"`
-	RevokedAt            *time.Time            `json:"revoked_at,omitempty"`
-	RevokeReason         string                `json:"revoke_reason,omitempty"`
-	ActiveAccessTokens   int                   `json:"active_access_tokens,omitempty"`
-	ActiveRefreshFamilies int                  `json:"active_refresh_families,omitempty"`
+	ResourceBoundaryJSON  json.RawMessage       `json:"resource_boundary"`
+	ApprovalProfileID     string                `json:"approval_profile_id"`
+	ApprovalProfile       *OAuthApprovalProfile `json:"approval_profile,omitempty"`
+	OfflineAccess         bool                  `json:"offline_access"`
+	PolicyVersion         int                   `json:"policy_version"`
+	RoleVersion           int                   `json:"role_version"`
+	ConsentVersion        int                   `json:"consent_version"`
+	Status                OAuthGrantStatus      `json:"status"`
+	ResourceKey           string                `json:"resource_key,omitempty"`
+	CreatedAt             time.Time             `json:"created_at"`
+	LastAuthorizedAt      *time.Time            `json:"last_authorized_at,omitempty"`
+	ExpiresAt             *time.Time            `json:"expires_at,omitempty"`
+	LastUsedAt            *time.Time            `json:"last_used_at,omitempty"`
+	RevokedAt             *time.Time            `json:"revoked_at,omitempty"`
+	RevokeReason          string                `json:"revoke_reason,omitempty"`
+	ActiveAccessTokens    int                   `json:"active_access_tokens,omitempty"`
+	ActiveRefreshFamilies int                   `json:"active_refresh_families,omitempty"`
 }
 
 type OAuthAuthorizationCode struct {

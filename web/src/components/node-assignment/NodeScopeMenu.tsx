@@ -33,6 +33,21 @@ export function NodeScopeMenu({ x, y, node, onSelect, onClose }: {
   onClose: () => void
 }) {
   const [showPathServers, setShowPathServers] = React.useState(false)
+  const menuRef = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    const trigger = document.activeElement as HTMLElement | null
+    menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    return () => { if (trigger?.isConnected) trigger.focus() }
+  }, [])
+  const navigate = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Tab') { onClose(); return }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') || [])
+    const index = items.indexOf(document.activeElement as HTMLButtonElement)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+    items[next]?.focus()
+  }
 
   React.useEffect(() => {
     setShowPathServers(false)
@@ -56,7 +71,7 @@ export function NodeScopeMenu({ x, y, node, onSelect, onClose }: {
   }, [node, onClose])
 
   if (!node) return null
-  const menuWidth = 300
+  const menuWidth = Math.min(360, window.innerWidth - 16)
   const menuHeight = showPathServers ? 430 : 330
   const left = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8))
   const top = Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8))
@@ -71,7 +86,7 @@ export function NodeScopeMenu({ x, y, node, onSelect, onClose }: {
         onMouseDown={onClose}
         onContextMenu={e => { e.preventDefault(); onClose() }}
       />
-      <div className="node-scope-menu" role="menu" aria-label="选择节点范围" style={{ left, top }}>
+      <div ref={menuRef} onKeyDown={navigate} className="node-scope-menu signal-scope-menu" role="menu" aria-label="选择节点范围" style={{ left, top, width: menuWidth, maxHeight: `calc(100dvh - ${top + 8}px)`, overflowY: 'auto' }}>
         <div className="node-scope-menu-title">
           <span style={{ fontWeight: 600 }}>{node.name}</span>
           <span className="muted" style={{ fontSize: 12 }}>选择节点范围</span>
@@ -91,7 +106,7 @@ export function NodeScopeMenu({ x, y, node, onSelect, onClose }: {
         />
         {pathServers.length > 0 && (
           <div className="node-scope-menu-sub">
-            <MenuButton label="按路径服务器选择…" sub onClick={() => setShowPathServers(v => !v)} />
+            <MenuButton label="按路径服务器选择…" sub expanded={showPathServers} onClick={() => setShowPathServers(v => !v)} />
             {showPathServers && (
               <div className="node-scope-menu-sub-list">
                 {pathServers.map(s => (
@@ -133,11 +148,12 @@ export function NodeScopeMenu({ x, y, node, onSelect, onClose }: {
   )
 }
 
-function MenuButton({ label, hint, reason, sub, disabled, onClick }: {
+function MenuButton({ label, hint, reason, sub, expanded, disabled, onClick }: {
   label: string
   hint?: string
   reason?: string
   sub?: boolean
+  expanded?: boolean
   disabled?: boolean
   onClick?: () => void
 }) {
@@ -146,6 +162,8 @@ function MenuButton({ label, hint, reason, sub, disabled, onClick }: {
       type="button"
       className="node-scope-menu-item"
       role="menuitem"
+      aria-expanded={expanded}
+      tabIndex={-1}
       disabled={disabled}
       onClick={onClick}
       title={reason}

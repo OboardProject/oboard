@@ -38,16 +38,16 @@ func TestAllowsInt64PartialFilterDeniesUnmentionedTypes(t *testing.T) {
 	}
 }
 
-func TestScriptPrincipalEmptyFilterDeniesAllServers(t *testing.T) {
+func TestPluginPrincipalEmptyFilterDeniesAllServers(t *testing.T) {
 	for _, raw := range []json.RawMessage{nil, json.RawMessage(`{}`), json.RawMessage(`null`)} {
-		principal := Principal{Type: model.APIPrincipalScript, ResourceFilter: raw}
+		principal := Principal{Type: model.APIPrincipalPlugin, ResourceFilter: raw}
 		if principal.AllowsInt64("server_ids", 1) || principal.AllowsCreate("server") || principal.AllowsGlobal() || principal.AllowsDestructiveOperations() {
-			t.Fatalf("script principal with empty filter %s must deny by default", raw)
+			t.Fatalf("plugin principal with empty filter %s must deny by default", raw)
 		}
 	}
 	human := Principal{ResourceFilter: nil}
 	if !human.AllowsInt64("server_ids", 1) {
-		t.Fatal("non-script empty filter must stay unrestricted")
+		t.Fatal("non-plugin empty filter must stay unrestricted")
 	}
 }
 

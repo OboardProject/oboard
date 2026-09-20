@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Switch } from './ui/switch'
 import { Select } from './ui/select'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './settings/SettingsLayout'
 import type { DialogApi } from './ui/dialog-context'
@@ -88,6 +87,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const [monitoringRetentionDays, setMonitoringRetentionDays] = useState<number>(Number(data.settings?.server_monitoring_retention_days) || 7)
 
   const [savingKey, setSavingKey] = useState<string>('')
+  const [error, setError] = useState('')
 
   useEffect(() => {
     setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
@@ -106,14 +106,19 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
     return timeCheckNTPServers.some((val, idx) => val.trim() !== (originalNTPServers[idx] || '').trim())
   }, [timeCheckNTPServers, originalNTPServers])
 
-  const autoSaveSetting = async (payload: Record<string, any>, successMessage: string) => {
+  const autoSaveSetting = async (payload: Record<string, any>, successMessage: string, rollback?: () => void) => {
     if (savingKey) return
     setSavingKey('auto-save')
+    setError('')
+    let persisted = false
     try {
       await client.request('/settings', { method: 'POST', body: JSON.stringify(payload) })
+      persisted = true
       await load()
       notify(successMessage, 'success')
     } catch (error: any) {
+      if (!persisted) rollback?.()
+      setError(persisted ? '设置已保存，但刷新失败。请刷新页面确认。' : error?.message || String(error))
       notify(error?.message || String(error), 'error')
     } finally {
       setSavingKey('')
@@ -123,51 +128,49 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const handleMTUChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value
     setServerDefaultMTUMode(val)
-    void autoSaveSetting({ server_default_mtu_mode: val }, 'MTU 设置已保存')
+    void autoSaveSetting({ server_default_mtu_mode: val }, 'MTU 设置已保存', () => setServerDefaultMTUMode(serverDefaultMTUMode))
   }
 
   const handleBBRChange = (checked: boolean) => {
     setServerDefaultBBREnabled(checked)
-    void autoSaveSetting({ server_default_bbr_enabled: checked }, 'BBR + FQ 设置已保存')
+    void autoSaveSetting({ server_default_bbr_enabled: checked }, 'BBR + FQ 设置已保存', () => setServerDefaultBBREnabled(serverDefaultBBREnabled))
   }
 
   const handleTimeCorrectionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value as TimeCorrectionMode
     setServerDefaultTimeCorrectionMode(val)
-    void autoSaveSetting({ server_default_time_correction_mode: val }, '时间校准设置已保存')
+    void autoSaveSetting({ server_default_time_correction_mode: val }, '时间校准设置已保存', () => setServerDefaultTimeCorrectionMode(serverDefaultTimeCorrectionMode))
   }
 
   const handleTimezoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value
     setTrafficTimezone(val)
-    void autoSaveSetting({ traffic_timezone: val }, '统计时区已保存')
+    void autoSaveSetting({ traffic_timezone: val }, '统计时区已保存', () => setTrafficTimezone(trafficTimezone))
   }
 
   const handleMonitoringRetentionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const days = Number(e.target.value) || 30
     setMonitoringRetentionDays(days)
-    void autoSaveSetting({ server_monitoring_retention_days: days }, '监控数据保留时间已保存')
+    void autoSaveSetting({ server_monitoring_retention_days: days }, '监控数据保留时间已保存', () => setMonitoringRetentionDays(monitoringRetentionDays))
   }
 
   const refreshAllRuntime = async () => {
     if (savingKey) return
-    // Warn about configuration that is already known to fail, but never refuse
-    // the push: the other nodes still need it, and a health lookup that fails
-    // must not stand between the operator and a recovery action.
-    let healthNotice = ''
-    try {
-      const report = await client.request('/config-health')
-      healthNotice = blockingDeploymentNotice(report?.report || null)
-    } catch { healthNotice = '' }
-    const ok = await confirm?.({
-      title: '刷新全部节点配置？',
-      message: '会重建每台已接入 Agent 的运行配置并重启内核，现有连接会短暂中断。授权凭证、运行时用户、延迟探测计划和流量策略都会提升版本号后重新下发。' + (healthNotice ? `\n\n${healthNotice}` : ''),
-      confirmText: '刷新全部节点',
-      tone: 'danger',
-    })
-    if (!ok) return
     setSavingKey('refresh-runtime')
+    setError('')
     try {
+      let healthNotice = ''
+      try {
+        const report = await client.request('/config-health')
+        healthNotice = blockingDeploymentNotice(report?.report || null)
+      } catch { healthNotice = '' }
+      const ok = await confirm?.({
+        title: '刷新全部节点配置？',
+        message: '会重建每台已接入 Agent 的运行配置并重启内核，现有连接会短暂中断。授权凭证、运行时用户、延迟探测计划和流量策略都会提升版本号后重新下发。' + (healthNotice ? `\n\n${healthNotice}` : ''),
+        confirmText: '刷新全部节点',
+        tone: 'danger',
+      })
+      if (!ok) return
       const result = await client.request('/deployments/refresh-runtime', {
         method: 'POST',
         body: JSON.stringify({ confirm: true }),
@@ -176,6 +179,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       notify(`已向 ${count} 台已接入服务器重新下发全部配置、授权、用户与探测计划`, 'success')
       await load()
     } catch (error: any) {
+      setError(error?.message || String(error))
       notify(error?.message || String(error), 'error')
     } finally {
       setSavingKey('')
@@ -185,6 +189,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const saveNTPServers = async () => {
     if (savingKey) return
     setSavingKey('ntp-servers')
+    setError('')
     try {
       await client.request('/settings', {
         method: 'POST',
@@ -195,6 +200,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       await load()
       notify('NTP 时间源已保存', 'success')
     } catch (error: any) {
+      setError(error?.message || String(error))
       notify(error?.message || String(error), 'error')
     } finally {
       setSavingKey('')
@@ -202,14 +208,16 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   }
 
   return (
-    <section className="settings-card agent-settings-card">
+    <section className="settings-card agent-settings-card signal-settings" aria-busy={Boolean(savingKey)}>
+      {error && <p className="settings-feedback" role="alert">{error}</p>}
+      {savingKey === 'auto-save' && <p className="settings-feedback" role="status">正在保存设置…</p>}
       <SettingsGroup title="资源下载" description="选择服务器安装和更新时的下载来源。订阅中继固定从主控下载。">
         <SettingsSwitchRow label="优先从 GitHub 下载" description="开启后优先从 GitHub 下载，无法下载时改用主控。" checked={data.settings?.resource_download_source === 'github'} onChange={checked => void autoSaveSetting({ resource_download_source: checked ? 'github' : 'controller' }, '资源下载来源已保存')} disabled={Boolean(savingKey)} ariaLabel="优先从 GitHub 下载资源" />
         <SettingsSwitchRow label="中国大陆服务器优先从主控下载" description="中国大陆服务器固定从主控下载，其他服务器使用上方设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆服务器优先从主控下载" />
       </SettingsGroup>
       <SettingsGroup title="新服务器默认值" description="创建服务器时自动带入，可在创建窗口中单独修改。">
         <SettingsRow label="MTU" description="根据节点网络环境检测 MTU，并决定是否自动应用检测结果。">
-          <Select variant="segmented" value={serverDefaultMTUMode} onChange={handleMTUChange} disabled={Boolean(savingKey)}>
+          <Select aria-label="MTU" variant="segmented" value={serverDefaultMTUMode} onChange={handleMTUChange} disabled={Boolean(savingKey)}>
             {mtuModes.map(mode => <option key={mode} value={mode}>{mtuLabels[mode] || mode}</option>)}
           </Select>
         </SettingsRow>
@@ -221,12 +229,12 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
         </SettingsRow>
         <SettingsDisclosure title="NTP 时间源" description="用于检测和校准服务器时间，通常无需修改。" summary={isNTPDirty ? '有未保存修改' : '已配置 3 个时间源'}>
           <div className="agent-ntp-list">
-            {timeCheckNTPServers.map((value, index) => <input key={index} value={value} onChange={event => {
+            {timeCheckNTPServers.map((value, index) => <input key={index} disabled={Boolean(savingKey)} value={value} onChange={event => {
               const newVal = event.target.value
               setTimeCheckNTPServers(current => current.map((item, itemIndex) => itemIndex === index ? newVal : item))
             }} placeholder={defaultTimeCheckNTPServers[index]} aria-label={`NTP 时间源 ${index + 1}`} className="agent-input-field" />)}
           </div>
-          <div className="agent-ntp-actions"><button type="button" onClick={() => void saveNTPServers()} disabled={!isNTPDirty || Boolean(savingKey)}>{savingKey === 'ntp-servers' ? '保存中...' : '保存 NTP 时间源'}</button></div>
+          <div className="agent-ntp-actions"><button type="button" onClick={() => void saveNTPServers()} disabled={!isNTPDirty || timeCheckNTPServers.some(value => !value.trim()) || Boolean(savingKey)}>{savingKey === 'ntp-servers' ? '保存中...' : '保存 NTP 时间源'}</button></div>
         </SettingsDisclosure>
       </SettingsGroup>
       <SettingsGroup title="流量统计" description="设置流量统计和重置所用的时区。">
@@ -239,7 +247,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       </SettingsGroup>
       <SettingsGroup title="监控数据" description="统一管理负载、公网延迟和地区延迟的历史数据。">
         <SettingsRow label="保留时间" description="缩短后会自动清理过期数据，删除后无法恢复。" htmlFor="server-monitoring-retention-days">
-          <Select id="server-monitoring-retention-days" value={monitoringRetentionDays} onChange={handleMonitoringRetentionChange} disabled={Boolean(savingKey)} aria-label="服务器监控数据保留时间" aria-describedby="server-monitoring-retention-help">
+          <Select id="server-monitoring-retention-days" value={monitoringRetentionDays} onChange={handleMonitoringRetentionChange} disabled={Boolean(savingKey)} aria-label="服务器监控数据保留时间">
             {monitoringRetentionOptions.map(days => <option key={days} value={days}>{days} 天</option>)}
           </Select>
         </SettingsRow>
@@ -247,7 +255,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       <SettingsGroup collapsible title="维护操作" description="节点异常时，可重新下发配置。">
         <SettingsRow label="刷新全部节点" description="全部配置提升版本号后重新下发，包括节点配置、授权、运行时用户与探测计划，现有连接会短暂中断。">
           <div className="settings-actions">
-            <button type="button" className="danger-ghost" onClick={() => void refreshAllRuntime()} disabled={Boolean(savingKey)}>
+            <button type="button" className="danger-ghost" onClick={() => void refreshAllRuntime()} disabled={Boolean(savingKey) || !confirm}>
               {savingKey === 'refresh-runtime' ? '下发中...' : '刷新全部节点配置'}
             </button>
           </div>

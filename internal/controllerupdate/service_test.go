@@ -49,7 +49,7 @@ func TestDefaultServiceConfigUsesSelectedInstallDirectory(t *testing.T) {
 	if config.ControllerBinary != "/data/oboard/oboard-controller" ||
 		config.UpdaterBinary != "/data/oboard/oboard-controller-updater" ||
 		config.AIWorkerBinary != "/data/oboard/oboard-ai-worker" ||
-		config.ScriptWorkerBinary != "/data/oboard/oboard-script-worker" ||
+		config.PluginWorkerBinary != "/data/oboard/oboard-plugin-worker" ||
 		config.BinaryEnvPath != "/data/oboard/config/controller.env" ||
 		config.StatePath != "/data/oboard/data/controller-update/status.json" ||
 		config.RuntimeStatePath != "/data/oboard/data/controller-runtime.json" ||
@@ -61,7 +61,7 @@ func TestDefaultServiceConfigUsesSelectedInstallDirectory(t *testing.T) {
 
 	t.Setenv("OBOARD_INSTALL_DIR", "../tmp/unsafe")
 	config = DefaultServiceConfig()
-	if config.ControllerBinary != "/opt/oboard/oboard-controller" || config.UpdaterBinary != "/opt/oboard/oboard-controller-updater" || config.AIWorkerBinary != "/opt/oboard/oboard-ai-worker" || config.ScriptWorkerBinary != "/opt/oboard/oboard-script-worker" {
+	if config.ControllerBinary != "/opt/oboard/oboard-controller" || config.UpdaterBinary != "/opt/oboard/oboard-controller-updater" || config.AIWorkerBinary != "/opt/oboard/oboard-ai-worker" || config.PluginWorkerBinary != "/opt/oboard/oboard-plugin-worker" {
 		t.Fatalf("unsafe install directory was accepted: %#v", config)
 	}
 
@@ -698,7 +698,7 @@ func TestPreparedInstallationWaitsForExplicitApproval(t *testing.T) {
 	}
 }
 
-func TestReplaceBinaryProgramSkipsUninstalledScriptWorker(t *testing.T) {
+func TestReplaceBinaryProgramSkipsUninstalledPluginWorker(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/healthz") {
 			w.WriteHeader(http.StatusOK)
@@ -734,7 +734,7 @@ func TestReplaceBinaryProgramSkipsUninstalledScriptWorker(t *testing.T) {
 	write(filepath.Join(stage, "bin/oboard-controller"), "controller-new", 0o755)
 	write(filepath.Join(stage, "bin/oboard-controller-updater"), "updater-new", 0o755)
 	write(filepath.Join(stage, "bin/oboard-ai-worker"), "ai-new", 0o755)
-	write(filepath.Join(stage, "bin/oboard-script-worker"), "scripts-new", 0o755)
+	write(filepath.Join(stage, "bin/oboard-plugin-worker"), "plugins-new", 0o755)
 	write(filepath.Join(stage, "web/dist/index.html"), "web-new", 0o644)
 	write(filepath.Join(stage, "downloads/release-manifest.json"), "{}", 0o644)
 	write(filepath.Join(install, "oboard-controller"), "controller-old", 0o755)
@@ -756,7 +756,9 @@ func TestReplaceBinaryProgramSkipsUninstalledScriptWorker(t *testing.T) {
 		ControllerBinary:   filepath.Join(install, "oboard-controller"),
 		UpdaterBinary:      filepath.Join(install, "oboard-controller-updater"),
 		AIWorkerBinary:     filepath.Join(install, "oboard-ai-worker"),
-		ScriptWorkerBinary: filepath.Join(install, "oboard-script-worker"),
+		PluginWorkerBinary: filepath.Join(install, "oboard-plugin-worker"),
+		SystemdUnitDir:     filepath.Join(root, "systemd"),
+		OpenRCServiceDir:   filepath.Join(root, "init.d"),
 		WebRoot:            filepath.Join(install, "web"),
 		DownloadsRoot:      filepath.Join(install, "downloads"),
 		HealthClient:       server.Client(),
@@ -772,20 +774,35 @@ func TestReplaceBinaryProgramSkipsUninstalledScriptWorker(t *testing.T) {
 	if service.status.RestartDurationMS < 10 {
 		t.Fatalf("restart timing was not measured: %+v", service.status)
 	}
-	if _, err := os.Stat(filepath.Join(install, "oboard-script-worker")); !os.IsNotExist(err) {
-		t.Fatalf("self-update installed optional script worker: %v", err)
+	if _, err := os.Stat(filepath.Join(install, "oboard-plugin-worker")); !os.IsNotExist(err) {
+		t.Fatalf("self-update installed optional plugin worker: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(install, "oboard-controller"))
 	if err != nil || string(got) != "controller-new" {
 		t.Fatalf("controller binary was not replaced: %q %v", got, err)
 	}
 
-	write(filepath.Join(install, "oboard-script-worker"), "scripts-old", 0o755)
+	write(filepath.Join(install, "oboard-plugin-worker"), "plugins-old", 0o755)
 	if err := service.replaceBinaryProgram(context.Background(), stage); err != nil {
 		t.Fatal(err)
 	}
-	got, err = os.ReadFile(filepath.Join(install, "oboard-script-worker"))
-	if err != nil || string(got) != "scripts-new" {
-		t.Fatalf("existing script worker was not updated: %q %v", got, err)
+	got, err = os.ReadFile(filepath.Join(install, "oboard-plugin-worker"))
+	if err != nil || string(got) != "plugins-old" {
+		t.Fatalf("orphan worker binary opted in the runtime: %q %v", got, err)
+	}
+	if err := os.MkdirAll(service.config.OpenRCServiceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(service.config.OpenRCServiceDir, "oboard-plugin-worker"), "installed service", 0755)
+	write(filepath.Join(filepath.Dir(binaryEnv), "plugin-runtime.wanted"), "", 0644)
+	if err := os.Remove(service.config.PluginWorkerBinary); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.replaceBinaryProgram(context.Background(), stage); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(service.config.PluginWorkerBinary)
+	if err != nil || string(got) != "plugins-new" {
+		t.Fatalf("opted-in missing worker was not repaired: %q %v", got, err)
 	}
 }

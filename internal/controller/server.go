@@ -44,7 +44,7 @@ import (
 	oboardgeoip "github.com/OboardProject/oboard/internal/geoip"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/scripting"
+	"github.com/OboardProject/oboard/internal/plugin"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
@@ -102,10 +102,10 @@ type Server struct {
 	application                *application.Service
 	capabilities               *capability.Catalog
 	automation                 *automation.Service
-	scripts                    *scripting.Service
-	scriptGateway              *scripting.Gateway
-	scriptIsolation            scripting.IsolationStatus
-	scriptWorkerConnected      atomic.Bool
+	plugins                    *plugin.Service
+	pluginGateway              *plugin.Gateway
+	pluginIsolation            plugin.IsolationStatus
+	pluginWorkerConnected      atomic.Bool
 	auditIntel                 *auditintel.Service
 	auditReviews               *auditreview.Service
 	aiModelDiscoveries         *aiModelDiscoveryQueue
@@ -354,10 +354,12 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.terminalHub = newTerminalSessionHub()
 	s.agentUpdates = newAgentUpdateCoordinator(s)
 	s.recoveryDeployments = newRecoveryDeploymentQueue(s)
-	s.scripts = scripting.NewService(store, catalog.RBAC())
-	s.scriptGateway = scripting.NewGateway(store, s)
+	s.plugins = plugin.NewService(store, catalog.RBAC())
+	s.plugins.SetCallerResolver(s.resolvePluginCaller)
+	s.pluginGateway = plugin.NewGateway(store, s)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.automation.SetReplayAuthorizer(s.authorizeAutomationReplay)
+	s.automation.SetPluginPrincipalResolver(s.resolvePluginChangesetPrincipal)
 	s.automation.SetResultAuthorizer(s.authorizeAutomationResult)
 	s.restoreControllerUpdateMaintenance(context.Background())
 	s.recoverControllerUpdateRun(context.Background())
@@ -2933,7 +2935,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-	case "scripts", "script-triggers", "script-runs":
+	case "plugins", "plugin-triggers", "plugin-runs":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
 		}

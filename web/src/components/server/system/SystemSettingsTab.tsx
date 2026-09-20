@@ -48,7 +48,7 @@ export function SystemSettingsTab({ server, onSave, onCheckTime, disabled, disab
       <section className="server-detail-section">
         <h3>性能</h3>
         <FormField label="BBR + FQ" hint="仅在首次 Agent 安装时生效，切换后不会立即修改内核">
-          <Switch checked={bbr} onChange={setBbr} ariaLabel="BBR" />
+          <Switch checked={bbr} onChange={setBbr} disabled={disabled} ariaLabel="BBR" />
         </FormField>
       </section>
 
@@ -75,7 +75,7 @@ export function SystemSettingsTab({ server, onSave, onCheckTime, disabled, disab
       <section className="server-detail-section">
         <h3>Agent 功能</h3>
         <FormField label="连接审计" hint="采集连接来源与审计摘要">
-          <Switch checked={audit} onChange={setAudit} ariaLabel="连接审计" />
+          <Switch checked={audit} onChange={setAudit} disabled={disabled} ariaLabel="连接审计" />
         </FormField>
       </section>
 

@@ -11,21 +11,21 @@ describe('server mutation response recovery', () => {
     expect(request).toHaveBeenCalledTimes(1)
   })
 
-  it.each([unavailable, new TypeError('Failed to fetch')])('finds a committed creation after an ambiguous response', async error => {
+  it.each([unavailable, new TypeError('Failed to fetch')])('does not infer creation from another administrator’s matching server', async error => {
     const request = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce({ servers: [server] })
-    await expect(createServerRecord({ request }, { name: ' tokyo ' }, [])).resolves.toEqual({ server, recovered: true })
-    expect(request.mock.calls.map(call => call[1]?.method || 'GET')).toEqual(['POST', 'GET'])
+    await expect(createServerRecord({ request }, { name: ' tokyo ' }, [])).rejects.toBeInstanceOf(ServerMutationUncertainError)
+    expect(request.mock.calls.map(call => call[1]?.method || 'GET')).toEqual(['POST'])
   })
 
-  it('recovers an incomplete success response without resubmitting', async () => {
+  it('keeps an incomplete success response unknown without resubmitting', async () => {
     const request = vi.fn().mockResolvedValueOnce({ server: null }).mockResolvedValueOnce({ servers: [server] })
-    await expect(createServerRecord({ request }, { name: 'Tokyo' }, [])).resolves.toEqual({ server, recovered: true })
-    expect(request).toHaveBeenCalledTimes(2)
+    await expect(createServerRecord({ request }, { name: 'Tokyo' }, [])).rejects.toBeInstanceOf(ServerMutationUncertainError)
+    expect(request).toHaveBeenCalledTimes(1)
   })
 
   it('does not mistake a known duplicate for a successful create', async () => {
     const request = vi.fn().mockRejectedValueOnce(unavailable).mockResolvedValueOnce({ servers: [server] })
-    await expect(createServerRecord({ request }, { name: 'Tokyo' }, [server])).rejects.toBe(unavailable)
+    await expect(createServerRecord({ request }, { name: 'Tokyo' }, [server])).rejects.toBeInstanceOf(ServerMutationUncertainError)
   })
 
   it('preserves validation failures without looking up a matching server', async () => {
@@ -41,9 +41,9 @@ describe('server mutation response recovery', () => {
     expect(request.mock.calls).toEqual([['/servers/7', { method: 'DELETE' }], ['/servers/7']])
   })
 
-  it('reports a failed deletion when the server still exists', async () => {
+  it('keeps deletion unknown while a read still sees the server, without retrying', async () => {
     const request = vi.fn().mockRejectedValueOnce(unavailable).mockResolvedValueOnce({ server })
-    await expect(deleteServerRecord({ request }, server.id)).rejects.toBe(unavailable)
+    await expect(deleteServerRecord({ request }, server.id)).rejects.toBeInstanceOf(ServerMutationUncertainError)
   })
 
   it('does not claim success or failure when both mutation and verification fail', async () => {

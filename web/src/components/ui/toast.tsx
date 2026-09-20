@@ -82,13 +82,13 @@ export function Toast({ message, kind = "info", onClose, duration }: ToastProps)
       onBlurCapture={event => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) resumeTimer("focus")
       }}
-      initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -14, scale: 0.94 }}
+      initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
       animate={shouldReduceMotion
         ? { opacity: 1, transition: { duration: 0.01 } }
-        : { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 480, damping: 28, mass: 0.72 } }}
+        : { opacity: 1, y: 0, transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] } }}
       exit={shouldReduceMotion
         ? { opacity: 0, transition: { duration: 0.01 } }
-        : { opacity: 0, y: -10, scale: 0.96, transition: { duration: 0.16, ease: [0.4, 0, 1, 1] } }}
+        : { opacity: 0, transition: { duration: 0.12 } }}
     >
       <Icon className="toast-icon" aria-hidden="true" />
       <span className={`toast-message${message.includes("\n") ? " toast-message-multiline" : ""}`}>{message}</span>

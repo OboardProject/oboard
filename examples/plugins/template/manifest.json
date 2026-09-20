@@ -1,0 +1,17 @@
+{
+  "plugin_id": "example.hello",
+  "name": "最小插件",
+  "version": "1.0.0",
+  "description": "读取插件私有问候，不操作节点。",
+  "schema_version": 1,
+  "runtime": "oboard-js-v1",
+  "sdk_version": "oboard-sdk-v1",
+  "entry": "main",
+  "params_schema": { "type": "object", "additionalProperties": false },
+  "config_schema": { "type": "object", "additionalProperties": false },
+  "env": [],
+  "secrets": [],
+  "capabilities": ["state.get"],
+  "resource_types": [],
+  "limits": { "timeout_seconds": 5, "sdk_calls": 1 }
+}

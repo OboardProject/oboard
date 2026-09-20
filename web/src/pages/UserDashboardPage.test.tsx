@@ -36,24 +36,26 @@ describe('UserDashboardPage', () => {
     let navigated = false
     act(() => root.render(<UserDashboardPage overview={normalOverview} displayName="小明" onNavigateSubscriptions={() => { navigated = true }} />))
 
-    expect(container.textContent).toContain('欢迎回来，小明')
+    expect(container.textContent).not.toContain('欢迎回来')
+    expect(container.querySelector('h1')).toBeNull()
     expect(container.textContent).toContain('已分配节点4')
     expect(container.textContent).toContain('账号状态正常')
     expect(container.textContent).toContain('512 MB')
-    expect(container.textContent).toContain('总量 1.0 GB')
-    expect(container.querySelector('.dash-watermark')?.textContent).toBe('4')
+    expect(container.textContent).toContain('总量1.0 GB')
+    expect(container.querySelector('.dash-watermark')).toBeNull()
+    expect(container.textContent).not.toContain('各项服务均可用')
     expect(container.textContent).toContain('订阅')
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('50')
     expect(container.textContent).toContain('暂无公告')
-    expect(container.querySelector('.user-announcement-list')).toBeNull()
+    expect(container.querySelector('.signal-overview-announcement-list')).toBeNull()
 
-    const subButton = container.querySelector('.dash-welcome-actions button') as HTMLButtonElement
+    const subButton = container.querySelector('.signal-overview-access button') as HTMLButtonElement
     expect(subButton).not.toBeNull()
     act(() => subButton.click())
     expect(navigated).toBe(true)
   })
 
-  it('shows only boolean audit status and account attention reasons', () => {
+  it('shows actionable account restrictions without administrator audit terminology', () => {
     act(() => root.render(<UserDashboardPage overview={{
       ...normalOverview,
       assigned_node_count: 0,
@@ -65,22 +67,43 @@ describe('UserDashboardPage', () => {
     }} displayName="用户" />))
 
     expect(container.textContent).toContain('需要关注')
-    expect(container.textContent).toContain('未开通有效套餐 · 订阅已暂停 · 审计判定存在风险')
-    expect(container.textContent).toContain('审计存在风险')
+    expect(container.textContent).toContain('未开通有效套餐 · 订阅已暂停 · 账号使用情况需要核实')
+    expect(container.textContent).not.toContain('审计')
+    expect(container.textContent).toContain('请联系管理员')
     expect(container.textContent).not.toMatch(/风险分|55|100/)
-    expect(container.textContent).toContain('总量 未开通')
+    expect(container.textContent).toContain('总量未开通')
   })
 
-  it('distinguishes unlimited traffic from disabled audit', () => {
+  it('shows unlimited traffic without exposing collection state', () => {
     act(() => root.render(<UserDashboardPage overview={{
       ...normalOverview,
       traffic: { used_bytes: 2048, limit_bytes: 0, quota_state: 'active' },
       audit: { enabled: false, risk: false },
     }} displayName="用户" />))
 
-    expect(container.textContent).toContain('总量 不限量')
+    expect(container.textContent).toContain('总量不限量')
     expect(container.textContent).toContain('审计未启用')
     expect(container.querySelector('[role="progressbar"]')).toBeNull()
+  })
+
+  it('keeps unavailable and loading states separate from real zero usage', () => {
+    act(() => root.render(<UserDashboardPage displayName="用户" loading />))
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('0 B')
+    act(() => root.render(<UserDashboardPage displayName="用户" />))
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('暂不可用')
+    act(() => root.render(<UserDashboardPage displayName="用户" overview={{ ...normalOverview, assigned_node_count: NaN, traffic: { used_bytes: NaN, limit_bytes: NaN, quota_state: 'active' } }} />))
+    expect(container.textContent).not.toContain('0 B')
+    expect(container.textContent).not.toContain('不限量')
+    expect(container.querySelector('[role="progressbar"]')).toBeNull()
+    expect((container.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('shows the supplied period end and caps exhausted quota at 100 percent', () => {
+    act(() => root.render(<UserDashboardPage displayName="用户" overview={{ ...normalOverview, traffic: { used_bytes: 2048, limit_bytes: 1024, quota_state: 'exceeded', period_end: '2026-10-01T00:00:00Z' } }} />))
+    expect(container.querySelector('.signal-overview-period time')?.getAttribute('datetime')).toBe('2026-10-01T00:00:00Z')
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100')
+    expect(container.querySelector('[data-tone="danger"]')).not.toBeNull()
   })
 
   it('renders targeted announcements as a semantic newest-first list', () => {
@@ -90,7 +113,7 @@ describe('UserDashboardPage', () => {
     ]
     act(() => root.render(<UserDashboardPage overview={normalOverview} announcements={announcements} displayName="用户" />))
 
-    const board = container.querySelector('.user-announcement-board')
+    const board = container.querySelector('.signal-overview-announcements')
     expect(board?.getAttribute('aria-labelledby')).toBe('user-announcement-title')
     expect(board?.querySelector('h2')?.textContent).toBe('公告')
     expect(board?.querySelectorAll('ol > li')).toHaveLength(2)

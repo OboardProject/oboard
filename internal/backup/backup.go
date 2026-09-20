@@ -326,7 +326,7 @@ func (m *Manager) StageRestore(ctx context.Context, archivePath, password, targe
 	database := filepath.Join(stage, "database.sqlite")
 	err = restored.SetSetting(ctx, "controller_backup_restore_reconcile", "true")
 	if err == nil {
-		err = restored.PauseScriptSchedulerAfterRestore(ctx)
+		err = restored.PausePluginSchedulerAfterRestore(ctx)
 	}
 	if err == nil {
 		err = restored.CheckIntegrity(ctx)

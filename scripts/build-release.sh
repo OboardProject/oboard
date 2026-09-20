@@ -71,7 +71,7 @@ package_controller() {
   cp "$source" "$stage/bin/oboard-controller"
   cp "$OUT_DIR/bin/$os-$arch/oboard-controller-updater" "$stage/bin/oboard-controller-updater"
   cp "$OUT_DIR/bin/$os-$arch/oboard-ai-worker" "$stage/bin/oboard-ai-worker"
-  cp "$OUT_DIR/bin/$os-$arch/oboard-script-worker" "$stage/bin/oboard-script-worker"
+  cp "$OUT_DIR/bin/$os-$arch/oboard-plugin-worker" "$stage/bin/oboard-plugin-worker"
   cp "$OUT_DIR/bin/$os-$arch/oboard-subscription-relay" "$stage/bin/oboard-subscription-relay"
   cp "$CONTROLLER_DIR/README.md" "$stage/README.md"
   cp "$CONTROLLER_DIR/LICENSE" "$stage/LICENSE"
@@ -96,13 +96,13 @@ package_controller() {
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller-updater.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-ai-worker.service" "$stage/deploy/systemd/"
-  cp "$CONTROLLER_DIR/deploy/systemd/oboard-script-worker.service" "$stage/deploy/systemd/"
+  cp "$CONTROLLER_DIR/deploy/systemd/oboard-plugin-worker.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-subscription-relay.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-subscription-relay-updater.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller-updater" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-ai-worker" "$stage/deploy/openrc/"
-  cp "$CONTROLLER_DIR/deploy/openrc/oboard-script-worker" "$stage/deploy/openrc/"
+  cp "$CONTROLLER_DIR/deploy/openrc/oboard-plugin-worker" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-subscription-relay" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-subscription-relay-updater" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/controller.env.example" "$stage/deploy/"
@@ -113,7 +113,7 @@ package_controller() {
   # Keep the self-update payload compatible with the updater's extraction
   # allowlist. Installation-only service files and scripts live in a separate
   # archive and are never exposed to the privileged self-update extractor.
-	create_tar_archive "$stage" "$archive" bin/oboard-controller bin/oboard-controller-updater bin/oboard-ai-worker web downloads
+	create_tar_archive "$stage" "$archive" bin/oboard-controller bin/oboard-controller-updater bin/oboard-ai-worker bin/oboard-plugin-worker web downloads
   create_tar_archive "$stage" "$install_archive" .
   rm -rf "$stage"
   echo "$archive"
@@ -143,7 +143,7 @@ for platform in $PLATFORMS; do
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-controller" ./cmd/controller
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-controller-updater" ./cmd/controller-updater
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-ai-worker" ./cmd/ai-worker
-  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-script-worker" ./cmd/script-worker
+  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-plugin-worker" ./cmd/plugin-worker
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-subscription-relay" ./cmd/subscription-relay
 done
 

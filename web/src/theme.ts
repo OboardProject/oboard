@@ -55,9 +55,9 @@ const THEME_PAGE_BG: Record<ThemeName, string> = {
 
 export function applyThemeToDocument(theme: ThemeName) {
   const root = document.documentElement
-  const pageBg = THEME_PAGE_BG[theme]
   root.dataset.theme = theme
   root.classList.toggle('dark', theme === 'dark')
+  const pageBg = getComputedStyle(root).getPropertyValue('--bg-page').trim() || THEME_PAGE_BG[theme]
   root.style.colorScheme = theme
   root.style.backgroundColor = pageBg
   if (document.body) {

@@ -279,7 +279,8 @@ describe('SubscriptionPlansPage', () => {
     expect(container.textContent).toContain('变更状态已更新')
     expect(container.textContent).not.toContain('重试原变更')
     expect(container.textContent).not.toContain('only failed access changes')
-    expect(container.textContent).toContain('正在同步到服务器')
+    expect(container.textContent).toContain('正在应用')
+    expect(container.textContent).not.toContain('系统会自动收敛')
   })
 
   it('shows a failed node change without blocking further edits', async () => {
@@ -416,5 +417,27 @@ describe('SubscriptionPlansPage', () => {
 
     const names = Array.from(document.body.querySelectorAll('.plan-node-row strong')).map(el => el.textContent)
     expect(names).toEqual(['9929', '沪日｜SSH', '沪日｜HY2'])
+  })
+
+  it.each([409, 0])('does not silently replace newer server state or replay an unknown save (%s)', async status => {
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/subscription-plans') return { subscription_plans: [plan] }
+      if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path === '/subscription-plans/1') return { subscription_plan: plan, latest_nodes: [], revisions: [], member_count: 0 }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [], policy: { mode: 'exit_region' } }
+      if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [11, 12].map(id => ({ type: 'inbound', id, key: `inbound:${id}`, name: `Entry ${id}`, status: 'ok' })), total: 2 }
+      if (path === '/subscription-plans/1/nodes/apply') throw Object.assign(new Error(status ? 'conflict' : 'connection lost'), { status })
+      throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
+    })
+    await act(async () => root.render(<SubscriptionPlansPage embedded selectedPlanID={1} data={{ subscription_plans: [plan] }} client={{ request }} load={vi.fn()} />))
+    await flushEffects()
+    act(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes('添加节点'))!.click())
+    await flushEffects()
+    const toggle = (id: number) => act(() => Array.from(document.querySelectorAll('label')).find(label => label.textContent?.includes(`Entry ${id}`))!.querySelector<HTMLInputElement>('input')!.click())
+    toggle(11); await flushEffects(); toggle(12); await flushEffects()
+    expect(request.mock.calls.filter(([path]) => path.endsWith('/nodes/apply'))).toHaveLength(1)
+    expect(document.body.textContent).toContain(status ? '套餐已被其他人修改' : '提交结果未知')
+    expect(document.body.textContent).not.toContain('自动保存失败')
   })
 })

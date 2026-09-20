@@ -1,7 +1,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { AnimatePresence } from "motion/react"
-import { ModalSurface } from "./modal-layer"
+import { ModalSurface, type ModalPlacement, type DrawerSize } from "./modal-layer"
 import type { SurfaceMotion } from "./surface-motion"
 
 export interface DialogProps {
@@ -13,6 +13,8 @@ export interface DialogProps {
   size?: "default" | "sm" | "lg" | "xl"
   footer?: React.ReactNode
   surfaceMotion?: SurfaceMotion
+  placement?: ModalPlacement
+  drawerSize?: DrawerSize
 }
 
 export function Dialog({
@@ -24,6 +26,8 @@ export function Dialog({
   size = "default",
   footer,
   surfaceMotion,
+  placement,
+  drawerSize,
 }: DialogProps) {
   const titleID = React.useId()
   const sizeClasses = {
@@ -32,7 +36,7 @@ export function Dialog({
     lg: "max-w-2xl",
     xl: "max-w-5xl",
   }
-  const isCompact = className.split(/\s+/).includes("dialog-host-compact")
+  const isCompact = size === "sm" || className.split(/\s+/).includes("dialog-host-compact")
 
   const content = (
     <AnimatePresence>
@@ -41,11 +45,13 @@ export function Dialog({
           key="dialog-surface"
           onClose={onClose}
           rootClassName="dialog-root p-4"
-          panelClassName={`dialog relative w-full rounded-2xl bg-popover text-foreground border border-border/80 shadow-2xl flex flex-col max-h-[90vh] ${isCompact ? "p-4 gap-3" : "p-6"} ${sizeClasses[size]} ${className}`}
+          panelClassName={`dialog relative w-full rounded-xl bg-popover text-foreground border border-border shadow-lg flex flex-col max-h-[90vh] ${isCompact ? "p-4 gap-3" : "p-6"} ${sizeClasses[size]} ${className}`}
           ariaLabelledBy={title ? titleID : undefined}
           ariaLabel={title ? undefined : "对话框"}
           portal={false}
           surfaceMotion={surfaceMotion ?? (isCompact ? "compact" : "form")}
+          placement={placement}
+          drawerSize={drawerSize}
         >
           {title && (
             <div className={`dialog-chrome-head flex items-center justify-between gap-3 ${isCompact ? "" : "border-b border-border pb-4 mb-4"}`}>

@@ -43,6 +43,28 @@ it('loads assigned tasks, restores the saved default, saves only the selection a
   expect(document.body.querySelector('[aria-label="监控目标"]')?.textContent).toContain('公网探测')
 })
 
+it('does not let an old save close or update a newly opened server', async () => {
+  let resolveSave!: (value: unknown) => void
+  const client = { request: vi.fn((_path: string, init?: RequestInit) => init?.method === 'PATCH'
+    ? new Promise(resolve => { resolveSave = resolve })
+    : Promise.resolve({ tasks: [] })) }
+  const onClose = vi.fn()
+  const onSaved = vi.fn()
+  const first = { id: 7, name: 'First' } as Server
+  await act(async () => root.render(<ServerMonitoringTargetDialog server={first} client={client} onSaved={onSaved} onClose={onClose} />))
+  act(() => {
+    const save = [...document.body.querySelectorAll('button')].find(button => button.textContent === '保存为默认')!
+    save.click()
+    save.click()
+  })
+  expect(client.request.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1)
+  await act(async () => root.render(<ServerMonitoringTargetDialog server={{ id: 8, name: 'Second' } as Server} client={client} onSaved={onSaved} onClose={onClose} />))
+  await act(async () => resolveSave({ server: first }))
+  expect(onClose).not.toHaveBeenCalled()
+  expect(onSaved).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('Second')
+})
+
 it('keeps the dialog open with an accessible error when saving fails', async () => {
   const onClose = vi.fn()
   const onSaved = vi.fn()

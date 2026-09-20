@@ -24,6 +24,12 @@ export function OAuthClientList({ requestV2, notify, confirm }: OAuthClientListP
   const [editingID, setEditingID] = useState('')
   const [draft, setDraft] = useState<ClientDraft>({ name: '', redirects: 'http://127.0.0.1/callback', metadataURI: '' })
   const [working, setWorking] = useState('')
+  const [saveError, setSaveError] = useState('')
+  const session = React.useRef(0)
+  const saving = React.useRef(false)
+  const currentDraft = React.useRef(draft)
+  const initialDraft = React.useRef(draft)
+  currentDraft.current = draft
 
   const load = useCallback(async () => {
     try {
@@ -36,30 +42,51 @@ export function OAuthClientList({ requestV2, notify, confirm }: OAuthClientListP
   useEffect(() => { void load() }, [load])
 
   const openDialog = (client?: OAuthClient) => {
+    session.current++
+    setSaveError('')
     setEditingID(client?.id || '')
-    setDraft(client
+    const next = client
       ? { name: client.name, redirects: (client.redirect_uris || []).join('\n'), metadataURI: client.metadata_uri || '' }
-      : { name: '', redirects: 'http://127.0.0.1/callback', metadataURI: '' })
+      : { name: '', redirects: 'http://127.0.0.1/callback', metadataURI: '' }
+    initialDraft.current = next
+    setDraft(next)
     setDialogOpen(true)
+  }
+
+  const closeDialog = async () => {
+    const closingSession = session.current
+    if (JSON.stringify(currentDraft.current) !== JSON.stringify(initialDraft.current) && !await confirm({ title: '关闭编辑？', message: '尚未保存的输入会丢失；已经提交的修改会继续处理。', confirmText: '放弃并关闭', tone: 'danger' })) return
+    if (closingSession !== session.current) return
+    session.current++
+    setDialogOpen(false)
   }
 
   const splitValues = (raw: string) => raw.split('\n').map(item => item.trim()).filter(Boolean)
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault()
+    if (saving.current) return
+    const savingSession = session.current
+    const snapshot = draft
+    saving.current = true
+    setSaveError('')
     setWorking(editingID ? 'oauth-update' : 'oauth-create')
     try {
       if (editingID) {
         await updateClient(requestV2, editingID, { client_name: draft.name, redirect_uris: splitValues(draft.redirects), ...(draft.metadataURI.trim() ? { metadata_uri: draft.metadataURI.trim() } : {}) })
       } else {
-        await createClient(requestV2, { client_name: draft.name, redirect_uris: splitValues(draft.redirects), ...(draft.metadataURI.trim() ? { metadata_uri: draft.metadataURI.trim() } : {}) })
+        const created = await createClient(requestV2, { client_name: draft.name, redirect_uris: splitValues(draft.redirects), ...(draft.metadataURI.trim() ? { metadata_uri: draft.metadataURI.trim() } : {}) })
+        if (session.current === savingSession) setEditingID(created.id)
       }
-      setDialogOpen(false)
-      await load()
-      notify?.(editingID ? 'OAuth Client 已更新' : 'OAuth Client 已创建', 'success')
+      if (session.current === savingSession) {
+        initialDraft.current = snapshot
+        if (JSON.stringify(currentDraft.current) === JSON.stringify(snapshot)) setDialogOpen(false)
+      }
+      void load()
     } catch (error: any) {
-      notify?.(error?.message || '保存失败', 'error')
+      if (session.current === savingSession) setSaveError(error?.message || '保存失败，输入已保留。')
     } finally {
+      saving.current = false
       setWorking('')
     }
   }
@@ -100,13 +127,14 @@ export function OAuthClientList({ requestV2, notify, confirm }: OAuthClientListP
   return (
     <>
       <section className="settings-card">
-        <div className="settings-card-head automation-section-head"><div><h3>MCP 客户端</h3><p className="muted">注册允许接入 OBoard MCP 的应用身份、回调地址和 OAuth 客户端信息。</p></div><button type="button" onClick={() => openDialog()}><Plus size={14} />注册</button></div>
-        <div className="automation-list">{clients.length ? clients.map((item) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span>{item.identity_type === 'cimd' && <span className="automation-state">CIMD</span>}</div><span>{item.id}</span><small>{item.identity_type === 'cimd' && item.metadata_uri ? `CIMD · ${item.metadata_uri}` : '预注册客户端'} · {item.redirect_uris.join(', ')}</small></div><div><button className="ghost icon-button" onClick={() => openDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggle(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void remove(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Globe size={20} /><span>还没有 OAuth Client</span><button type="button" className="ghost" onClick={() => openDialog()}>注册客户端</button></div>}</div>
+        <div className="settings-card-head automation-section-head"><div><h3>MCP 客户端</h3><p className="muted">管理可以接入的应用与回调地址。</p></div><button type="button" onClick={() => openDialog()}><Plus size={14} />注册</button></div>
+        <div className="automation-list">{clients.length ? clients.map((item) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span>{item.identity_type === 'cimd' && <span className="automation-state">CIMD</span>}</div><span>{item.id}</span><small>{item.identity_type === 'cimd' && item.metadata_uri ? `CIMD · ${item.metadata_uri}` : '预注册客户端'} · {item.redirect_uris.join(', ')}</small></div><div><button className="ghost icon-button" onClick={() => openDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggle(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void remove(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Globe size={20} /><span>还没有 MCP 客户端</span><button type="button" className="ghost" onClick={() => openDialog()}>注册客户端</button></div>}</div>
       </section>
 
-      <AnimatePresence>{dialogOpen && <MotionDialogPanel onCancel={() => setDialogOpen(false)} className="automation-dialog">
-        <header className="dialog-head"><div><h2>{editingID ? '编辑 OAuth Client' : '注册 OAuth Client'}</h2><p className="muted">客户端不声明权限上限；权限在用户授权时决定。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setDialogOpen(false)} aria-label="关闭" title="关闭"><X size={16} /></button></header>
+      <AnimatePresence>{dialogOpen && <MotionDialogPanel onCancel={() => void closeDialog()} className="automation-dialog">
+        <header className="dialog-head"><div><h2>{editingID ? '编辑 MCP 客户端' : '注册 MCP 客户端'}</h2><p className="muted">客户端不声明权限上限；权限在用户授权时决定。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => void closeDialog()} aria-label="关闭" title="关闭"><X size={16} /></button></header>
         <div className="dialog-body">
+          {saveError && <p role="alert" className="danger-text">{saveError}</p>}
           <form id="oauth-client-form" className="form automation-dialog-form" onSubmit={save}>
             {editingID && <FormField label="Client ID" hint="MCP 客户端配置时使用的 client_id。">
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -119,7 +147,7 @@ export function OAuthClientList({ requestV2, notify, confirm }: OAuthClientListP
             <FormField label="CIMD 元数据地址（可选）" hint="HTTPS URL；文档中的 client_id 必须与地址完全一致。"><input value={draft.metadataURI} onChange={event => setDraft({ ...draft, metadataURI: event.target.value })} placeholder="https://example.com/.well-known/oauth-client-metadata.json" /></FormField>
           </form>
         </div>
-        <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setDialogOpen(false)}>取消</button><button type="submit" form="oauth-client-form" disabled={Boolean(working) || !draft.name.trim() || !draft.redirects.trim()}>{editingID ? '保存' : '注册'}</button></footer>
+        <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void closeDialog()}>关闭</button><button type="submit" form="oauth-client-form" disabled={Boolean(working) || !draft.name.trim() || !draft.redirects.trim()}>{editingID ? '保存' : '注册'}</button></footer>
       </MotionDialogPanel>}</AnimatePresence>
     </>
   )

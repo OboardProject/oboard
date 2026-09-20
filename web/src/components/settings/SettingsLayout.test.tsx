@@ -37,6 +37,20 @@ describe('SettingsLayout', () => {
     expect(container.textContent).toContain('已开启')
   })
 
+  it('associates field labels with native inputs and custom selectors', () => {
+    act(() => root.render(<>
+      <SettingsRow label="预设名称"><input /></SettingsRow>
+      <SettingsRow label="协议"><Select value="vless"><option value="vless">VLESS</option></Select></SettingsRow>
+    </>))
+    const labels = [...container.querySelectorAll('label')]
+    expect(labels).toHaveLength(2)
+    for (const label of labels) {
+      const control = document.getElementById(label.htmlFor)
+      expect(control).not.toBeNull()
+      expect(control?.getAttribute('aria-label')).toBe(label.textContent)
+    }
+  })
+
   it('opens help without expanding the form and dismisses it with Escape', () => {
     act(() => root.render(<SettingsGroup collapsible title="代理" description="填写可信代理地址"><input aria-label="代理地址" /></SettingsGroup>))
     const help = container.querySelector('button[aria-label="代理说明"]') as HTMLButtonElement

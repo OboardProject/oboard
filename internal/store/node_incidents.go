@@ -72,7 +72,7 @@ func (s *Store) OpenOrReopenNodeIncident(ctx context.Context, server model.Serve
 		if err != nil {
 			return model.NodeIncident{}, false, err
 		}
-		if err := enqueueScriptIncidentEventTx(ctx, tx, "script.server.offline", item); err != nil {
+		if err := enqueuePluginIncidentEventTx(ctx, tx, "plugin.server.offline", item); err != nil {
 			return model.NodeIncident{}, false, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -159,7 +159,7 @@ func (s *Store) ResolveNodeIncident(ctx context.Context, incidentID, expectedVer
 	if err != nil {
 		return nil, err
 	}
-	if err := enqueueScriptIncidentEventTx(ctx, tx, "script.server.recovered", item); err != nil {
+	if err := enqueuePluginIncidentEventTx(ctx, tx, "plugin.server.recovered", item); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -168,16 +168,16 @@ func (s *Store) ResolveNodeIncident(ctx context.Context, incidentID, expectedVer
 	return &item, nil
 }
 
-func enqueueScriptIncidentEventTx(ctx context.Context, tx *sql.Tx, topic string, item model.NodeIncident) error {
+func enqueuePluginIncidentEventTx(ctx context.Context, tx *sql.Tx, topic string, item model.NodeIncident) error {
 	payload, err := json.Marshal(map[string]any{
-		"event":       strings.TrimPrefix(topic, "script."),
+		"event":       strings.TrimPrefix(topic, "plugin."),
 		"server_id":   item.ServerID,
 		"incident_id": item.ID,
 	})
 	if err != nil {
 		return err
 	}
-	id := fmt.Sprintf("evt_%d_server_%d_incident_%d_%s", time.Now().UTC().UnixNano(), item.ServerID, item.ID, strings.TrimPrefix(topic, "script."))
+	id := fmt.Sprintf("evt_%d_server_%d_incident_%d_%s", time.Now().UTC().UnixNano(), item.ServerID, item.ID, strings.TrimPrefix(topic, "plugin."))
 	_, err = tx.ExecContext(ctx, `insert into event_outbox(id,topic,aggregate_id,payload_json,status,available_at,created_at) values(?,?,?,?,'pending',?,?)`,
 		id, topic, fmt.Sprintf("server:%d:incident:%d", item.ServerID, item.ID), string(payload), now(), now())
 	return err

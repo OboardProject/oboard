@@ -12,7 +12,7 @@ describe('configuration sync feedback', () => {
       { server_id: 2, state: 'failed', error: 'prepare failed' },
       { server_id: 3, state: 'failed', error: 'agent failed' },
     ])
-    expect(status).toMatchObject({ tone: 'danger', label: '配置同步被阻塞 · 2 个问题', retryServerIDs: [2, 3], busy: false })
+    expect(status).toMatchObject({ tone: 'danger', label: '需要处理 · 2', retryServerIDs: [2, 3], busy: false })
   })
 
   it('deduplicates repeated server failures and explains the direct-branch conflict', () => {
@@ -34,7 +34,7 @@ describe('configuration sync feedback', () => {
       conflictingPathNames: ['东京直出', '备用直出'],
     })
     expect(issues[0].resolution).toContain('删除或停用同一位置的重复直出分支')
-    expect(configurationSyncPresentation(rows).label).toBe('配置同步被阻塞 · 1 个问题')
+    expect(configurationSyncPresentation(rows).label).toBe('需要处理 · 1')
     expect(configurationSyncFailureIssues([{ server_id: 1, state: 'failed', error: '入口 15 已存在相同位置的直接出口分支' }])[0].inboundID).toBe(15)
   })
 
@@ -48,17 +48,17 @@ describe('configuration sync feedback', () => {
     expect(issues).toHaveLength(1)
     expect(issues[0]).toMatchObject({
       kind: 'busy',
-      title: '主控数据库正忙',
+      title: '配置同步暂时中断',
       serverIDs: expect.arrayContaining([1, 17]),
       targetLabel: '查看任务记录',
     })
     expect(issues[0].explanation).toContain('不是节点配置错误')
-    expect(issues[0].resolution).toContain('直接重试同步即可')
+    expect(issues[0].resolution).toContain('请重试同步')
     expect(configurationSyncPresentation(issues[0].serverIDs.map(server_id => ({
       server_id,
       state: 'failed' as const,
       error: 'database is locked (5) (SQLITE_BUSY)',
-    }))).label).toBe('配置同步被阻塞 · 1 个问题')
+    }))).label).toBe('需要处理 · 1')
   })
 
   it('lists busy sync rows and labels their in-flight state', () => {
@@ -96,11 +96,11 @@ describe('configuration sync feedback', () => {
       { server_id: 1, state: 'queued', agent_reachable: false },
       { server_id: 2, state: 'pending' },
       { server_id: 4, state: 'synced' },
-    ], false, false, servers)).toMatchObject({ tone: 'ok', label: '配置已同步', busy: false })
+    ], false, false, servers)).toMatchObject({ tone: 'info', label: '等待服务器连接', busy: false })
     expect(configurationSyncPresentation([
       { server_id: 1, state: 'queued', agent_reachable: false },
       { server_id: 2, state: 'pending' },
-    ], false, false, servers)).toMatchObject({ tone: 'warn', label: '配置已保存', busy: false })
+    ], false, false, servers)).toMatchObject({ tone: 'info', label: '等待服务器连接', busy: false })
   })
 
   it('merges desired revision and sync rows without discarding page entities', () => {
@@ -109,6 +109,21 @@ describe('configuration sync feedback', () => {
     expect(next.servers).toBe(current.servers)
     expect(next.desired_revision).toBe(5)
     expect(next.configuration_sync).toEqual([{ server_id: 1, state: 'pending' }])
+  })
+
+  it('keeps a newer target and execution version when an older failure arrives', () => {
+    const current = { desired_revision: 12, configuration_sync: [{ server_id: 1, desired_revision: 12, config_version: 50, state: 'synced' }] }
+    expect(mergeConfigurationSyncResponse(current, { desired_revision: 11, configuration_sync: [{ server_id: 1, desired_revision: 11, state: 'failed' }] })).toBe(current)
+    const olderTask = mergeConfigurationSyncResponse(current, { desired_revision: 12, configuration_sync: [{ server_id: 1, desired_revision: 12, config_version: 49, state: 'failed' }] })
+    expect(olderTask.configuration_sync[0].state).toBe('synced')
+  })
+
+  it('does not conceal a confirmed failure just because its server went offline', () => {
+    expect(configurationSyncPresentation([{ server_id: 1, state: 'failed', agent_reachable: false }]).label).toBe('需要处理 · 1')
+  })
+
+  it('patches entities on the current v1 UI adapter path', () => {
+    expect(mergeConfigurationMutationResponse({ servers: [{ id: 1, name: 'old' }] }, { server: { id: 1, name: 'new' } }, '/api/v1/ui/servers/1').servers[0].name).toBe('new')
   })
 
   it('does not mutate cached data when a failed response has no sync metadata', () => {

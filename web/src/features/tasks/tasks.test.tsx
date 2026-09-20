@@ -8,7 +8,7 @@ import { redactTaskJSON, taskSummaryFromPayload } from './domain'
 
 describe('task module', () => {
   it('loads the bounded task list independently and filters categories', async () => {
-    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ tasks: [{ id: 1, type: 'apply_deployment', status: 'succeeded', server_id: 2, config_version: 7 }, { id: 2, type: 'remote_exec', status: 'pending', server_id: 2 }] }), { headers: { 'Content-Type': 'application/json' } }))
+    const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ tasks: [{ id: 1, type: 'apply_deployment', status: 'succeeded', server_id: 2, config_version: 7 }, { id: 2, type: 'remote_exec', status: 'pending', server_id: 2 }] }), { headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetch)
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     const client = createAPIClientFactory(path => path, () => new Error('request failed'))('cookie')
@@ -16,7 +16,7 @@ describe('task module', () => {
     const root = createRoot(container)
     try {
       await act(async () => root.render(<Tasks client={client} servers={[{ id: 2, name: '测试节点' }]} />))
-      expect(fetch.mock.calls[0][0]).toContain('/agent-tasks?limit=300')
+      expect(fetch.mock.calls.some(([url]) => String(url).includes('/agent-tasks?limit=300'))).toBe(true)
       expect(container.textContent).toContain('测试节点')
       expect(container.textContent).toContain('版本 7')
       const filter = container.querySelector('[aria-label="任务分类"]')!

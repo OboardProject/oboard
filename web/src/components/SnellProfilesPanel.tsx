@@ -4,6 +4,7 @@ import { useDialogs } from './ui/dialog-context'
 import { Dialog } from './ui/dialog'
 import { Select } from './ui/select'
 import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
+import { useSettingsEditorClose } from './settings/useSettingsEditorClose'
 
 export interface SnellProfilesPanelProps {
   data: any
@@ -51,7 +52,7 @@ function profileMeta(profile: SnellProfile) {
   return parts
 }
 
-export function SnellProfileCards({ profiles, editingID, onEdit, onDelete }: { profiles: SnellProfile[]; editingID?: number; onEdit: (profile: SnellProfile) => void; onDelete: (profile: SnellProfile) => void }) {
+export function SnellProfileCards({ profiles, editingID, onEdit, onDelete, busy }: { profiles: SnellProfile[]; busy?: boolean; editingID?: number; onEdit: (profile: SnellProfile) => void; onDelete: (profile: SnellProfile) => void }) {
   return <div className="snell-profile-grid">
     {profiles.map(profile => (
       <article className={`snell-profile-card${profile.builtin ? ' is-builtin' : ''}${profile.enabled === false ? ' is-disabled' : ''}${editingID === profile.id ? ' is-editing' : ''}`} key={profile.id}>
@@ -65,19 +66,20 @@ export function SnellProfileCards({ profiles, editingID, onEdit, onDelete }: { p
           {profile.remark && <p className="snell-profile-remark">{profile.remark}</p>}
         </div>
         <div className="snell-profile-card-actions">
-          <button type="button" className="ghost icon-button" onClick={() => onEdit(profile)} title={`编辑 ${profile.name}`} aria-label={`编辑 ${profile.name}`}><Pencil size={14} /></button>
-          {!profile.builtin && <button type="button" className="ghost icon-button danger-text" onClick={() => onDelete(profile)} disabled={profile.usage_count > 0} title={profile.usage_count > 0 ? '仍有入口引用，请先解绑' : `删除 ${profile.name}`} aria-label={`删除 ${profile.name}`}><Trash2 size={14} /></button>}
+          <button type="button" className="ghost icon-button" onClick={() => onEdit(profile)} disabled={busy} title={`编辑 ${profile.name}`} aria-label={`编辑 ${profile.name}`}><Pencil size={14} /></button>
+          {!profile.builtin && <button type="button" className="ghost icon-button danger-text" onClick={() => onDelete(profile)} disabled={busy || profile.usage_count > 0} title={profile.usage_count > 0 ? '仍有入口引用，请先解绑' : `删除 ${profile.name}`} aria-label={`删除 ${profile.name}`}><Trash2 size={14} /></button>}
         </div>
       </article>
     ))}
   </div>
 }
 
-export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean }) {
+export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle, error }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean; error?: string }) {
+  const [showPSK, setShowPSK] = useState(false)
   const isV6 = Number(draft.version) === 6
   return <div className={`snell-profile-editor${hideTitle ? ' is-dialog' : ''}`}>
     {!hideTitle && <h4>{title}</h4>}
-    <div className="form settings-form">
+    <fieldset className="form settings-form settings-editor-fields" disabled={saving} aria-busy={saving}>
       <SettingsRow label="预设名称" description="用于在入口表单中识别该套参数。">
         <input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 A 通用 v4" />
       </SettingsRow>
@@ -87,7 +89,10 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
         </Select>
       </SettingsRow>
       <SettingsRow label="PSK" description={isV6 ? 'v6 要求 12-255 字节。留空时入口会使用绑定用户的代理密码。' : '至少 8 字符。留空时入口会使用绑定用户的代理密码。'}>
-        <input value={draft.psk} onChange={event => setDraft({ ...draft, psk: event.target.value })} placeholder="留空 = 使用用户密码" autoComplete="new-password" />
+        <div className="settings-secret-field">
+          <input aria-label="PSK" type={showPSK ? 'text' : 'password'} value={draft.psk} onChange={event => setDraft({ ...draft, psk: event.target.value })} placeholder="留空 = 使用用户密码" autoComplete="new-password" spellCheck={false} />
+          <button type="button" className="ghost" aria-label={showPSK ? '隐藏 PSK' : '显示 PSK'} aria-pressed={showPSK} onClick={() => setShowPSK(value => !value)}>{showPSK ? '隐藏' : '显示'}</button>
+        </div>
       </SettingsRow>
       {!isV6 && <>
         <SettingsRow label="混淆模式" description="HTTP 混淆；Host 留空时客户端使用默认 bing.com。">
@@ -113,11 +118,12 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
       <SettingsRow label="备注" description="可选说明，例如适用机房或用途。">
         <input value={draft.remark} onChange={event => setDraft({ ...draft, remark: event.target.value })} placeholder="可选" />
       </SettingsRow>
+      {error && <p className="settings-feedback" role="alert">{error}</p>}
       <div className="settings-actions">
-        <button onClick={onSave} disabled={saving || !draft.name.trim()}>{saving ? '保存中...' : '保存预设'}</button>
+        <button type="button" onClick={onSave} disabled={saving || !draft.name.trim()}>{saving ? '保存中...' : '保存预设'}</button>
         <button type="button" className="ghost" onClick={onCancel}>取消</button>
       </div>
-    </div>
+    </fieldset>
   </div>
 }
 
@@ -126,10 +132,17 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
   const profiles: SnellProfile[] = data.snell_profiles || []
   const [editing, setEditing] = useState<null | { id?: number; draft: SnellDraft }>(null)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [initialDraft, setInitialDraft] = useState('')
+  const openEditor = (entry: NonNullable<typeof editing>) => {
+    setError(''); setInitialDraft(JSON.stringify(entry.draft)); setEditing(entry)
+  }
+  const closeEditor = useSettingsEditorClose({ busy: saving, dirty: Boolean(editing) && JSON.stringify(editing?.draft) !== initialDraft, onClose: () => setEditing(null) })
 
   const saveProfile = async () => {
-    if (!editing) return
+    if (!editing || saving) return
     setSaving(true)
+    setError('')
     try {
       const body = { ...editing.draft }
       if (editing.id) {
@@ -142,6 +155,7 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
       setEditing(null)
       await load()
     } catch (error: any) {
+      setError(String(error?.message || error || '保存失败'))
       notify(String(error?.message || error || '保存失败'), 'error')
     } finally {
       setSaving(false)
@@ -149,27 +163,32 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
   }
 
   const deleteProfile = async (profile: SnellProfile) => {
-    if (!await dialogs.confirm({ title: `删除预设「${profile.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
+    if (saving || profile.builtin || profile.usage_count > 0) return
+    setSaving(true)
+    setError('')
     try {
+      if (!await dialogs.confirm({ title: `删除预设「${profile.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
       await client.request(`/snell-profiles/${profile.id}`, { method: 'DELETE' })
       notify('预设已删除', 'success')
       await load()
     } catch (error: any) {
+      setError(String(error?.message || error || '删除失败'))
       notify(String(error?.message || error || '删除失败'), 'error')
-    }
+    } finally { setSaving(false) }
   }
 
-  return <section id="settings-panel-snell" role="tabpanel" className="settings-card">
+  return <section id="settings-panel-snell" className="settings-card signal-settings signal-presets" aria-busy={saving}>
+    {error && !editing && <p className="settings-feedback" role="alert">{error}</p>}
     <SettingsGroup title="Snell 参数预设" description="多个入口可共用参数，修改后在下次部署时生效。内置预设不可删除。">
        <div className="snell-profiles-head">
          <span className="muted">共 {profiles.length} 套，内置 {profiles.filter(p => p.builtin).length} 套</span>
-         <button type="button" onClick={() => setEditing({ draft: emptySnellDraft(4) })}><Plus size={14} />新建预设</button>
+         <button type="button" disabled={saving} onClick={() => openEditor({ draft: emptySnellDraft(4) })}><Plus size={14} />新建预设</button>
        </div>
-       <SnellProfileCards profiles={profiles} editingID={editing?.id} onEdit={profile => setEditing({ id: profile.id, draft: snellDraftFromProfile(profile) })} onDelete={deleteProfile} />
+       {profiles.length ? <SnellProfileCards profiles={profiles} busy={saving} editingID={editing?.id} onEdit={profile => openEditor({ id: profile.id, draft: snellDraftFromProfile(profile) })} onDelete={deleteProfile} /> : <SnellProfilesEmptyState />}
      </SettingsGroup>
      {editing && (
-       <Dialog isOpen={Boolean(editing)} onClose={() => setEditing(null)} title={editing.id ? '编辑预设' : '新建预设'} size="lg">
-         <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => setEditing(null)} saving={saving} hideTitle />
+       <Dialog isOpen={Boolean(editing)} onClose={() => void closeEditor()} className="signal-settings-dialog" title={editing.id ? '编辑预设' : '新建预设'} size="lg">
+         <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => void closeEditor()} saving={saving} error={error} hideTitle />
        </Dialog>
      )}
    </section>

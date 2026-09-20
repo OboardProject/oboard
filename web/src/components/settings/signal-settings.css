@@ -1,0 +1,110 @@
+.signal-settings,
+.signal-settings-dialog,
+.signal-stealth-settings,
+.signal-templates {
+  min-width: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-settings .settings-group-head { padding-block: 20px 8px; }
+.signal-settings .settings-group + .settings-group { border-top: 1px solid var(--border); }
+.signal-settings-row.settings-row { grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1fr); gap: 16px; }
+.signal-settings-row .settings-row-control { max-width: 100%; }
+.signal-settings-row .settings-row-control > input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--primary); }
+.signal-settings-row .settings-row-control > textarea { resize: vertical; min-height: 120px; }
+.signal-settings-row .settings-row-control > :is(input, textarea, .custom-select) { min-width: 0; }
+.signal-settings-disclosure.settings-disclosure { background: var(--surface-solid); border-radius: var(--radius-sm); }
+.signal-settings-disclosure > summary { min-height: 52px; }
+.signal-settings-disclosure .settings-disclosure-summary { font-size: 12px; }
+.signal-settings .settings-actions,
+.signal-settings-dialog .settings-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+.settings-editor-fields {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  min-width: 0;
+}
+.signal-settings-dialog .settings-actions,
+.signal-settings-dialog .dialog-actions {
+  position: sticky;
+  bottom: 0;
+  padding-block: 16px 4px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-solid);
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-secret-field { display: flex; align-items: center; gap: 8px; width: min(100%, 460px); }
+.settings-secret-field input { min-width: 0; flex: 1; }
+.settings-secret-field button { flex: 0 0 auto; }
+.settings-feedback { padding-block: 12px; margin: 0; overflow-wrap: anywhere; line-height: 1.6; }
+.settings-feedback[role="alert"] { color: var(--danger); }
+.signal-settings .agent-ntp-list { padding-top: 14px; }
+.signal-settings .agent-ntp-actions { display: flex; justify-content: flex-end; padding-top: 12px; }
+
+.signal-presets > .settings-group > .settings-group-body { padding-top: 16px; }
+.signal-presets .node-presets-toolbar { align-items: flex-start; gap: 16px; }
+.signal-presets .node-presets-toolbar-actions { flex-wrap: wrap; gap: 8px; }
+.signal-presets .node-presets-toolbar-actions > .muted { margin-right: auto; }
+.signal-presets .node-preset-filters { gap: 4px; }
+.signal-presets .node-preset-filters button { min-height: 40px; border-radius: var(--radius-sm); background: transparent; border-color: transparent; }
+.signal-presets .node-preset-filters button.active { color: var(--primary); border-color: var(--border); background: var(--surface-2); }
+.signal-presets .node-preset-group + .node-preset-group { margin-top: 24px; }
+.signal-presets .node-preset-group-head { padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.signal-presets .snell-profile-grid { gap: 0; }
+.signal-presets .snell-profile-card { padding: 14px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; align-items: center; }
+.signal-presets .snell-profile-card:last-child { border-bottom: 0; }
+.signal-presets .snell-profile-card.is-disabled { opacity: 1; }
+.signal-presets .snell-profile-remark { white-space: normal; overflow-wrap: anywhere; }
+.signal-presets .snell-profile-meta { overflow-wrap: anywhere; line-height: 1.6; }
+.signal-presets .snell-profile-card-actions .icon-button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+
+.signal-templates .subscription-template-list { gap: 0; }
+.signal-templates .subscription-template-row { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 16px 0; box-shadow: none; gap: 12px; color: var(--text-primary); }
+.signal-templates .subscription-template-row:last-child { border-bottom: 0; }
+.signal-templates .subscription-template-row:hover { background: var(--surface-2); }
+.signal-templates .subscription-template-row:active { transform: scale(0.97) translateY(1px); }
+.signal-templates .subscription-template-row > div { min-width: 0; overflow-wrap: anywhere; }
+.signal-templates .subscription-template-row strong { margin-bottom: 4px; }
+.signal-templates .subscription-template-row .muted { color: var(--muted); }
+.signal-settings-dialog .subscription-template-editor { min-width: 0; }
+.signal-settings-dialog .subscription-template-editor p { overflow-wrap: anywhere; line-height: 1.6; }
+.signal-settings-dialog .subscription-template-textarea { font-size: 13px; line-height: 1.65; min-height: 320px; resize: vertical; tab-size: 2; }
+.signal-settings-dialog .subscription-template-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.settings-loading { display: grid; gap: 12px; padding-block: 16px; color: var(--muted); }
+.settings-loading > div { height: 40px; border-radius: var(--radius-sm); background: var(--surface-2); }
+
+.signal-settings.about-settings .about-product { padding-block: 20px; }
+.signal-settings.about-settings .about-product-logo { width: 40px; height: 40px; flex-basis: 40px; box-shadow: none; border-radius: 10px; }
+.signal-settings.about-settings .about-product-title h3 { font-size: 18px; }
+.signal-settings.about-settings .about-details { display: block; }
+.signal-settings.about-settings .about-details > div { display: grid; grid-template-columns: 140px minmax(0, 1fr); padding: 14px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+.signal-settings.about-settings .about-details dd { min-width: 0; overflow-wrap: anywhere; }
+.signal-settings.about-settings .about-details dd a { min-width: 0; overflow-wrap: anywhere; }
+.signal-settings.about-settings .about-project-link { background: transparent; border: 0; padding: 12px 0 0; flex-wrap: wrap; }
+.signal-settings.about-settings .about-project-link > div { min-width: 0; }
+.signal-settings.about-settings .about-project-link span { overflow-wrap: anywhere; }
+.signal-stealth-settings .settings-form > :is(p, small) { max-width: 70ch; line-height: 1.65; }
+
+@media (max-width: 620px) {
+  .signal-settings-row.settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .signal-settings-row .settings-row-control { justify-content: flex-start; }
+  .signal-settings-row .settings-row-control > :is(input, textarea, .custom-select),
+  .signal-settings-row .settings-secret-field { width: 100%; }
+  .signal-settings-row .settings-row-control > input[type="checkbox"] { width: 20px; }
+  .signal-settings-row .ui-segmented-select { width: 100%; min-width: 0; }
+  .signal-settings-row .ui-segmented-select button { min-width: 0; padding-inline: 8px; white-space: normal; }
+  .signal-settings-disclosure > summary { grid-template-columns: minmax(0, 1fr) 18px; }
+  .signal-settings-disclosure .settings-disclosure-summary { display: block; grid-row: 2; grid-column: 1; }
+  .signal-settings-disclosure .settings-disclosure-chevron { grid-row: 1; }
+  .signal-presets .node-presets-toolbar-actions { width: 100%; }
+  .signal-presets .node-presets-toolbar-actions > .muted { flex-basis: 100%; }
+  .signal-templates .subscription-template-row { align-items: flex-start; flex-direction: column; }
+  .signal-settings-dialog .settings-actions > button,
+  .signal-settings-dialog .dialog-actions > button { flex: 1 1 auto; min-height: 44px; }
+  .signal-settings.about-settings .about-details > div { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}

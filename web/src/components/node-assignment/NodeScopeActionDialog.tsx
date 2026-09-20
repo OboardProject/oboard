@@ -8,7 +8,7 @@ import { Switch } from '../ui/switch'
 import { DateTimePicker } from '../ui/datetime-picker'
 import { UserPicker, type UserOption } from './UserPicker'
 import type { NodeScopeRequest, ScopeNode } from './NodeScopeMenu'
-import { Package, Plus, Trash2, UserCheck, AlertTriangle, Info, Sparkles } from 'lucide-react'
+import { Package, Plus, Trash2, UserCheck, AlertTriangle, Info } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -481,14 +481,14 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
 
   return (
     <>
-      <Dialog isOpen={open} onClose={onClose} title={node ? `节点操作：${node.name}` : '节点操作'} size="lg" className="node-scope-action-dialog">
+      <Dialog isOpen={open} onClose={onClose} title={node ? `节点操作：${node.name}` : '节点操作'} size="xl" className="node-scope-action-dialog node-signal-dialog">
         <div className="node-scope-action-body">
           {scopeBusy && <p className="muted" style={{ margin: 0, fontSize: 13 }}>正在解析节点范围...</p>}
           {scopeError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{scopeError}</p>}
           {preview && (
             <>
               {/* Scope summary */}
-              <div className="card-custom node-scope-summary">
+              <section className="node-scope-summary" aria-label="操作范围">
                 <div className="node-scope-summary-toolbar">
                   <span className="node-scope-summary-count">已选择 {preview.count} 个节点</span>
                   <Badge variant="outline">{scopeName(preview)}</Badge>
@@ -502,10 +502,11 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                   </p>
                 )}
                 {(preview.warnings || []).map((w, i) => <p key={i} className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>{w}</p>)}
-              </div>
+              </section>
 
+              <div className="signal-scope-columns">
               {/* Section 1: 套餐 */}
-              <div className="card-custom node-scope-plan-card">
+              <section className="node-scope-plan-card">
                 <div className="node-scope-section-head">
                   <div className="node-scope-section-title">
                     <Package size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
@@ -593,10 +594,10 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                     {planMessage.text}
                   </p>
                 )}
-              </div>
+              </section>
 
               {/* Section 2: 授权用户 */}
-              <div className="card-custom node-scope-auth-card">
+              <section className="node-scope-auth-card">
                 <div className="node-scope-section-head">
                   <div className="node-scope-section-title">
                     <UserCheck size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
@@ -656,6 +657,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                     {authorizationMessage.text}
                   </p>
                 )}
+              </section>
               </div>
             </>
           )}
@@ -694,16 +696,16 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         isOpen={userAuthOpen}
         onClose={() => setUserAuthOpen(false)}
         title={node ? `授权用户 · ${node.name}` : '授权用户'}
-        size="default"
-        className="node-scope-auth-dialog"
+        size="xl"
+        className="node-scope-auth-dialog node-signal-dialog"
       >
         <div className="node-scope-auth-body">
           <div className="node-scope-auth-hint">
-            <Sparkles size={15} aria-hidden="true" />
-            <span>为选定用户独立配置此节点的访问权限（允许或禁止），权限独立生效并与套餐取并集。留空时间则永久有效。</span>
+            <Info size={15} aria-hidden="true" />
+            <span>操作范围：{preview ? scopeName(preview) : '加载中'} · {preview?.count || 0} 个节点。拒绝优先于套餐与允许授权；时间留空则永久有效。</span>
           </div>
 
-          <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />
+          <UserPicker users={users} selected={userIDs} onChange={setUserIDs} maxHeight={360} />
 
           <div className="node-scope-auth-fields">
             <div>

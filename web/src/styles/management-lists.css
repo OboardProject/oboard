@@ -1,0 +1,47 @@
+.notifications-panel .notification-channel-list,
+.dns-management .dns-record-list,
+.certificate-record-list,
+.controller-backup-card .backup-record-list {
+  gap: 0;
+  border-block: 1px solid var(--border);
+}
+.notifications-panel .notification-channel-list > *,
+.dns-management .dns-record-row,
+.certificate-record-list .dns-record-row,
+.controller-backup-card .backup-record {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface-solid);
+}
+.notifications-panel .notification-channel-list > :last-child,
+.dns-management .dns-record-row:last-child,
+.certificate-record-list .dns-record-row:last-child,
+.controller-backup-card .backup-record:last-child { border-bottom: 0; }
+.notifications-panel .notification-channel-main,
+.notifications-panel .notification-channel-copy,
+.dns-management .record-main,
+.certificate-record-list .record-main,
+.controller-backup-card .backup-record-main { min-width: 0; }
+.notifications-panel .notification-channel-title-row,
+.dns-management .record-main,
+.certificate-record-list .record-main,
+.controller-backup-card .backup-record-main { overflow-wrap: anywhere; }
+.notifications-panel .notification-channel-actions,
+.dns-management .record-actions,
+.certificate-record-list .record-actions,
+.controller-backup-card .backup-record-actions { flex-shrink: 0; }
+.subscriptions-panel .sub-user-row { box-shadow: none; border-radius: 0; }
+.subscriptions-panel .sub-user-main { min-width: 0; }
+.subscriptions-panel .self-subscription-actions { flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .notifications-panel .notification-channel-list > *,
+  .dns-management .dns-record-row,
+  .certificate-record-list .dns-record-row,
+  .controller-backup-card .backup-record { flex-wrap: wrap; gap: .75rem; }
+  .notifications-panel .notification-channel-actions,
+  .controller-backup-card .backup-record-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+  .dns-management .dns-zone-bar { flex-wrap: wrap; }
+  .dns-management .dns-zone-selector { max-width: 100%; min-width: 0; }
+}

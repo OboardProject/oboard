@@ -42,7 +42,7 @@ export function StealthTransportSettings({ value, onSave }: {
       setError(error?.message || String(error))
     } finally { setSaving(false) }
   }
-  return <SettingsGroup title="安全进程传输" description="安全进程 Agent 使用独立 TCP 端口连接主控。"
+  return <SettingsGroup className="signal-stealth-settings" title="安全进程传输" description="安全进程 Agent 使用独立 TCP 端口连接主控。"
     actions={<span className={`status-pill ${value?.active ? 'ok' : value?.enabled ? 'warning' : ''}`}>{value?.active ? '监听中' : value?.enabled ? '未生效' : '未启用'}</span>}>
     <form className="form settings-form single-field" onSubmit={save} aria-busy={saving}>
       <SettingsSwitchRow label="启用安全进程传输" checked={draft.enabled} ariaLabel="启用安全进程传输" onChange={enabled => update({ enabled })} disabled={saving} />
@@ -58,8 +58,8 @@ export function StealthTransportSettings({ value, onSave }: {
       <small id={`${id}-public`} className="muted">Agent 可访问的域名或 IP:端口，不含 https:// 或面板路径。IPv6 使用 [地址]:端口。请放行对应 TCP 端口；NAT 环境需配置端口转发。</small>
       <p className="muted">保存后立即生效，证书指纹自动写入接入命令。已有服务器使用安全进程时，须先关闭其安全进程并确认恢复普通连接，才能改址或关闭此端口。</p>
       {value?.source === 'environment' && value.enabled && <p className="muted">当前配置来自主控环境变量；保存后以面板配置为准。</p>}
-      {(error || value?.error) && <p id={`${id}-error`} role="alert">{error || value?.error}</p>}
-      {saved && <p role="status">安全进程传输设置已保存并生效。</p>}
+      {(error || value?.error) && <p id={`${id}-error`} className="settings-feedback" role="alert">{error || value?.error}</p>}
+      {saved && <p className="settings-feedback" role="status">安全进程传输设置已保存并生效。</p>}
       <div className="settings-actions"><button type="submit" disabled={saving}>{saving ? '保存中...' : '保存安全传输设置'}</button></div>
     </form>
   </SettingsGroup>

@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Calendar as CalendarIcon, Clock, ChevronLeft, ChevronRight, X, Check } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
 
 export interface DateTimePickerProps {
   value?: string // Formats: "YYYY-MM-DDTHH:mm" or "YYYY-MM-DD HH:mm:ss"
@@ -54,6 +54,7 @@ export function DateTimePicker({
   'aria-label': ariaLabel,
   title,
 }: DateTimePickerProps) {
+  const shouldReduceMotion = useReducedMotion()
   const containerRef = React.useRef<HTMLDivElement>(null)
   const [isOpen, setIsOpen] = React.useState(false)
 
@@ -212,10 +213,10 @@ export function DateTimePicker({
         {isOpen && (
           <motion.div
             className="ui-datetime-popover"
-            initial={{ opacity: 0, scale: 0.96, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: -4 }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0.01 : 0.14, ease: [0.16, 1, 0.3, 1] }}
           >
             {/* Header: Month & Year Controls */}
             <div className="ui-datetime-header">

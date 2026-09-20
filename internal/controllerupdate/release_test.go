@@ -89,10 +89,11 @@ func TestExtractControllerArchiveRejectsTraversal(t *testing.T) {
 
 func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "controller.tar.gz")
-	writeTestControllerArchive(t, archive, []archiveEntry{
+	entries := []archiveEntry{
 		{name: "bin/oboard-controller", content: "controller"},
 		{name: "bin/oboard-controller-updater", content: "updater"},
 		{name: "bin/oboard-ai-worker", content: "worker"},
+		{name: "bin/oboard-plugin-worker", content: "plugins"},
 		{name: "web/dist/index.html", content: "web"},
 		{name: "downloads/release-manifest.json", content: "{}"},
 		{name: "downloads/geoip/manifest.json", content: "{}"},
@@ -101,15 +102,26 @@ func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
 		{name: "downloads/oboard-subscription-relay-linux-amd64.tar.gz", content: "relay-amd64"},
 		{name: "downloads/oboard-subscription-relay-linux-arm64.tar.gz", content: "relay-arm64"},
 		{name: "downloads/subscription-relay-sha256s.txt", content: "checksums"},
-	})
+	}
+	writeTestControllerArchive(t, archive, entries)
 	stage := t.TempDir()
 	if err := extractControllerArchive(archive, stage); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "web/dist/index.html", "downloads/release-manifest.json", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb", "downloads/oboard-subscription-relay-linux-amd64.tar.gz", "downloads/oboard-subscription-relay-linux-arm64.tar.gz", "downloads/subscription-relay-sha256s.txt"} {
+	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "bin/oboard-plugin-worker", "web/dist/index.html", "downloads/release-manifest.json", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb", "downloads/oboard-subscription-relay-linux-amd64.tar.gz", "downloads/oboard-subscription-relay-linux-arm64.tar.gz", "downloads/subscription-relay-sha256s.txt"} {
 		if info, err := os.Stat(filepath.Join(stage, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatalf("self-update payload did not extract %s: %v", name, err)
 		}
+	}
+	withoutWorker := make([]archiveEntry, 0, len(entries)-1)
+	for _, entry := range entries {
+		if entry.name != "bin/oboard-plugin-worker" {
+			withoutWorker = append(withoutWorker, entry)
+		}
+	}
+	writeTestControllerArchive(t, archive, withoutWorker)
+	if err := extractControllerArchive(archive, t.TempDir()); err == nil || !strings.Contains(err.Error(), "missing bin/oboard-plugin-worker") {
+		t.Fatalf("incomplete self-update package accepted: %v", err)
 	}
 }
 
@@ -122,7 +134,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 		{name: "bin/oboard-controller", content: "controller"},
 		{name: "bin/oboard-controller-updater", content: "updater"},
 		{name: "bin/oboard-ai-worker", content: "worker"},
-		{name: "bin/oboard-script-worker", content: "scripts"},
+		{name: "bin/oboard-plugin-worker", content: "plugins"},
 		{name: "web/dist/index.html", content: "web"},
 		{name: "web/dist/assets/app.js", content: "asset"},
 		{name: "downloads/release-manifest.json", content: "{}"},
@@ -141,7 +153,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 	assertFileMode(t, filepath.Join(stage, "bin/oboard-controller"), 0o755)
 	assertFileMode(t, filepath.Join(stage, "bin/oboard-controller-updater"), 0o755)
 	assertFileMode(t, filepath.Join(stage, "bin/oboard-ai-worker"), 0o755)
-	assertFileMode(t, filepath.Join(stage, "bin/oboard-script-worker"), 0o755)
+	assertFileMode(t, filepath.Join(stage, "bin/oboard-plugin-worker"), 0o755)
 	assertFileMode(t, filepath.Join(stage, "web/dist/index.html"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "web/dist/assets/app.js"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "downloads/release-manifest.json"), 0o644)
@@ -155,7 +167,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 		{filepath.Join(stage, "bin/oboard-controller"), filepath.Join(installRoot, "oboard-controller")},
 		{filepath.Join(stage, "bin/oboard-controller-updater"), filepath.Join(installRoot, "oboard-controller-updater")},
 		{filepath.Join(stage, "bin/oboard-ai-worker"), filepath.Join(installRoot, "oboard-ai-worker")},
-		{filepath.Join(stage, "bin/oboard-script-worker"), filepath.Join(installRoot, "oboard-script-worker")},
+		{filepath.Join(stage, "bin/oboard-plugin-worker"), filepath.Join(installRoot, "oboard-plugin-worker")},
 		{filepath.Join(stage, "web/dist"), filepath.Join(installRoot, "web")},
 		{filepath.Join(stage, "downloads"), filepath.Join(installRoot, "downloads")},
 	} {
@@ -167,7 +179,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 	assertFileMode(t, filepath.Join(installRoot, "oboard-controller"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "oboard-controller-updater"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "oboard-ai-worker"), 0o755)
-	assertFileMode(t, filepath.Join(installRoot, "oboard-script-worker"), 0o755)
+	assertFileMode(t, filepath.Join(installRoot, "oboard-plugin-worker"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "web"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "web/assets"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "web/index.html"), 0o644)

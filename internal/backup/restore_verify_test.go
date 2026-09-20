@@ -297,7 +297,7 @@ func TestVerifyRestoreIsolated(t *testing.T) {
 		if err := restored.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.Join(checks, ","); got != "archive_format,decryption_and_files,version_compatibility,database_source,database_migration,database_integrity,secret_reencryption,final_integrity" {
+		if got := strings.Join(checks, ","); got != "archive_format,decryption_and_files,version_compatibility,database_source,database_migration,database_integrity,secret_reencryption,plugin_webhook_reencryption,final_integrity" {
 			t.Fatalf("unexpected preparation checks: %s", got)
 		}
 	})

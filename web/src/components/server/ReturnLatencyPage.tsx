@@ -41,6 +41,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   const [filter, setFilter] = useState('all')
   const [notice, setNotice] = useState<Notice | null>(null)
   const [busy, setBusy] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<LatencyProbeTask | null>(null)
   const busyRef = useRef(false)
 
   const online = useCallback((server: Server) => Boolean(server.agent_id) && server.status === 'online', [])
@@ -98,6 +99,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     try {
       await client.request(`/latency-probe-tasks/${task.id}`, { method: 'DELETE' })
       setNotice({ kind: 'success', text: `已删除任务「${task.name}」。` })
+      setDeleteTarget(null)
       reloadTasks()
     } catch (error: any) {
       setNotice({ kind: 'error', text: error?.message || '删除失败，请重试' })
@@ -196,8 +198,8 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
           <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索探测任务" placeholder="搜索名称或目标地址" value={taskQuery} onChange={event => setTaskQuery(event.target.value)} /></div>
           <Select aria-label="探测方式筛选" value={methodFilter} onChange={event => setMethodFilter(event.target.value)}><option value="all">全部方式</option><option value="tcp">TCP</option><option value="icmp">Ping</option><option value="http">HTTP</option></Select>
         </div>
-        {tasksState.error && <p className="danger-text" role="alert">{tasksState.error}</p>}
-        {tasksState.loading && !tasks.length ? <p className="muted" role="status">正在加载探测任务…</p> : !tasks.length ? <div className="latency-empty-state">
+        {tasksState.error && <p className="danger-text" role="alert">{tasksState.error} <button type="button" className="ghost" onClick={reloadTasks}>重试</button></p>}
+        {tasksState.loading && !tasks.length ? <p className="muted" role="status">正在加载探测任务…</p> : tasksState.error && !tasks.length ? null : !tasks.length ? <div className="latency-empty-state">
           <p>还没有探测任务</p>
           <p className="muted">填写目标地址，选择 TCP、Ping 或 HTTP，再指定执行节点和探测间隔。</p>
           <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
@@ -215,7 +217,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
               <td><div className="probe-task-card-actions">
                 <button type="button" className="ghost" aria-label={`编辑 ${task.name}`} disabled={!canManage || busy} onClick={() => setEditing({ open: true, task })}><Pencil size={14} aria-hidden="true" />编辑</button>
                 <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => toggleTask(task)}>{task.enabled ? '停用' : '启用'}</button>
-                <button type="button" className="ghost danger" aria-label={`删除 ${task.name}`} disabled={!canManage || busy} onClick={() => deleteTask(task)}><Trash2 size={14} aria-hidden="true" />删除</button>
+                <button type="button" className="ghost danger" aria-label={`删除 ${task.name}`} disabled={!canManage || busy} onClick={() => setDeleteTarget(task)}><Trash2 size={14} aria-hidden="true" />删除</button>
               </div></td>
             </tr>
           })}</tbody>
@@ -279,6 +281,13 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     </Dialog>
     <Dialog isOpen={Boolean(settingsServer)} onClose={() => setSettingsServer(null)} title={settingsServer ? `${settingsServer.name} · 探测参数` : '探测参数'} size="lg" className="probe-settings-dialog">
       {settingsServer && <ReturnLatencySettings key={settingsServer.id} server={settingsServer} tasks={tasks} disabled={!canManage} onSave={(patch, taskChanges) => saveServerSettings(settingsServer, patch, taskChanges)} onCancel={() => setSettingsServer(null)} />}
+    </Dialog>
+    <Dialog isOpen={Boolean(deleteTarget)} onClose={() => { if (!busy) setDeleteTarget(null) }} title="删除探测任务" footer={<>
+      <button type="button" className="ghost" disabled={busy} onClick={() => setDeleteTarget(null)}>取消</button>
+      <button type="button" className="danger" disabled={busy} onClick={() => { if (deleteTarget) deleteTask(deleteTarget) }}>{busy ? '删除中…' : '确认删除'}</button>
+    </>}>
+      <p>删除「{deleteTarget?.name}」及其节点分配？</p>
+      {notice?.kind === 'error' && <p className="danger-text" role="alert">{notice.text}</p>}
     </Dialog>
     {historyServer && renderHistory(historyServer, () => setHistoryID(null))}
   </section>

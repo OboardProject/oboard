@@ -42,8 +42,8 @@ export class PageDataRequestCoordinator<T> {
 
   reset() {
     this.requests.forEach(pending => pending.controller.abort())
-    this.requests.forEach((_, page) => {
-      this.epochs.set(page, (this.epochs.get(page) || 0) + 1)
+    this.epochs.forEach((epoch, page) => {
+      this.epochs.set(page, epoch + 1)
     })
     this.requests.clear()
   }
@@ -84,7 +84,8 @@ export class PageDataRequestCoordinator<T> {
       return existing.promise
     }
 
-    const epoch = this.epochs.get(page) || 0
+    const epoch = (this.epochs.get(page) || 0) + 1
+    this.epochs.set(page, epoch)
     const controller = new AbortController()
     const request = load(controller.signal).then(data => ({ data, epoch }))
     this.requests.set(page, { promise: request, controller, priority: priority || 'background' })
@@ -95,9 +96,9 @@ export class PageDataRequestCoordinator<T> {
     return request
   }
 
-  // Fence cancelled loaders even when they ignore the abort signal.
+  // Abort is advisory: a completed transport may still deliver its response.
   cancel(page: string) {
-    if (this.requests.has(page)) this.invalidate(page)
+    this.invalidate(page)
   }
 
   // cancelPrefetch aborts a non-foreground request only; a page the user is
@@ -105,7 +106,7 @@ export class PageDataRequestCoordinator<T> {
   cancelPrefetch(page: string) {
     const pending = this.requests.get(page)
     if (!pending || pending.priority === 'foreground') return
-    this.cancel(page)
+    this.invalidate(page)
   }
 
   // cancelPrefetches aborts warm-up requests that would compete with a
@@ -114,7 +115,7 @@ export class PageDataRequestCoordinator<T> {
   cancelPrefetches(exceptPage?: string) {
     Array.from(this.requests.entries()).forEach(([page, pending]) => {
       if (pending.priority !== 'prefetch' || page === exceptPage) return
-      this.cancel(page)
+      this.invalidate(page)
     })
   }
 
