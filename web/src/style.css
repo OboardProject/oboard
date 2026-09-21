@@ -11653,19 +11653,19 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   display: none;
 }
 .sidebar-backdrop {
-  display: none;
   position: fixed;
   inset: 0;
   z-index: 90;
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(4px);
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.25s ease, display 0.25s allow-discrete;
+  transition: opacity 0.26s var(--ease-appica-out), visibility 0.26s linear;
 }
 .sidebar-backdrop.open {
-  display: block;
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 
@@ -11692,23 +11692,25 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     max-height: var(--mobile-surface-height);
     border: 1px solid var(--border);
     border-radius: var(--radius-window);
-    transform: translateX(calc(-100% - var(--mobile-edge-gap)));
-    transition: transform 0.25s var(--ease-appica-out), display 0.25s allow-discrete;
+    transform: translateX(calc(-100% - var(--mobile-edge-gap) - 8px));
+    transition: transform 0.26s var(--ease-appica-out), visibility 0.26s linear;
+    visibility: hidden;
     box-shadow: var(--shadow);
     background: var(--surface-solid);
     overflow: hidden;
-    display: none;
+    display: flex;
     flex-direction: column;
     gap: 10px;
     padding: 14px 14px max(14px, env(safe-area-inset-bottom));
   }
   .sidebar.open {
-    display: flex;
+    visibility: visible;
     transform: translateX(0);
   }
-  @starting-style {
-    .sidebar.open { transform: translateX(calc(-100% - var(--mobile-edge-gap))); }
-    .sidebar-backdrop.open { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar {
+      transition-duration: 0.01s;
+    }
   }
   .brand {
     padding: 4px 2px 12px;
