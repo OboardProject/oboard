@@ -1425,9 +1425,10 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-list-search {
-  min-width: min(220px, 100%);
+  width: 260px;
+  max-width: 100%;
   min-height: var(--control-height);
-  flex: 1 1 240px;
+  flex: 0 1 260px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1466,6 +1467,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.server-list-search input::-webkit-search-cancel-button,
+.server-list-search input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .server-list-search input:focus {
@@ -2541,6 +2548,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   .server-list-search {
     flex: 1 1 0;
     min-width: 0;
+    width: auto;
   }
   .server-region-inline {
     flex: 0 0 auto;

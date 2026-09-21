@@ -29,4 +29,11 @@ describe('Server list identity status row', () => {
     expect(stylesheet).toMatch(/\.server-filter-popover\s*\{[^}]*z-index:\s*var\(--z-popover\)/s)
     expect(stylesheet).not.toMatch(/\.server-list-filter-drawer\s*\{/)
   })
+
+  it('keeps server list search input compact and prevents excessive stretching on desktop', () => {
+    expect(source).toMatch(/className="server-list-search"/)
+    expect(stylesheet).toMatch(/\.server-list-search\s*\{[^}]*width:\s*260px/s)
+    expect(stylesheet).toMatch(/\.server-list-search\s*\{[^}]*flex:\s*0\s+1\s+260px/s)
+    expect(stylesheet).not.toMatch(/\.server-list-search\s*\{[^}]*flex:\s*1\s+1\s+240px/s)
+  })
 })
