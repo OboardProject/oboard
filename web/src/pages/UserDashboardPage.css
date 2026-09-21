@@ -27,14 +27,14 @@
 .signal-overview-plan { background: var(--surface-2); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 0.75rem; }
 .signal-overview .signal-overview-meter { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 32px 0 20px; }
 .signal-overview-meter dt { color: var(--muted); font-size: 0.8125rem; margin-bottom: 8px; }
-.signal-overview-meter dd { font-size: 1.5rem; font-weight: 650; color: var(--text-strong); margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.signal-overview-meter dd { font-family: var(--font-numeric); font-size: 1.5rem; font-weight: 700; color: var(--text-strong); margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .signal-overview-progress { height: 6px; background: var(--surface-2); border-radius: var(--radius-full); overflow: hidden; }
 .signal-overview-progress > span { display: block; height: 100%; background: var(--primary); border-radius: inherit; }
 .signal-overview-progress > span[data-tone="warning"] { background: var(--warning); }
 .signal-overview-progress > span[data-tone="danger"] { background: var(--danger); }
 .signal-overview-period { margin-top: 20px; color: var(--muted); font-size: 0.8125rem; }
 .signal-overview-access { border-left: 1px solid var(--border); padding: 24px; min-width: 0; display: grid; align-content: start; gap: 16px; }
-.signal-overview-nodes strong { color: var(--text-strong); font-size: 1.125rem; }
+.signal-overview-nodes strong { font-family: var(--font-numeric); color: var(--text-strong); font-size: 1.125rem; }
 .signal-overview-access > button { justify-content: center; min-height: 44px; }
 .signal-overview-status { padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.8125rem; }
 .signal-overview-status strong { display: inline-flex; align-items: center; gap: 6px; color: var(--text-strong); }

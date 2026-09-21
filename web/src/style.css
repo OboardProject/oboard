@@ -77,6 +77,7 @@
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --font-display: var(--font-sans);
+  --font-numeric: "DIN Alternate", "DINAlternate-Bold", "Bahnschrift", "D-DIN", "DIN", var(--font-sans);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
   --sidebar-width: 248px;
@@ -20825,10 +20826,10 @@ button[aria-busy="true"] {
 .stat-cell strong {
   display: block;
   color: var(--text-strong);
-  font-family: var(--font-display);
+  font-family: var(--font-numeric);
   font-size: clamp(32px, 3.4vw, 40px);
   font-weight: 700;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.01em;
   line-height: 1;
 }
 .stat-cell small {
@@ -21160,10 +21161,10 @@ button[aria-busy="true"] {
 .user-overview-cell > strong {
   max-width: 100%;
   color: var(--text-strong);
-  font-family: var(--font-display);
+  font-family: var(--font-numeric);
   font-size: 32px;
   font-weight: 700;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
   line-height: 1;
   overflow-wrap: anywhere;
 }
@@ -29579,7 +29580,7 @@ button.probe-preset-option:active {
 .user-overview-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 button.user-overview-stat { border-radius: var(--radius-md); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; padding: 14px 16px; text-align: left; background: var(--surface-solid); color: var(--text-secondary); border: 1px solid var(--border); box-shadow: none; }
 .user-overview-stat span { font-size: 12px; }
-.user-overview-stat strong { font-size: 26px; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.user-overview-stat strong { font-family: var(--font-numeric); font-size: 26px; color: var(--text-strong); font-variant-numeric: tabular-nums; }
 button.user-overview-stat.is-active { border-color: var(--primary); background: var(--primary-soft); }
 .user-overview-stat.warning strong, .user-expiry-warning, .user-usage-caption.warning { color: var(--color-warning); }
 .user-overview-stat.danger strong, .user-usage-caption.danger { color: var(--color-danger); }

@@ -45,6 +45,8 @@ describe('Signal design contract', () => {
     expect(root['--font-sans']).toContain('PingFang SC')
     expect(root['--font-sans']).toContain('Microsoft YaHei')
     expect(root['--font-display']).toBe('var(--font-sans)')
+    expect(root['--font-numeric']).toContain('DIN Alternate')
+    expect(root['--font-numeric']).toContain('Bahnschrift')
     expect(root['font-variant-numeric']).toBe('tabular-nums')
     expect(ruleFor('#oboard-theme-old-layer[data-theme="light"]')).toHaveLength(1)
     expect(ruleFor('#oboard-theme-old-layer[data-theme="dark"]')).toHaveLength(1)
