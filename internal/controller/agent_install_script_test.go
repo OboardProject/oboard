@@ -1191,8 +1191,9 @@ func TestAgentInstallScriptTCPTuningSkipsUnsupportedKeys(t *testing.T) {
 	rmem := writeTestProcKey(t, proc, "net.ipv4.tcp_rmem", "4096\t131072\t6291456\n")
 	forward := writeTestProcKey(t, proc, "net.ipv4.ip_forward", "0\n")
 	v6forward := writeTestProcKey(t, proc, "net.ipv6.conf.all.forwarding", "0\n")
-	// A kernel that dropped the key (tcp_fack) and a read-only knob (a
-	// restricted container) must both be skipped instead of failing the run.
+	// A key this kernel does not expose at all (every other key in the set is
+	// absent from the fake tree) and a read-only knob (a restricted container)
+	// must both be skipped instead of failing the run.
 	readonly := writeTestProcKey(t, proc, "net.ipv4.tcp_ecn", "1\n")
 	if err := os.Chmod(readonly, 0o400); err != nil {
 		t.Fatal(err)
@@ -1202,14 +1203,14 @@ func TestAgentInstallScriptTCPTuningSkipsUnsupportedKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enable_tcp_tuning failed: %v\n%s", err, output)
 	}
-	assertTestFile(t, rmem, "4096 87380 33554432\n")
+	assertTestFile(t, rmem, "8192 174760 67108864\n")
 	assertTestFile(t, forward, "1\n")
 	assertTestFile(t, v6forward, "1\n")
 	assertTestFile(t, readonly, "1\n")
-	assertTestFile(t, config, "net.ipv4.tcp_rmem = 4096 87380 33554432\nnet.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n")
+	assertTestFile(t, config, "net.ipv4.tcp_rmem = 8192 174760 67108864\nnet.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n")
 	assertPathMode(t, config, 0o600)
 	text := string(output)
-	if !strings.Contains(text, "net.ipv4.tcp_fack") || !strings.Contains(text, "net.ipv4.tcp_ecn") {
+	if !strings.Contains(text, "net.ipv4.tcp_mtu_probing") || !strings.Contains(text, "net.ipv4.tcp_ecn") {
 		t.Fatalf("skipped keys are not reported:\n%s", output)
 	}
 	if !strings.Contains(text, "已应用 3 项参数") {
@@ -1249,6 +1250,8 @@ func TestAgentInstallScriptTCPTuningIsInstallOnly(t *testing.T) {
 		"net.ipv6.conf.all.forwarding=1",
 		"net.ipv6.conf.default.forwarding=1",
 		"net.ipv4.tcp_congestion_control=bbr",
+		"net.ipv4.tcp_rmem=8192 174760 67108864",
+		"net.ipv4.tcp_ecn=2",
 		"/etc/sysctl.d/99-oboard-tcp.conf",
 	} {
 		if !strings.Contains(script, want) {

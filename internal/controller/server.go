@@ -16720,25 +16720,23 @@ tcp_tuning_requested() {
 }
 
 # The tuning set is fixed. Every key is applied independently so that a kernel
-# without it (for example tcp_fack on 4.15+) or a container that keeps /proc/sys
-# read-only (common on LXC) only loses that key, never the whole install.
+# that does not expose it, or a container that keeps /proc/sys read-only (common
+# on LXC), only loses that key, never the whole install.
 tcp_tuning_parameters() {
   cat <<'OBOARD_TCP_TUNING_PARAMS'
 fs.file-max=6815744
 net.ipv4.tcp_no_metrics_save=1
-net.ipv4.tcp_ecn=0
-net.ipv4.tcp_frto=0
-net.ipv4.tcp_mtu_probing=0
-net.ipv4.tcp_rfc1337=0
+net.ipv4.tcp_mtu_probing=1
+net.ipv4.tcp_rfc1337=1
 net.ipv4.tcp_sack=1
-net.ipv4.tcp_fack=1
 net.ipv4.tcp_window_scaling=1
 net.ipv4.tcp_adv_win_scale=1
 net.ipv4.tcp_moderate_rcvbuf=1
-net.core.rmem_max=33554432
-net.core.wmem_max=33554432
-net.ipv4.tcp_rmem=4096 87380 33554432
-net.ipv4.tcp_wmem=4096 16384 33554432
+net.ipv4.tcp_ecn=2
+net.core.rmem_max=67108864
+net.core.wmem_max=67108864
+net.ipv4.tcp_rmem=8192 174760 67108864
+net.ipv4.tcp_wmem=8192 174760 67108864
 net.ipv4.udp_rmem_min=8192
 net.ipv4.udp_wmem_min=8192
 net.ipv4.ip_forward=1
