@@ -1,4 +1,4 @@
-export type ThemeName = 'light' | 'dark'
+export type ThemeName = 'light' | 'dark' | 'glass'
 export type ThemePreference = ThemeName | 'auto'
 
 export type ThemeOrigin = { x: number; y: number }
@@ -11,13 +11,13 @@ const THEME_KEYBOARD_MIN_WAIT_MS = 160
 const THEME_KEYBOARD_MAX_WAIT_MS = 520
 
 export function normalizeTheme(value: string | null | undefined): ThemeName {
-  return value === 'dark' ? 'dark' : 'light'
+  return value === 'dark' ? 'dark' : value === 'glass' ? 'glass' : 'light'
 }
 
 export function getThemePreference(): ThemePreference {
   try {
     const value = localStorage.getItem(THEME_STORAGE_KEY)
-    return value === 'light' || value === 'dark' ? value : 'auto'
+    return value === 'light' || value === 'dark' || value === 'glass' ? value : 'auto'
   } catch {
     return 'auto'
   }
@@ -49,16 +49,18 @@ export function watchSystemTheme(preference: ThemePreference, onChange: (theme: 
 }
 
 const THEME_PAGE_BG: Record<ThemeName, string> = {
-  light: '#f7f8fa',
-  dark: '#0b0d12',
+  light: '#f8f9fa',
+  dark: '#16181d',
+  glass: '#0c1017',
 }
 
 export function applyThemeToDocument(theme: ThemeName) {
   const root = document.documentElement
   root.dataset.theme = theme
-  root.classList.toggle('dark', theme === 'dark')
+  root.classList.toggle('dark', theme === 'dark' || theme === 'glass')
+  root.classList.toggle('theme-glass', theme === 'glass')
   const pageBg = getComputedStyle(root).getPropertyValue('--bg-page').trim() || THEME_PAGE_BG[theme]
-  root.style.colorScheme = theme
+  root.style.colorScheme = theme === 'glass' ? 'dark' : theme
   root.style.backgroundColor = pageBg
   if (document.body) {
     document.body.style.backgroundColor = pageBg
@@ -319,7 +321,8 @@ export async function transitionThemeTo(
     oldLayer.id = 'oboard-theme-old-layer'
     oldLayer.className = targetEl.className
     oldLayer.dataset.theme = currentTheme
-    oldLayer.classList.toggle('dark', currentTheme === 'dark')
+    oldLayer.classList.toggle('dark', currentTheme === 'dark' || currentTheme === 'glass')
+    oldLayer.classList.toggle('theme-glass', currentTheme === 'glass')
 
     // Copy scroll states from original elements
     const origEls = targetEl.querySelectorAll('*')

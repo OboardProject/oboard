@@ -44,8 +44,8 @@ describe('theme preference', () => {
     expect(document.documentElement.dataset.theme).toBe('light')
   })
 
-  it.each(['dark', 'light'] as const)('restores explicit %s and ignores system changes', preference => {
-    const media = mockSystemTheme(preference !== 'dark')
+  it.each(['dark', 'glass', 'light'] as const)('restores explicit %s and ignores system changes', preference => {
+    const media = mockSystemTheme(preference !== 'dark' && preference !== 'glass')
     saveThemePreference(preference)
     expect(getThemePreference()).toBe(preference)
     expect(resolveTheme(getThemePreference())).toBe(preference)
@@ -64,7 +64,7 @@ describe('theme preference', () => {
   })
 })
 
-it('cycles one button through automatic, dark, light, and automatic', async () => {
+it('cycles one button through automatic, dark, glass, light, and automatic', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -78,7 +78,7 @@ it('cycles one button through automatic, dark, light, and automatic', async () =
     const button = container.querySelector('button')!
     button.focus()
     expect(button.textContent).toBe('自动主题')
-    for (const label of ['深色主题', '浅色主题', '自动主题']) {
+    for (const label of ['深色主题', '液态玻璃', '浅色主题', '自动主题']) {
       await act(async () => button.click())
       expect(button.textContent).toBe(label)
       expect(button.getAttribute('aria-label')).toContain(`当前${label}`)

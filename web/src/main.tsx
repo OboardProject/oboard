@@ -22,6 +22,7 @@ import { createPortal } from 'react-dom'
 import { createPopoverPortal } from './components/ui/modal-layer'
 import { createRoot } from 'react-dom/client'
 import {
+  type ThemeName,
   type ThemeOrigin,
   type ThemePreference,
   getThemePreference,
@@ -2392,7 +2393,7 @@ export function App() {
     }
   }, [token, tab, realtimeStatus])
   useEffect(() => {
-    const apply = (next: 'light' | 'dark') => {
+    const apply = (next: ThemeName) => {
       void transitionThemeTo(next, themeOriginRef.current ?? resolveThemeOrigin(), () => {})
     }
     apply(resolveTheme(theme))

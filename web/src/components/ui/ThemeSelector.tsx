@@ -1,4 +1,4 @@
-import { Monitor, Moon, Sun } from 'lucide-react'
+import { Monitor, Moon, Sparkles, Sun } from 'lucide-react'
 import { type ThemeOrigin, type ThemePreference, resolveThemeOrigin } from '../../theme'
 
 export function ThemeSelector({ value, onChange, variant }: {
@@ -6,10 +6,10 @@ export function ThemeSelector({ value, onChange, variant }: {
   onChange: (value: ThemePreference, origin: ThemeOrigin) => void
   variant: 'sidebar' | 'hero' | 'login'
 }) {
-  const Icon = value === 'auto' ? Monitor : value === 'dark' ? Moon : Sun
-  const label = value === 'auto' ? '自动主题' : value === 'dark' ? '深色主题' : '浅色主题'
-  const next = value === 'auto' ? 'dark' : value === 'dark' ? 'light' : 'auto'
-  const nextLabel = next === 'auto' ? '自动' : next === 'dark' ? '深色' : '浅色'
+  const Icon = value === 'auto' ? Monitor : value === 'dark' ? Moon : value === 'glass' ? Sparkles : Sun
+  const label = value === 'auto' ? '自动主题' : value === 'dark' ? '深色主题' : value === 'glass' ? '液态玻璃' : '浅色主题'
+  const next = value === 'auto' ? 'dark' : value === 'dark' ? 'glass' : value === 'glass' ? 'light' : 'auto'
+  const nextLabel = next === 'auto' ? '自动' : next === 'dark' ? '深色' : next === 'glass' ? '液态玻璃' : '浅色'
   const className = variant === 'sidebar' ? 'sidebar-footer-btn' : variant === 'hero' ? 'login-ghost-link' : 'login-theme-inline'
 
   return <button

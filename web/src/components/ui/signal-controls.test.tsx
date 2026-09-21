@@ -48,9 +48,10 @@ describe('Signal design contract', () => {
     expect(root['font-variant-numeric']).toBe('tabular-nums')
     expect(ruleFor('#oboard-theme-old-layer[data-theme="light"]')).toHaveLength(1)
     expect(ruleFor('#oboard-theme-old-layer[data-theme="dark"]')).toHaveLength(1)
+    expect(ruleFor('#oboard-theme-old-layer[data-theme="glass"]')).toHaveLength(1)
   })
 
-  it.each(['light', 'dark'])('keeps %s text, placeholders, states and focus legible', theme => {
+  it.each(['light', 'dark', 'glass'])('keeps %s text, placeholders, states and focus legible', theme => {
     const palette = declarations(ruleFor(`#oboard-theme-old-layer[data-theme="${theme}"]`)[0])
     const color = (token: string): RGB => {
       const value = palette[token]
