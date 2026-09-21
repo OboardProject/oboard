@@ -235,6 +235,7 @@ export function ModalSurface({
   drawerSize = "compact",
 }: ModalSurfaceProps) {
   const shouldReduceMotion = useReducedMotion()
+  const isDrawer = placement === "right"
   const [isPresent, safeToRemove] = usePresence()
   const panelRef = React.useRef<HTMLElement | null>(null)
   const focusBeforeRender = typeof document !== "undefined" && document.activeElement instanceof HTMLElement
@@ -255,9 +256,9 @@ export function ModalSurface({
 
   React.useEffect(() => {
     if (isPresent || !safeToRemove) return
-    const timer = window.setTimeout(safeToRemove, shouldReduceMotion ? 10 : 200)
+    const timer = window.setTimeout(safeToRemove, shouldReduceMotion ? 10 : isDrawer ? 260 : 200)
     return () => window.clearTimeout(timer)
-  }, [isPresent, safeToRemove, shouldReduceMotion])
+  }, [isPresent, safeToRemove, shouldReduceMotion, isDrawer])
 
   React.useLayoutEffect(() => {
     const panel = panelRef.current
@@ -327,10 +328,15 @@ export function ModalSurface({
   }, [])
 
   const reducedPanelState = { opacity: 1 }
-  const isDrawer = placement === "right"
-  const panelInitial = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }
-  const panelAnimate = shouldReduceMotion ? reducedPanelState : { opacity: 1, y: 0 }
-  const panelExit = { opacity: 0 }
+  // A right drawer belongs to the screen edge: it slides in and out horizontally and never
+  // pops like a centered dialog. Centered dialogs keep the shared fade + short lift.
+  const panelInitial = shouldReduceMotion
+    ? { opacity: 0 }
+    : isDrawer ? { opacity: 1, x: "100%" } : { opacity: 0, y: 4 }
+  const panelAnimate = shouldReduceMotion
+    ? reducedPanelState
+    : isDrawer ? { opacity: 1, x: 0 } : { opacity: 1, y: 0 }
+  const panelExit = shouldReduceMotion || !isDrawer ? { opacity: 0 } : { opacity: 1, x: "100%" }
   const panelTarget = isPresent ? panelAnimate : panelExit
   const layerStyle = { "--dialog-layer-index": index } as React.CSSProperties
 
