@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
@@ -53,3 +55,26 @@ it('preserves each root draft and routes late completions to their original root
   expect(container.textContent).toBe('1,2,3')
   act(() => root.unmount())
 })
+
+describe('canvas connection handle styling', () => {
+  it('keeps connect-target and connect-target-top handles invisible and restricts active states to connect-source handles', () => {
+    const proxyCanvasCss = readFileSync(path.resolve(__dirname, 'ProxyCanvas.css'), 'utf8')
+    const globalStyleCss = readFileSync(path.resolve(__dirname, '../../style.css'), 'utf8')
+
+    // connect-source handles have hover/connecting states
+    expect(proxyCanvasCss).toMatch(/\.react-flow__handle\.connect-source:is\(:hover,\s*\.connecting,\s*\.valid\)/)
+
+    // connect-target handles are explicitly transparent with no background or box shadow
+    expect(proxyCanvasCss).toMatch(/\.react-flow__handle\.connect-target-top[^}]*opacity:\s*0\s*!important/s)
+    expect(proxyCanvasCss).toMatch(/\.react-flow__handle\.connect-target-top[^}]*background:\s*transparent\s*!important/s)
+    expect(proxyCanvasCss).toMatch(/\.react-flow__handle\.connect-target-top[^}]*box-shadow:\s*none\s*!important/s)
+
+    // Ensure the old bug (setting background: var(--primary) on connect-target-top) is removed
+    expect(proxyCanvasCss).not.toMatch(/\.connect-target-top:is\(:hover[^}]*background:\s*var\(--primary\)/s)
+
+    // In global style.css, connect-target and connect-target-top are transparent !important
+    expect(globalStyleCss).toMatch(/\.connect-target-top\s*\{[^}]*opacity:\s*0\s*!important/s)
+    expect(globalStyleCss).toMatch(/\.connect-target-top\s*\{[^}]*background:\s*transparent\s*!important/s)
+  })
+})
+

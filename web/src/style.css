@@ -7244,7 +7244,11 @@ body:has(.dialog-layer) .main {
   box-shadow: none;
 }
 .flow .react-flow__handle.connect-target {
-  opacity: 0;
+  opacity: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  outline: none !important;
   pointer-events: all;
 }
 .flow .react-flow__handle.connect-target-top {
@@ -7252,6 +7256,11 @@ body:has(.dialog-layer) .main {
   width: calc(100% + 20px);
   height: 36px;
   border-radius: var(--radius-full);
+  opacity: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  outline: none !important;
 }
 .flow .react-flow__handle.connect-source-bottom {
   bottom: 0;

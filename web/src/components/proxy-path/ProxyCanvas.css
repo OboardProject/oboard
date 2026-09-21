@@ -112,28 +112,35 @@
 }
 
 /* Expand hit targets without moving the measured port centres. */
-.flow.proxy-flow .react-flow__handle:not(.server-entry-target-handle)::before {
+.flow.proxy-flow .react-flow__handle.connect-source::before {
   content: '';
   position: absolute;
   inset: -6px;
   border-radius: 50%;
   background: transparent;
 }
-.flow.proxy-flow .react-flow__handle:not(.server-entry-target-handle):is(:hover, .connecting, .valid) {
+.flow.proxy-flow .react-flow__handle.connect-source:is(:hover, .connecting, .valid) {
   opacity: 1 !important;
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 18%, transparent);
 }
-.flow.proxy-flow .react-flow__handle:not(.server-entry-target-handle):is(:hover, .connecting, .valid)::after {
+.flow.proxy-flow .react-flow__handle.connect-source:is(:hover, .connecting, .valid)::after {
   width: 12px !important;
   height: 12px !important;
   opacity: 1 !important;
 }
-.flow.proxy-flow .react-flow__handle.valid {
+.flow.proxy-flow .react-flow__handle.connect-source.valid {
   box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 25%, transparent);
 }
-.flow.proxy-flow .react-flow__handle.valid::after { background: var(--success) !important; }
-.flow.proxy-flow .react-flow__node.server-graph-node .connect-target-top:is(:hover, .connecting, .valid) {
-  background: var(--primary) !important;
+.flow.proxy-flow .react-flow__handle.connect-source.valid::after { background: var(--success) !important; }
+
+.flow.proxy-flow .react-flow__handle.connect-target,
+.flow.proxy-flow .react-flow__handle.connect-target-top,
+.flow.proxy-flow .react-flow__handle.server-entry-target-handle {
+  opacity: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  outline: none !important;
 }
 
 .graph-toolbox,
