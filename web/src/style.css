@@ -2798,11 +2798,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-card-name-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 2px 8px;
+  gap: 6px;
   min-width: 0;
   flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .server-card-name-row h3 {
@@ -2813,26 +2814,27 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 0 0 auto;
-  max-width: 100%;
+  flex: 0 1 auto;
+  max-width: fit-content;
 }
 
 .server-address-block {
   position: relative;
   min-width: 0;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  flex: 1 1 8.5rem;
+  gap: 4px;
+  flex: 0 1 auto;
   overflow: hidden;
+  white-space: nowrap;
 }
 
 .server-address-kicker {
   flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--text-muted);
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
   line-height: 14px;
 }
 
@@ -2843,7 +2845,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   justify-content: center;
   gap: 0;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
 
 .server-address-empty {
@@ -2858,7 +2860,7 @@ button.server-address-line {
   align-items: center;
   justify-content: flex-start;
   gap: 4px;
-  width: 100%;
+  width: auto;
   max-width: 100%;
   min-width: 0;
   height: 14px;
@@ -2870,12 +2872,13 @@ button.server-address-line {
   background: transparent;
   color: var(--text-secondary);
   box-shadow: none;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   line-height: 14px;
   cursor: copy;
+  transition: color 0.15s ease;
 }
 
 button.server-address-line.v4,
@@ -2887,12 +2890,13 @@ button.server-address-line:hover,
 button.server-address-line:active {
   background: transparent;
   box-shadow: none;
-  color: var(--text-strong);
+  color: var(--color-primary);
 }
 
 button.server-address-line.copied,
 button.server-address-line.copied:hover {
-  color: var(--primary);
+  color: var(--color-success);
+  font-weight: 600;
 }
 
 .server-address-value {
@@ -2903,10 +2907,11 @@ button.server-address-line.copied:hover {
 }
 
 .server-address-value.is-middle {
-  display: flex;
+  display: inline-flex;
   min-width: 0;
   overflow: hidden;
   text-overflow: clip;
+  max-width: 100%;
 }
 
 .server-address-value-start {
@@ -3543,7 +3548,7 @@ button.server-address-line.copied:hover {
 }
 
 .server-card-head-actions .server-status-dot {
-  margin-right: 5px;
+  margin: 0;
 }
 
 .server-status-dot {
@@ -3706,32 +3711,62 @@ button.server-address-line.copied:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
-  height: 24px;
-  padding: 3px 4px;
-  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  min-height: 22px;
+  height: 22px;
+  padding: 2px 7px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
   border-radius: var(--radius-full);
-  color: var(--warning);
-  background: var(--warning-soft);
-  font-size: 9px;
-  font-weight: 700;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.1);
+  font-size: 10.5px;
+  font-weight: 600;
   line-height: 1.25;
   white-space: nowrap;
   cursor: pointer;
   box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .server-version-warning:hover,
 .server-version-warning:focus-visible {
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
-  background: var(--warning-soft);
+  color: #92400e;
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.18);
   box-shadow: none;
   transform: none;
 }
 
 .server-version-warning:active {
   transform: none;
+}
+
+:root[data-theme="dark"] .server-version-warning,
+.dark .server-version-warning {
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.32);
+  background: rgba(245, 158, 11, 0.14);
+}
+:root[data-theme="dark"] .server-version-warning:hover,
+:root[data-theme="dark"] .server-version-warning:focus-visible,
+.dark .server-version-warning:hover,
+.dark .server-version-warning:focus-visible {
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.22);
+}
+
+:root[data-theme="glass"] .server-version-warning {
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.18);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+:root[data-theme="glass"] .server-version-warning:hover,
+:root[data-theme="glass"] .server-version-warning:focus-visible {
+  color: #fef08a;
+  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(245, 158, 11, 0.28);
 }
 
 .server-version-update {
@@ -3741,11 +3776,39 @@ button.server-address-line.copied:hover {
 
 .server-card-head-actions .server-actions-dropdown > .icon-button {
   position: relative;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  min-height: 28px;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
   padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.server-card-head-actions .server-actions-dropdown > .icon-button:hover:not(:disabled),
+.server-card-head-actions .server-actions-dropdown > .icon-button:focus-visible,
+.server-card-head-actions .server-actions-dropdown.is-open > .icon-button {
+  background: var(--bg-control);
+  border-color: var(--border);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+:root[data-theme="glass"] .server-card-head-actions .server-actions-dropdown > .icon-button {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+:root[data-theme="glass"] .server-card-head-actions .server-actions-dropdown > .icon-button:hover:not(:disabled),
+:root[data-theme="glass"] .server-card-head-actions .server-actions-dropdown > .icon-button:focus-visible,
+:root[data-theme="glass"] .server-card-head-actions .server-actions-dropdown.is-open > .icon-button {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--text-primary);
 }
 
 .server-time-issue::before,
@@ -11985,8 +12048,14 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .server-management-panel .server-add-button > span {
     display: none;
   }
+  .server-card-name-row {
+    flex-wrap: wrap;
+    gap: 3px 6px;
+  }
   .server-card-name-row > .server-address-block {
+    flex: 1 1 100%;
     flex-basis: 100%;
+    width: 100%;
   }
   .server-management-panel .server-toolbar-tools {
     flex: 0 0 auto;

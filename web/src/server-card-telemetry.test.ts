@@ -48,9 +48,10 @@ describe('server card address badge', () => {
     expect(mainSource).not.toContain("const v6 = String(server.public_ipv6 || server.interface_ipv6")
     expect(styleSource).toMatch(/\.server-card-title\s*\{[^}]*align-items:\s*center/)
     expect(styleSource).toMatch(/\.server-address-block\s*\{[^}]*align-items:\s*center/)
-    expect(styleSource).toMatch(/\.server-address-stack\s*\{[^}]*flex-direction:\s*column/)
-    expect(styleSource).toMatch(/\.server-card-name-row h3\s*\{[^}]*flex:\s*0 0 auto/)
-    expect(styleSource).toMatch(/\.server-address-block\s*\{[^}]*flex:\s*1 1 8\.5rem/)
+    expect(styleSource).toMatch(/\.server-card-name-row\s*\{[^}]*flex-wrap:\s*nowrap/)
+    expect(styleSource).toMatch(/\.server-card-name-row h3\s*\{[^}]*flex:\s*0 1 auto/)
+    expect(styleSource).toMatch(/\.server-address-block\s*\{[^}]*flex:\s*0 1 auto/)
+    expect(styleSource).toMatch(/\.server-card-name-row\s*>\s*\.server-address-block\s*\{[^}]*flex-basis:\s*100%/)
   })
 })
 
