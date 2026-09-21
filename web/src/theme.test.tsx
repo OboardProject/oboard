@@ -64,7 +64,7 @@ describe('theme preference', () => {
   })
 })
 
-it('toggles theme selector between standard and transparent themes', async () => {
+it('cycles theme selector through auto, dark, light, and auto modes', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -77,8 +77,8 @@ it('toggles theme selector between standard and transparent themes', async () =>
     await act(async () => root.render(<Harness />))
     const button = container.querySelector('button')!
     button.focus()
-    expect(button.textContent).toBe('标准主题')
-    for (const label of ['通透主题', '标准主题', '通透主题']) {
+    expect(button.textContent).toBe('自动模式')
+    for (const label of ['暗黑模式', '浅色模式', '自动模式', '暗黑模式']) {
       await act(async () => button.click())
       expect(button.textContent).toBe(label)
       expect(button.getAttribute('aria-label')).toContain(`当前${label}`)
