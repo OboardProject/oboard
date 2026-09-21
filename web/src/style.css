@@ -29981,7 +29981,17 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 }
 
 /* Primary Liquid Pill Buttons */
-:root[data-theme="glass"] :is(.ui-btn-primary, .dash-manage-btn) {
+:root[data-theme="glass"] :is(
+  .ui-btn-primary,
+  .dash-manage-btn,
+  .server-action-group,
+  .server-add-button,
+  .login-submit,
+  .dialog-actions > button[type="submit"],
+  .dialog-actions > button.primary,
+  .dialog-chrome-foot > button[type="submit"],
+  button.primary
+) {
   background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%) !important;
   color: #031326 !important;
   border: 1px solid rgba(255, 255, 255, 0.4) !important;
@@ -29989,29 +29999,230 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
     inset 0 1px 2px rgba(255, 255, 255, 0.65),
     0 8px 24px -4px rgba(37, 99, 235, 0.5) !important;
   backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   font-weight: 650;
+  border-radius: var(--radius-full);
 }
-:root[data-theme="glass"] :is(.ui-btn-primary, .dash-manage-btn):hover {
+:root[data-theme="glass"] :is(
+  .ui-btn-primary,
+  .dash-manage-btn,
+  .server-action-group,
+  .server-add-button,
+  .login-submit,
+  .dialog-actions > button[type="submit"],
+  .dialog-actions > button.primary,
+  .dialog-chrome-foot > button[type="submit"],
+  button.primary
+):hover:not(:disabled) {
   background: linear-gradient(135deg, #7dd3fc 0%, #3b82f6 100%) !important;
   box-shadow:
     inset 0 1px 2px rgba(255, 255, 255, 0.8),
     0 12px 30px -2px rgba(56, 189, 248, 0.6) !important;
   transform: translateY(-1px);
 }
+:root[data-theme="glass"] .server-action-group .server-add-button {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #031326 !important;
+}
 
-/* Ghost / Secondary Glass Buttons */
-:root[data-theme="glass"] :is(.ui-btn-outline, .ui-btn-secondary, button.ghost) {
-  background: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2) !important;
+/* Outline Glass Buttons */
+:root[data-theme="glass"] .ui-btn-outline {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
   color: var(--text-primary) !important;
 }
-:root[data-theme="glass"] :is(.ui-btn-outline, .ui-btn-secondary, button.ghost):hover {
+:root[data-theme="glass"] .ui-btn-outline:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.22) !important;
+}
+
+/* Secondary Glass Buttons */
+:root[data-theme="glass"] .ui-btn-secondary {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
+  color: var(--text-primary) !important;
+}
+:root[data-theme="glass"] .ui-btn-secondary:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1) !important;
-  border-color: rgba(255, 255, 255, 0.3) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* Ghost / Clean Borderless Glass Buttons - 去除底色 */
+:root[data-theme="glass"] :is(
+  button.ghost,
+  .ui-btn-ghost,
+  .icon-button.ghost,
+  .server-list-pagination-controls button,
+  .dialog-close
+) {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  color: var(--text-primary) !important;
+}
+:root[data-theme="glass"] :is(
+  button.ghost,
+  .ui-btn-ghost,
+  .icon-button.ghost,
+  .server-list-pagination-controls button,
+  .dialog-close
+):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: #38bdf8 !important;
+}
+:root[data-theme="glass"] :is(
+  button.ghost,
+  .ui-btn-ghost,
+  .icon-button.ghost,
+  .server-list-pagination-controls button,
+  .dialog-close
+):active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14) !important;
+}
+:root[data-theme="glass"] :is(
+  button.ghost,
+  .ui-btn-ghost,
+  .icon-button.ghost,
+  .server-list-pagination-controls button
+):disabled {
+  opacity: 0.45 !important;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+/* Toolbar Capsule & Grouped Buttons - 去除按钮之间的样式 */
+:root[data-theme="glass"] .server-toolbar-tools {
+  background: rgba(14, 20, 30, 0.55) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border-top-color: rgba(255, 255, 255, 0.26) !important;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.35) !important;
+  padding: 3px;
+  gap: 2px;
+}
+:root[data-theme="glass"] .server-toolbar-tools .server-toolbar-tool {
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-full);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-secondary) !important;
+}
+:root[data-theme="glass"] .server-toolbar-tools .server-toolbar-tool:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #38bdf8 !important;
+}
+:root[data-theme="glass"] .server-toolbar-tools .server-toolbar-tool:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14) !important;
+}
+:root[data-theme="glass"] .server-update-agents-badge {
+  background: rgba(56, 189, 248, 0.18) !important;
+  color: #38bdf8 !important;
+  border: 1px solid rgba(56, 189, 248, 0.35) !important;
+}
+
+/* View Mode Toggle */
+:root[data-theme="glass"] .view-mode-toggle {
+  background: rgba(14, 20, 30, 0.55) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border-top-color: rgba(255, 255, 255, 0.26) !important;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.35) !important;
+  padding: 3px;
+  gap: 2px;
+}
+:root[data-theme="glass"] .view-mode-toggle::before {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.9), rgba(37, 99, 235, 0.9)) !important;
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.55), 0 4px 12px rgba(37, 99, 235, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+}
+:root[data-theme="glass"] .view-mode-toggle button {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-secondary) !important;
+}
+:root[data-theme="glass"] .view-mode-toggle button:hover {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-primary) !important;
+}
+:root[data-theme="glass"] .view-mode-toggle button.active {
+  color: #031326 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Mode Switches & Group Tabs */
+:root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) {
+  background: rgba(14, 20, 30, 0.55) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border-top-color: rgba(255, 255, 255, 0.26) !important;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.35) !important;
+  padding: 3px;
+  gap: 2px;
+}
+:root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) button {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-secondary) !important;
+}
+:root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--text-primary) !important;
+}
+:root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) button.active {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.24), rgba(129, 140, 248, 0.18)) !important;
+  color: #38bdf8 !important;
+  border: 1px solid rgba(56, 189, 248, 0.35) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 2px 8px rgba(56, 189, 248, 0.2) !important;
+}
+
+/* Dialog Actions */
+:root[data-theme="glass"] .dialog-actions button.ghost {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: none !important;
+  color: var(--text-secondary) !important;
+}
+:root[data-theme="glass"] .dialog-actions button.ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+  color: var(--text-primary) !important;
+}
+
+/* General Tabs Active / Inactive States */
+:root[data-theme="glass"] :is(.settings-tabs, .dns-management-tabs, .server-dialog-tabs, .audit-console-tabs) button.active {
+  background: rgba(56, 189, 248, 0.18) !important;
+  color: #38bdf8 !important;
+  border: 1px solid rgba(56, 189, 248, 0.32) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 2px 8px rgba(56, 189, 248, 0.2) !important;
+}
+:root[data-theme="glass"] :is(.settings-tabs, .dns-management-tabs, .server-dialog-tabs, .audit-console-tabs) button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.07) !important;
+  color: var(--text-primary) !important;
+  border-color: transparent !important;
 }
 
 /* Glass Inputs, Selects & Textareas */
@@ -30054,15 +30265,32 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 
 /* Segmented Controls & Tabs */
 :root[data-theme="glass"] :is(.ui-segmented-select, .ui-tabs-list) {
-  background: rgba(6, 10, 16, 0.45) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25) !important;
+  background: rgba(14, 20, 30, 0.55) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border-top-color: rgba(255, 255, 255, 0.26) !important;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
 }
 :root[data-theme="glass"] .ui-segmented-indicator {
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.85), rgba(59, 130, 246, 0.85)) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5), 0 2px 10px rgba(37, 99, 235, 0.4) !important;
+  background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%) !important;
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.6), 0 4px 14px rgba(37, 99, 235, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+}
+:root[data-theme="glass"] .ui-segmented-select button {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-secondary) !important;
+}
+:root[data-theme="glass"] .ui-segmented-select button:hover {
+  background: transparent !important;
+  color: var(--text-primary) !important;
+}
+:root[data-theme="glass"] .ui-segmented-select button.active {
+  color: #031326 !important;
+  font-weight: 700 !important;
+  background: transparent !important;
 }
 :root[data-theme="glass"] .ui-tabs-list button.active,
 :root[data-theme="glass"] .ui-tabs-trigger.active {
