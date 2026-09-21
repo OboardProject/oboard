@@ -30112,16 +30112,22 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   .dialog-chrome-foot > button[type="submit"],
   button.primary
 ) {
-  background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%) !important;
-  color: #031326 !important;
-  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  background: linear-gradient(135deg, #007aff 0%, #0056d6 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.7) !important;
+  border-radius: var(--radius-full) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
   box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.65),
-    0 8px 24px -4px rgba(37, 99, 235, 0.5) !important;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  font-weight: 650;
-  border-radius: var(--radius-full);
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -1.5px 1.5px 0 rgba(0, 35, 110, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.2),
+    0 6px 20px -2px rgba(0, 102, 255, 0.5),
+    0 2px 6px rgba(0, 102, 255, 0.28) !important;
+  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] :is(
   .ui-btn-primary,
@@ -30134,17 +30140,35 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   .dialog-chrome-foot > button[type="submit"],
   button.primary
 ):hover:not(:disabled) {
-  background: linear-gradient(135deg, #7dd3fc 0%, #3b82f6 100%) !important;
+  background: linear-gradient(135deg, #1a8cff 0%, #0066f5 100%) !important;
   box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.8),
-    0 12px 30px -2px rgba(56, 189, 248, 0.6) !important;
-  transform: translateY(-1px);
+    inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.95),
+    0 0 0 1px rgba(255, 255, 255, 0.45),
+    0 10px 28px -2px rgba(0, 102, 255, 0.65),
+    0 4px 12px rgba(0, 102, 255, 0.4) !important;
+  transform: translateY(-1.5px) scale(1.025) !important;
+}
+:root[data-theme="glass"] :is(
+  .ui-btn-primary,
+  .dash-manage-btn,
+  .server-action-group,
+  .server-add-button,
+  .login-submit,
+  .dialog-actions > button[type="submit"],
+  .dialog-actions > button.primary,
+  .dialog-chrome-foot > button[type="submit"],
+  button.primary
+):active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.965) !important;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.4),
+    0 3px 10px rgba(0, 102, 255, 0.4) !important;
 }
 :root[data-theme="glass"] .server-action-group .server-add-button {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  color: #031326 !important;
+  color: #ffffff !important;
 }
 
 /* Outline Glass Buttons */
@@ -30153,28 +30177,50 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
   color: var(--text-primary) !important;
+  border-radius: var(--radius-full) !important;
+  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] .ui-btn-outline:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08) !important;
   border-color: rgba(255, 255, 255, 0.35) !important;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.22) !important;
+  transform: translateY(-1.5px) scale(1.02) !important;
 }
 
-/* Secondary Glass Buttons */
-:root[data-theme="glass"] .ui-btn-secondary {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
-  color: var(--text-primary) !important;
+/* Secondary Frosted Glass Buttons with Chromatic Dispersion (色散) */
+:root[data-theme="glass"] :is(.ui-btn-secondary, .btn-secondary) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #f1f5f9 !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: var(--radius-full) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.75),
+    inset 1.5px 1px 2.5px 0 rgba(56, 189, 248, 0.45),
+    inset -1.5px -1px 2.5px 0 rgba(236, 72, 153, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 6px 18px -2px rgba(0, 0, 0, 0.35) !important;
+  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
-:root[data-theme="glass"] .ui-btn-secondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1) !important;
-  border-color: rgba(255, 255, 255, 0.28) !important;
+:root[data-theme="glass"] :is(.ui-btn-secondary, .btn-secondary):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15) !important;
+  color: #ffffff !important;
+  box-shadow:
+    inset 0 1.5px 1.5px 0 rgba(255, 255, 255, 0.95),
+    inset 2px 1px 3px 0 rgba(56, 189, 248, 0.65),
+    inset -2px -1px 3px 0 rgba(236, 72, 153, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 8px 24px -2px rgba(56, 189, 248, 0.3),
+    0 12px 30px rgba(0, 0, 0, 0.5) !important;
+  transform: translateY(-1.5px) scale(1.025) !important;
+}
+:root[data-theme="glass"] :is(.ui-btn-secondary, .btn-secondary):active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.965) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.25) !important;
 }
 
-/* Ghost / Clean Borderless Glass Buttons - 去除底色 */
+/* Ghost / Clean Borderless Glass Buttons */
 :root[data-theme="glass"] :is(
   button.ghost,
   .ui-btn-ghost,
@@ -30188,6 +30234,8 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   color: var(--text-primary) !important;
+  border-radius: var(--radius-full) !important;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] :is(
   button.ghost,
@@ -30196,10 +30244,13 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   .server-list-pagination-controls button,
   .dialog-close
 ):hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 0 12px -2px rgba(56, 189, 248, 0.35) !important;
   color: #38bdf8 !important;
+  transform: translateY(-1px) scale(1.02) !important;
 }
 :root[data-theme="glass"] :is(
   button.ghost,
@@ -30208,7 +30259,8 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   .server-list-pagination-controls button,
   .dialog-close
 ):active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14) !important;
+  transform: translateY(0.5px) scale(0.965) !important;
+  background: rgba(255, 255, 255, 0.16) !important;
 }
 :root[data-theme="glass"] :is(
   button.ghost,
@@ -30221,34 +30273,38 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   border-color: transparent !important;
 }
 
-/* Toolbar Capsule & Grouped Buttons - 去除按钮之间的样式 */
+/* Toolbar Capsule & Grouped Buttons */
 :root[data-theme="glass"] .server-toolbar-tools {
-  background: rgba(14, 20, 30, 0.55) !important;
-  border: 1px solid rgba(255, 255, 255, 0.13) !important;
-  border-top-color: rgba(255, 255, 255, 0.26) !important;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.35) !important;
-  padding: 3px;
-  gap: 2px;
+  background: rgba(14, 20, 32, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-top-color: rgba(255, 255, 255, 0.28) !important;
+  backdrop-filter: blur(28px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.22), 0 8px 24px -4px rgba(0, 0, 0, 0.45) !important;
+  padding: 3px 4px !important;
+  gap: 3px !important;
+  border-radius: var(--radius-full) !important;
 }
 :root[data-theme="glass"] .server-toolbar-tools .server-toolbar-tool {
   min-height: 32px;
   padding: 0 14px;
   border-radius: var(--radius-full);
   background: transparent !important;
-  border: none !important;
+  border: 1px solid transparent !important;
   box-shadow: none !important;
   color: var(--text-secondary) !important;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] .server-toolbar-tools .server-toolbar-tool:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border: none !important;
-  box-shadow: none !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 0 12px -2px rgba(56, 189, 248, 0.35) !important;
   color: #38bdf8 !important;
+  transform: translateY(-1px) scale(1.02) !important;
 }
 :root[data-theme="glass"] .server-toolbar-tools .server-toolbar-tool:active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14) !important;
+  background: rgba(255, 255, 255, 0.16) !important;
+  transform: translateY(0.5px) scale(0.965) !important;
 }
 :root[data-theme="glass"] .server-update-agents-badge {
   background: rgba(56, 189, 248, 0.18) !important;
@@ -30258,34 +30314,54 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 
 /* View Mode Toggle */
 :root[data-theme="glass"] .view-mode-toggle {
-  background: rgba(14, 20, 30, 0.55) !important;
-  border: 1px solid rgba(255, 255, 255, 0.13) !important;
-  border-top-color: rgba(255, 255, 255, 0.26) !important;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.35) !important;
-  padding: 3px;
-  gap: 2px;
+  background: rgba(14, 20, 32, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-top-color: rgba(255, 255, 255, 0.28) !important;
+  backdrop-filter: blur(28px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.22), 0 8px 24px -4px rgba(0, 0, 0, 0.45) !important;
+  padding: 3px 4px !important;
+  gap: 3px !important;
+  border-radius: var(--radius-full) !important;
 }
 :root[data-theme="glass"] .view-mode-toggle::before {
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.9), rgba(37, 99, 235, 0.9)) !important;
-  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.55), 0 4px 12px rgba(37, 99, 235, 0.45) !important;
-  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.16) 100%
+  ) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1.5px 1px 3px 0 rgba(56, 189, 248, 0.75),
+    inset -1.5px -1px 3px 0 rgba(236, 72, 153, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 3px 12px -1px rgba(56, 189, 248, 0.45),
+    0 8px 20px -4px rgba(0, 0, 0, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.75) !important;
+  border-radius: var(--radius-full) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] .view-mode-toggle button {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
   color: var(--text-secondary) !important;
+  border-radius: var(--radius-full) !important;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] .view-mode-toggle button:hover {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  color: var(--text-primary) !important;
+  color: #ffffff !important;
 }
 :root[data-theme="glass"] .view-mode-toggle button.active {
-  color: #031326 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
@@ -30293,30 +30369,44 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 
 /* Mode Switches & Group Tabs */
 :root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) {
-  background: rgba(14, 20, 30, 0.55) !important;
-  border: 1px solid rgba(255, 255, 255, 0.13) !important;
-  border-top-color: rgba(255, 255, 255, 0.26) !important;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.35) !important;
-  padding: 3px;
-  gap: 2px;
+  background: rgba(14, 20, 32, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-top-color: rgba(255, 255, 255, 0.28) !important;
+  backdrop-filter: blur(28px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.22), 0 8px 24px -4px rgba(0, 0, 0, 0.45) !important;
+  padding: 3px 4px !important;
+  gap: 3px !important;
+  border-radius: var(--radius-full) !important;
 }
 :root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) button {
   background: transparent !important;
-  border: none !important;
+  border: 1px solid transparent !important;
   box-shadow: none !important;
   color: var(--text-secondary) !important;
+  border-radius: var(--radius-full) !important;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) button:hover:not(.active) {
   background: rgba(255, 255, 255, 0.08) !important;
-  color: var(--text-primary) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) scale(1.02) !important;
 }
 :root[data-theme="glass"] :is(.node-mode-switch, .node-workspace-tabs) button.active {
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.24), rgba(129, 140, 248, 0.18)) !important;
-  color: #38bdf8 !important;
-  border: 1px solid rgba(56, 189, 248, 0.35) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 2px 8px rgba(56, 189, 248, 0.2) !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.16) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.75) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1.5px 1px 3px 0 rgba(56, 189, 248, 0.75),
+    inset -1.5px -1px 3px 0 rgba(236, 72, 153, 0.6),
+    inset 0 -1.5px 2px 0 rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 3px 14px -1px rgba(56, 189, 248, 0.45),
+    0 10px 26px -4px rgba(0, 0, 0, 0.65) !important;
+  transform: translateY(-1px) scale(1.025) !important;
 }
 
 /* Dialog Actions */
@@ -30325,24 +30415,120 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
   box-shadow: none !important;
   color: var(--text-secondary) !important;
+  border-radius: var(--radius-full) !important;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] .dialog-actions button.ghost:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border-color: rgba(255, 255, 255, 0.28) !important;
-  color: var(--text-primary) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 0 12px -2px rgba(56, 189, 248, 0.3) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) scale(1.02) !important;
 }
 
-/* General Tabs Active / Inactive States */
-:root[data-theme="glass"] :is(.settings-tabs, .dns-management-tabs, .server-dialog-tabs, .audit-console-tabs) button.active {
-  background: rgba(56, 189, 248, 0.18) !important;
-  color: #38bdf8 !important;
-  border: 1px solid rgba(56, 189, 248, 0.32) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 2px 8px rgba(56, 189, 248, 0.2) !important;
+/* General Tabs Track & Tabs (Capsule Track with Liquid Glass Pill & Chromatic Dispersion) */
+:root[data-theme="glass"] :is(
+  .settings-topbar .settings-tabs,
+  .settings-tabs,
+  .dns-management-tabs,
+  .server-dialog-tabs,
+  .audit-console-tabs
+) {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 4px 5px !important;
+  border-radius: var(--radius-full) !important;
+  background: rgba(14, 20, 32, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-top-color: rgba(255, 255, 255, 0.28) !important;
+  backdrop-filter: blur(28px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.2),
+    0 8px 24px -4px rgba(0, 0, 0, 0.4) !important;
+  gap: 3px !important;
+  margin-bottom: 20px !important;
 }
-:root[data-theme="glass"] :is(.settings-tabs, .dns-management-tabs, .server-dialog-tabs, .audit-console-tabs) button:hover:not(.active) {
-  background: rgba(255, 255, 255, 0.07) !important;
-  color: var(--text-primary) !important;
+
+:root[data-theme="glass"] :is(
+  .settings-topbar .settings-tabs button,
+  .settings-tabs button,
+  .dns-management-tabs button,
+  .server-dialog-tabs button,
+  .audit-console-tabs button
+) {
+  border-radius: var(--radius-full) !important;
+  padding: 7px 16px !important;
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  color: var(--text-secondary) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  cursor: pointer !important;
+}
+
+:root[data-theme="glass"] :is(
+  .settings-topbar .settings-tabs button,
+  .settings-tabs button,
+  .dns-management-tabs button,
+  .server-dialog-tabs button,
+  .audit-console-tabs button
+):hover:not(.active) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
   border-color: transparent !important;
+  transform: translateY(-1px) scale(1.02) !important;
+}
+
+/* The Active Liquid Glass Tab with Prismatic Chromatic Dispersion (色散) & Specular Glare */
+:root[data-theme="glass"] :is(
+  .settings-topbar .settings-tabs button.active,
+  .settings-tabs button.active,
+  .dns-management-tabs button.active,
+  .server-dialog-tabs button.active,
+  .audit-console-tabs button.active
+) {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.16) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.75) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  box-shadow:
+    /* Specular Fresnel Crest (White Rim Highlight) */
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.95),
+    /* Cyan dispersion on top-left */
+    inset 1.5px 1px 3px 0 rgba(56, 189, 248, 0.75),
+    /* Magenta dispersion on bottom-right */
+    inset -1.5px -1px 3px 0 rgba(236, 72, 153, 0.6),
+    /* Ambient refraction shade */
+    inset 0 -1.5px 2px 0 rgba(0, 0, 0, 0.4),
+    /* Outer Fresnel ring */
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    /* Prismatic cyan aura bloom */
+    0 3px 14px -1px rgba(56, 189, 248, 0.45),
+    /* Deep drop shadow */
+    0 10px 26px -4px rgba(0, 0, 0, 0.65) !important;
+  transform: translateY(-1px) scale(1.025) !important;
+}
+
+:root[data-theme="glass"] :is(
+  .settings-topbar .settings-tabs button.active,
+  .settings-tabs button.active,
+  .dns-management-tabs button.active,
+  .server-dialog-tabs button.active,
+  .audit-console-tabs button.active
+):active {
+  transform: translateY(0.5px) scale(0.97) !important;
 }
 
 /* Glass Inputs, Selects & Textareas */
@@ -30481,40 +30667,76 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 }
 
 /* Segmented Controls & Tabs */
+/* Segmented Controls & Tabs with Liquid Glass */
 :root[data-theme="glass"] :is(.ui-segmented-select, .ui-tabs-list) {
-  background: rgba(14, 20, 30, 0.55) !important;
-  border: 1px solid rgba(255, 255, 255, 0.13) !important;
-  border-top-color: rgba(255, 255, 255, 0.26) !important;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1) !important;
+  background: rgba(14, 20, 32, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-top-color: rgba(255, 255, 255, 0.28) !important;
+  backdrop-filter: blur(28px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(160%) !important;
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.22), 0 8px 24px -4px rgba(0, 0, 0, 0.45) !important;
+  border-radius: var(--radius-full) !important;
+  padding: 3px 4px !important;
 }
 :root[data-theme="glass"] .ui-segmented-indicator {
-  background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%) !important;
-  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.6), 0 4px 14px rgba(37, 99, 235, 0.45) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.16) 100%
+  ) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1.5px 1px 3px 0 rgba(56, 189, 248, 0.75),
+    inset -1.5px -1px 3px 0 rgba(236, 72, 153, 0.6),
+    inset 0 -1.5px 2px 0 rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 3px 14px -1px rgba(56, 189, 248, 0.45),
+    0 10px 26px -4px rgba(0, 0, 0, 0.65) !important;
   border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.75) !important;
+  border-radius: var(--radius-full) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] .ui-segmented-select button {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
   color: var(--text-secondary) !important;
+  border-radius: var(--radius-full) !important;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 :root[data-theme="glass"] .ui-segmented-select button:hover {
   background: transparent !important;
-  color: var(--text-primary) !important;
+  color: #ffffff !important;
 }
 :root[data-theme="glass"] .ui-segmented-select button.active {
-  color: #031326 !important;
-  font-weight: 700 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
   background: transparent !important;
 }
-:root[data-theme="glass"] .ui-tabs-list button.active,
-:root[data-theme="glass"] .ui-tabs-trigger.active {
-  background: rgba(255, 255, 255, 0.12) !important;
-  border-color: rgba(255, 255, 255, 0.24) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
-  color: #38bdf8 !important;
+:root[data-theme="glass"] :is(.ui-tabs-list button.active, .ui-tabs-trigger.active) {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.16) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: rgba(255, 255, 255, 0.75) !important;
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1.5px 1px 3px 0 rgba(56, 189, 248, 0.75),
+    inset -1.5px -1px 3px 0 rgba(236, 72, 153, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 3px 14px -1px rgba(56, 189, 248, 0.45),
+    0 10px 26px -4px rgba(0, 0, 0, 0.65) !important;
+  color: #ffffff !important;
+  border-radius: var(--radius-full) !important;
+  transform: translateY(-1px) scale(1.02) !important;
+  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 
 /* Popover & Menus */
