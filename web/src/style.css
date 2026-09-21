@@ -3593,28 +3593,9 @@ button.server-address-line.copied:hover {
 }
 
 .server-health-ring {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  display: inline-block;
-  flex: 0 0 8px;
+  display: none !important;
 }
-.server-health-ring.ok {
-  color: #10b981;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.45);
-}
-.server-health-ring.fair {
-  color: #f59e0b;
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.45);
-}
-.server-health-ring.poor {
-  color: #f43f5e;
-  box-shadow: 0 0 6px rgba(244, 63, 94, 0.45);
-}
-.server-health-ring.off {
-  display: none;
-}
+
 
 .server-time-issue {
   position: relative;

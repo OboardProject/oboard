@@ -9077,17 +9077,6 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const lossPercent = monitoring.loss
   const tags = (server.display_tags || []).filter(tag => String(tag.text || '').trim())
   const na = !isOnline
-  let healthTone: 'ok' | 'fair' | 'poor' | 'off' = 'off'
-  if (isOnline && server.latency_probe_enabled) {
-    if (server.connectivity_status === 'available') {
-      const ms = Number(server.connectivity_latency_ms || 0)
-      healthTone = ms >= 0 && ms < 80 ? 'ok' : ms < 180 ? 'fair' : 'poor'
-    } else if (server.connectivity_status === 'unavailable' || server.connectivity_status === 'offline') {
-      healthTone = 'poor'
-    } else {
-      healthTone = 'fair'
-    }
-  }
 
   return (
     <article className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}${isSelected ? ' is-selected' : ''}`}>
@@ -9122,8 +9111,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <span>{timeIssue.summary}</span>
           </button>}
           {uninstalling && <span className="status-pill warning">卸载中</span>}
-          <span className={`server-health-ring ${healthTone}`} title={server.latency_probe_enabled ? connectivityStatusLabel(server.connectivity_status) : '未配置延迟测试'} aria-hidden="true" />
-          <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} title={!isOnline && server.last_seen_at ? `离线（${offlineAgoLabel(server.last_seen_at)}）` : isOnline ? '在线' : '离线'} />
+          <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} title={!isOnline && server.last_seen_at ? `离线（${offlineAgoLabel(server.last_seen_at)}）` : server.latency_probe_enabled ? `在线 · 延迟 ${connectivityStatusLabel(server.connectivity_status)}` : '在线'} />
           <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
       </div>
