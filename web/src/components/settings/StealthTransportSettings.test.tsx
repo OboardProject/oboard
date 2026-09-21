@@ -84,3 +84,20 @@ it('marks a configured but inactive transport and explains the environment sourc
     view.done()
   }
 })
+
+it('renders as a collapsible disclosure with question-mark help buttons', async () => {
+  const view = mount(<StealthTransportSettings
+    value={{ enabled: false, listen_address: '0.0.0.0:24443', public_address: '', active: false }}
+    onSave={vi.fn(async () => {})}
+  />)
+  try {
+    await view.render()
+    const disclosure = view.host.querySelector('details.settings-disclosure')
+    expect(disclosure).not.toBeNull()
+    const helpButtons = view.host.querySelectorAll('.form-field-help')
+    expect(helpButtons.length).toBeGreaterThanOrEqual(3)
+  } finally {
+    view.done()
+  }
+})
+
