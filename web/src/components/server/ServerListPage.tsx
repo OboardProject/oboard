@@ -1,23 +1,34 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { Select } from '../ui/select'
 
-const pageSize = 24
+export const SERVER_PAGE_SIZE = 24
 
-export function ServerListPage<T>({ items, view, renderItem }: {
+export function ServerListPage<T>({ items, view, renderItem, page: controlledPage, onPageChange, hideTopPagination }: {
   items: T[]
   view: 'grid' | 'list'
   renderItem: (item: T, index: number) => ReactNode
+  page?: number
+  onPageChange?: (page: number) => void
+  hideTopPagination?: boolean
 }) {
-  const [page, setPage] = useState(0)
+  const [internalPage, setInternalPage] = useState(0)
+  const page = controlledPage !== undefined ? controlledPage : internalPage
   const topRef = useRef<HTMLDivElement>(null)
+  const pageSize = SERVER_PAGE_SIZE
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize))
   const currentPage = Math.min(page, pageCount - 1)
-  if (page !== currentPage) setPage(currentPage)
+  if (page !== currentPage && controlledPage === undefined) setInternalPage(currentPage)
   const offset = currentPage * pageSize
 
   const changePage = (next: number, position: string) => {
-    setPage(next)
-    if (position === '底部') topRef.current?.querySelector<HTMLButtonElement>('[aria-label="服务器页码顶部"]')?.focus({ preventScroll: true })
+    if (controlledPage === undefined) {
+      setInternalPage(next)
+    }
+    onPageChange?.(next)
+    if (position === '底部') {
+      const topSelect = topRef.current?.querySelector<HTMLButtonElement>('[aria-label="服务器页码顶部"]') || topRef.current?.ownerDocument?.querySelector<HTMLButtonElement>('[aria-label="服务器页码顶部"]')
+      topSelect?.focus({ preventScroll: true })
+    }
     topRef.current?.scrollIntoView({ block: 'start' })
   }
   const navigation = (position: string) => pageCount > 1 && <nav className="server-list-pagination" aria-label={`服务器分页${position}`}>
@@ -32,7 +43,7 @@ export function ServerListPage<T>({ items, view, renderItem }: {
   </nav>
 
   return <div ref={topRef} className="server-list-page">
-    {navigation('顶部')}
+    {!hideTopPagination && navigation('顶部')}
     <div className={view === 'grid' ? 'server-grid' : 'server-list'}>
       {items.slice(offset, offset + pageSize).map((item, index) => renderItem(item, offset + index))}
     </div>

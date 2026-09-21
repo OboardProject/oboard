@@ -175,7 +175,7 @@ import { ServerNetworkDialog } from './components/server/ServerNetworkDialog'
 import { ServerSystemDialog } from './components/server/ServerSystemDialog'
 import { ServerTasksDialog } from './components/server/ServerTasksDialog'
 import { ServerActionMenu } from './components/server/ServerActionMenu'
-import { ServerListPage } from './components/server/ServerListPage'
+import { ServerListPage, SERVER_PAGE_SIZE } from './components/server/ServerListPage'
 import { OverflowMenu, type OverflowMenuGroup } from './components/ui/overflow-menu'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
@@ -6816,6 +6816,17 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     () => filterServerList(orderedServers, serverQuery, serverStatusFilter, serverRegionFilter, serverListRegion),
     [orderedServers, serverQuery, serverStatusFilter, serverRegionFilter],
   )
+  const [serverPage, setServerPage] = useState(0)
+  const serverPageSize = SERVER_PAGE_SIZE
+  const serverPageCount = Math.max(1, Math.ceil(visibleServers.length / serverPageSize))
+  const currentServerPage = Math.min(Math.max(0, serverPage), Math.max(0, serverPageCount - 1))
+  const serverOffset = currentServerPage * serverPageSize
+  const serverFilterKey = JSON.stringify([serverQuery, serverStatusFilter, serverRegionFilter, listPreferences.sortMode])
+  const [prevServerFilterKey, setPrevServerFilterKey] = useState(serverFilterKey)
+  if (prevServerFilterKey !== serverFilterKey) {
+    setPrevServerFilterKey(serverFilterKey)
+    if (serverPage !== 0) setServerPage(0)
+  }
   useEffect(() => {
     if (!inspectedServerId) return
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -7347,7 +7358,57 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         sortMode={listPreferences.sortMode}
         onSortModeChange={mode => setListPreferences(current => ({ ...current, sortMode: mode }))}
       />
-      <span className="server-list-result-count">{visibleServers.length} / {servers.length}</span>
+      <div className="server-list-toolbar-right">
+        <span className="server-list-result-count">
+          {visibleServers.length < servers.length
+            ? (serverPageCount > 1
+                ? `${serverOffset + 1}–${Math.min(serverOffset + serverPageSize, visibleServers.length)} / ${visibleServers.length} (共 ${servers.length})`
+                : `${visibleServers.length} / ${servers.length}`)
+            : (serverPageCount > 1
+                ? `${serverOffset + 1}–${Math.min(serverOffset + serverPageSize, visibleServers.length)} / ${visibleServers.length} 台`
+                : `${visibleServers.length} 台`)}
+        </span>
+        {serverPageCount > 1 && (
+          <div className="server-list-pagination-controls">
+            <button
+              type="button"
+              className="ghost"
+              disabled={currentServerPage === 0}
+              onClick={() => {
+                setServerPage(currentServerPage - 1)
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }}
+            >
+              上一页
+            </button>
+            <Select
+              aria-label="服务器页码顶部"
+              value={String(currentServerPage)}
+              onChange={event => {
+                setServerPage(Number(event.target.value))
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }}
+            >
+              {Array.from({ length: serverPageCount }, (_, index) => (
+                <option key={index} value={index}>
+                  第 {index + 1} / {serverPageCount} 页
+                </option>
+              ))}
+            </Select>
+            <button
+              type="button"
+              className="ghost"
+              disabled={currentServerPage === serverPageCount - 1}
+              onClick={() => {
+                setServerPage(currentServerPage + 1)
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }}
+            >
+              下一页
+            </button>
+          </div>
+        )}
+      </div>
     </div>}
     {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
       <AlertTriangle size={18} />
@@ -7367,7 +7428,15 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       : (
         <div className="server-workbench-layout">
           <div className="server-workbench-main">
-            <ServerListPage key={JSON.stringify([serverQuery, serverStatusFilter, serverRegionFilter, listPreferences.sortMode])} items={visibleServers} view={view} renderItem={renderServerCard} />
+            <ServerListPage
+              key={serverFilterKey}
+              items={visibleServers}
+              view={view}
+              renderItem={renderServerCard}
+              page={currentServerPage}
+              onPageChange={setServerPage}
+              hideTopPagination
+            />
           </div>
           {inspectedServer && (
             <ServerInspectorPanel

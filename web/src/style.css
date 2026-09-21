@@ -1528,6 +1528,18 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-list-pagination-controls { display: flex; align-items: center; gap: 8px; }
 .server-list-pagination-controls button { white-space: nowrap; }
 
+.server-list-toolbar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.server-list-toolbar-right .server-list-result-count {
+  margin-left: 0;
+}
+
 .server-list-result-count {
   min-width: 52px;
   margin-left: auto;
