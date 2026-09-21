@@ -101,7 +101,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const [addDisplayGroup, setAddDisplayGroup] = React.useState('')
   const [planActionBusyId, setPlanActionBusyId] = React.useState<number | null>(null)
   const [addingPlan, setAddingPlan] = React.useState(false)
-  const [planMessage, setPlanMessage] = React.useState<{ text: string; tone: 'success' | 'error' | 'pending' } | null>(null)
   const pendingPlanMutationsRef = React.useRef(new Map<string, { id: number; action: 'add' | 'remove'; planID: number; planName: string }>())
   const planMutationQueuesRef = React.useRef(new Map<number, Promise<void>>())
   const planMutationSequenceRef = React.useRef(0)
@@ -115,7 +114,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const [loadingAuthorizations, setLoadingAuthorizations] = React.useState(false)
   const [authorizationToDelete, setAuthorizationToDelete] = React.useState<AssignedAuthorization | null>(null)
   const [revokingAuthorizationIDs, setRevokingAuthorizationIDs] = React.useState<Set<number>>(new Set())
-  const [authorizationMessage, setAuthorizationMessage] = React.useState<{ text: string; tone: 'success' | 'error' } | null>(null)
 
   // Secondary User Auth Dialog state
   const [userAuthOpen, setUserAuthOpen] = React.useState(false)
@@ -185,8 +183,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     if (open && node) {
       setPreview(null)
       setScopeError('')
-      setPlanMessage(null)
-      setAuthorizationMessage(null)
       setAuthorizationToDelete(null)
       setRevokingAuthorizationIDs(new Set())
       setSelectedAddPlanID(0)
@@ -194,9 +190,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       const pendingMutation = pendingPlanMutationsRef.current.get(node.key)
       setPlanActionBusyId(pendingMutation?.action === 'remove' ? pendingMutation.planID : null)
       setAddingPlan(pendingMutation?.action === 'add')
-      if (pendingMutation) {
-        setPlanMessage({ text: pendingMutation.action === 'add' ? `正在加入套餐【${pendingMutation.planName}】...` : `正在从套餐【${pendingMutation.planName}】移出...`, tone: 'pending' })
-      }
       setUserAuthOpen(false)
       setUserIDs(new Set())
       setReason('')
@@ -247,7 +240,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   // interaction stays responsive, then reconcile from the saved desired state.
   const handleAddPlan = async () => {
     if (!preview || !selectedAddPlanID) {
-      setPlanMessage({ text: '请先选择要加入的套餐', tone: 'error' })
+      notify?.('请先选择要加入的套餐', 'warning')
       return
     }
     const mutationNodeKey = node?.key || ''
@@ -260,7 +253,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     pendingPlanMutationsRef.current.set(mutationNodeKey, { id: mutationID, action: 'add', planID: targetPlanID, planName })
     detailRequestRef.current++
     setAddingPlan(true)
-    setPlanMessage({ text: `正在加入套餐【${planName}】...`, tone: 'pending' })
     setAssignedPlans(current => current.some(p => p.plan_id === targetPlanID)
       ? current
       : [...current, { plan_id: targetPlanID, name: planName, display_group: displayGroup }].sort((a, b) => a.plan_id - b.plan_id))
@@ -286,13 +278,10 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
 
       if (activeNodeKeyRef.current === mutationNodeKey) {
         if (applyRes.no_change) {
-          setPlanMessage({ text: `节点已在套餐【${planName}】中`, tone: 'success' })
           notify?.(`节点已存在于套餐【${planName}】中`, 'warning')
         } else if (applyRes.reconcile_queued) {
-          setPlanMessage({ text: `已保存到套餐【${planName}】，正在应用`, tone: 'success' })
           notify?.(`已保存到套餐【${planName}】，正在应用`, 'success')
         } else {
-          setPlanMessage({ text: `已加入套餐【${planName}】`, tone: 'success' })
           notify?.(`已成功将节点加入套餐【${planName}】`, 'success')
         }
       }
@@ -303,7 +292,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         : [null, null]
       if (activeNodeKeyRef.current === mutationNodeKey) {
         if (confirmed === true) {
-          setPlanMessage({ text: `已同步套餐【${planName}】的最新状态`, tone: 'success' })
           notify?.(`节点已保存到套餐【${planName}】`, 'success')
           refreshParent()
         } else {
@@ -312,7 +300,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
           setAddDisplayGroup(displayGroup)
           const msg = e?.message || String(e)
           const uncertain = confirmed === null ? '，最新状态核对失败，请刷新确认' : ''
-          setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '加入失败：' + msg + uncertain, tone: 'error' })
+          notify?.(msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '加入失败：' + msg + uncertain, 'error')
         }
       }
     } finally {
@@ -331,7 +319,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     pendingPlanMutationsRef.current.set(mutationNodeKey, { id: mutationID, action: 'remove', planID: targetPlan.plan_id, planName: targetPlan.name })
     detailRequestRef.current++
     setPlanActionBusyId(targetPlan.plan_id)
-    setPlanMessage({ text: `正在从套餐【${targetPlan.name}】移出...`, tone: 'pending' })
     setAssignedPlans(current => current.filter(p => p.plan_id !== targetPlan.plan_id))
     try {
       const applyRes = await enqueuePlanMutation(targetPlan.plan_id, async () => {
@@ -353,13 +340,10 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
 
       if (activeNodeKeyRef.current === mutationNodeKey) {
         if (applyRes.no_change) {
-          setPlanMessage({ text: `套餐【${targetPlan.name}】已不包含此节点`, tone: 'success' })
           notify?.(`套餐【${targetPlan.name}】未包含此节点`, 'warning')
         } else if (applyRes.reconcile_queued) {
-          setPlanMessage({ text: `移出操作已保存，正在应用`, tone: 'success' })
           notify?.(`已保存从套餐【${targetPlan.name}】移出节点的操作，正在应用`, 'success')
         } else {
-          setPlanMessage({ text: `已从套餐【${targetPlan.name}】移出`, tone: 'success' })
           notify?.(`已从套餐【${targetPlan.name}】移出该节点`, 'success')
         }
       }
@@ -370,7 +354,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         : [null, null]
       if (activeNodeKeyRef.current === mutationNodeKey) {
         if (confirmed === true) {
-          setPlanMessage({ text: `已同步套餐【${targetPlan.name}】的最新状态`, tone: 'success' })
           notify?.(`节点已从套餐【${targetPlan.name}】移出`, 'success')
           refreshParent()
         } else {
@@ -381,7 +364,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
           }
           const msg = e?.message || String(e)
           const uncertain = confirmed === null ? '，最新状态核对失败，请刷新确认' : ''
-          setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '移出失败：' + msg + uncertain, tone: 'error' })
+          notify?.(msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '移出失败：' + msg + uncertain, 'error')
         }
       }
     } finally {
@@ -459,11 +442,9 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     const authorization = authorizationToDelete
     if (!authorization || revokingAuthorizationIDs.has(authorization.id)) return
     setAuthorizationToDelete(null)
-    setAuthorizationMessage(null)
     setRevokingAuthorizationIDs(current => new Set(current).add(authorization.id))
     try {
       const res = await client.request<{ access_change_id?: number; access_change_status?: string }>(`/user-node-exceptions/${authorization.id}`, { method: 'DELETE' })
-      setAuthorizationMessage({ text: res.access_change_id ? `撤销已提交：变更 #${res.access_change_id}（${res.access_change_status || '处理中'}）` : '授权已撤销', tone: 'success' })
       notify?.(res.access_change_id ? `已提交撤销授权：变更 #${res.access_change_id}` : '授权已撤销', 'success')
       await loadNodeDetail()
       await onDone()
@@ -473,7 +454,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         next.delete(authorization.id)
         return next
       })
-      setAuthorizationMessage({ text: '撤销失败：' + (e?.message || String(e)), tone: 'error' })
+      notify?.('撤销失败：' + (e?.message || String(e)), 'error')
     }
   }
 
@@ -586,14 +567,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                     加入套餐
                   </Button>
                 </div>
-                {planMessage && (
-                  <p
-                    role="status"
-                    style={{ margin: 0, fontSize: 12, color: planMessage.tone === 'error' ? 'var(--color-danger)' : planMessage.tone === 'pending' ? 'var(--muted)' : 'var(--color-success, #16a34a)' }}
-                  >
-                    {planMessage.text}
-                  </p>
-                )}
               </section>
 
               {/* Section 2: 授权用户 */}
@@ -651,11 +624,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                       )
                     })}
                   </div>
-                )}
-                {authorizationMessage && (
-                  <p style={{ margin: 0, fontSize: 12, color: authorizationMessage.tone === 'error' ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>
-                    {authorizationMessage.text}
-                  </p>
                 )}
               </section>
               </div>

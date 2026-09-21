@@ -110,7 +110,6 @@ describe('NodeScopeActionDialog', () => {
     })
 
     expect(document.querySelector('button[aria-label="从套餐【基础套餐】移出此节点"]')).toBeNull()
-    expect(document.querySelector('[role="status"]')?.textContent).toContain('正在从套餐【基础套餐】移出')
     await flushEffects()
     expect(client.request.mock.calls.filter(([path]) => path === '/subscription-plans/1/nodes/preview')).toHaveLength(1)
 
@@ -118,7 +117,6 @@ describe('NodeScopeActionDialog', () => {
     await flushEffects()
 
     expect(client.request.mock.calls.filter(([path]) => path === '/subscription-plans/1/nodes/apply')).toHaveLength(1)
-    expect(document.querySelector('[role="status"]')?.textContent).toContain('移出操作已保存，正在应用')
     expect(notify).toHaveBeenCalledWith('已保存从套餐【基础套餐】移出节点的操作，正在应用', 'success')
     expect(onDone).toHaveBeenCalledTimes(1)
   })
@@ -173,7 +171,6 @@ describe('NodeScopeActionDialog', () => {
     await flushEffects()
 
     expect(document.querySelector('button[aria-label="从套餐【基础套餐】移出此节点"]')).toBeNull()
-    expect(document.querySelector('[role="status"]')?.textContent).toContain('已同步套餐【基础套餐】的最新状态')
     expect(notify).toHaveBeenCalledWith('节点已从套餐【基础套餐】移出', 'success')
   })
 
