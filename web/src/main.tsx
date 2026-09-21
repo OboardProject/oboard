@@ -16567,8 +16567,7 @@ function GraphNode({
           </React.Fragment>
         )
 	  })}
-      {isServer && <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="从此服务器连接分流或后续节点" />}
-      {isServer && <span className="server-shared-source-label">连接</span>}
+      {isServer && !independentSourceCount && <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="从此服务器连接分流或后续节点" />}
       {(isEntry || (!isServer && !independentSourceCount)) && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 
       {/* Header */}

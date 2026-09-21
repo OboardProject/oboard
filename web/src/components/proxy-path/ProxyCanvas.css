@@ -111,6 +111,23 @@
   border-color: var(--primary);
 }
 
+.flow.proxy-flow .react-flow__edges,
+.flow.proxy-flow .react-flow__connectionline {
+  z-index: 2 !important;
+}
+.flow.proxy-flow .react-flow__nodes {
+  z-index: 6 !important;
+}
+.flow.proxy-flow .react-flow__node {
+  z-index: 6 !important;
+}
+.flow.proxy-flow .react-flow__node:is(:hover, .selected, :focus-within) {
+  z-index: 8 !important;
+}
+.flow.proxy-flow .react-flow__handle {
+  z-index: 10 !important;
+}
+
 /* Expand hit targets without moving the measured port centres. */
 .flow.proxy-flow .react-flow__handle.connect-source::before {
   content: '';
@@ -121,17 +138,21 @@
 }
 .flow.proxy-flow .react-flow__handle.connect-source:is(:hover, .connecting, .valid) {
   opacity: 1 !important;
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 18%, transparent);
+  box-shadow: none !important;
 }
 .flow.proxy-flow .react-flow__handle.connect-source:is(:hover, .connecting, .valid)::after {
   width: 12px !important;
   height: 12px !important;
   opacity: 1 !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 22%, transparent) !important;
 }
 .flow.proxy-flow .react-flow__handle.connect-source.valid {
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 25%, transparent);
+  box-shadow: none !important;
 }
-.flow.proxy-flow .react-flow__handle.connect-source.valid::after { background: var(--success) !important; }
+.flow.proxy-flow .react-flow__handle.connect-source.valid::after {
+  background: var(--success) !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 25%, transparent) !important;
+}
 
 .flow.proxy-flow .react-flow__handle.connect-target,
 .flow.proxy-flow .react-flow__handle.connect-target-top,

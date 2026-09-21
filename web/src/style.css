@@ -18769,6 +18769,7 @@ button.user-table-compact-button:hover {
   height: 24px;
   border-radius: var(--radius-full);
   background: transparent !important;
+  box-shadow: none !important;
   transform: translate(-50%, 0);
 }
 .flow .react-flow__handle.server-entry-target-handle {
@@ -19185,6 +19186,7 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   height: 24px;
   border-radius: var(--radius-full);
   background: transparent !important;
+  box-shadow: none !important;
   transform: translate(-50%, 0);
 }
 

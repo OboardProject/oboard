@@ -75,6 +75,20 @@ describe('canvas connection handle styling', () => {
     // In global style.css, connect-target and connect-target-top are transparent !important
     expect(globalStyleCss).toMatch(/\.connect-target-top\s*\{[^}]*opacity:\s*0\s*!important/s)
     expect(globalStyleCss).toMatch(/\.connect-target-top\s*\{[^}]*background:\s*transparent\s*!important/s)
+
+    // Handle containers must have box-shadow: none !important so 24px containers do not draw offset halos
+    expect(proxyCanvasCss).toMatch(/\.react-flow__handle\.connect-source:is\(:hover,\s*\.connecting,\s*\.valid\)\s*\{[^}]*box-shadow:\s*none\s*!important/s)
+    expect(proxyCanvasCss).toMatch(/\.react-flow__handle\.connect-source\.valid\s*\{[^}]*box-shadow:\s*none\s*!important/s)
+
+    // Canvas nodes and handles must strictly stack above edges and the dragged connectionline
+    expect(proxyCanvasCss).toMatch(/\.flow\.proxy-flow \.react-flow__edges[^}]*z-index:\s*2\s*!important/s)
+    expect(proxyCanvasCss).toMatch(/\.flow\.proxy-flow \.react-flow__nodes\s*\{[^}]*z-index:\s*6\s*!important/s)
+    expect(proxyCanvasCss).toMatch(/\.flow\.proxy-flow \.react-flow__node\s*\{[^}]*z-index:\s*6\s*!important/s)
+    expect(proxyCanvasCss).toMatch(/\.flow\.proxy-flow \.react-flow__handle\s*\{[^}]*z-index:\s*10\s*!important/s)
+
+    // Verify main.tsx does not render conflicting "连接" label
+    const mainTsx = readFileSync(path.resolve(__dirname, '../../main.tsx'), 'utf8')
+    expect(mainTsx).not.toContain('server-shared-source-label">连接</span>')
   })
 })
 
