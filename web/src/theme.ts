@@ -48,6 +48,58 @@ export function watchSystemTheme(preference: ThemePreference, onChange: (theme: 
   return () => media.removeEventListener('change', update)
 }
 
+export const DEFAULT_ACCENT_COLOR = '#007aff'
+const ACCENT_COLOR_STORAGE_KEY = 'oboard.accent_color'
+
+export const ACCENT_COLOR_PRESETS = [
+  { name: '经典蓝', color: '#007aff' },
+  { name: '极光青', color: '#06b6d4' },
+  { name: '翡翠绿', color: '#10b981' },
+  { name: '罗兰紫', color: '#8b5cf6' },
+  { name: '晚霞橙', color: '#f97316' },
+  { name: '热烈红', color: '#f43f5e' },
+  { name: '流光金', color: '#eab308' },
+] as const
+
+export function normalizeAccentColor(value: string | null | undefined): string {
+  if (value && /^#[0-9a-fA-F]{6}$/.test(value)) {
+    return value
+  }
+  return DEFAULT_ACCENT_COLOR
+}
+
+export function getAccentColor(): string {
+  try {
+    const value = localStorage.getItem(ACCENT_COLOR_STORAGE_KEY)
+    return normalizeAccentColor(value)
+  } catch {
+    return DEFAULT_ACCENT_COLOR
+  }
+}
+
+export function saveAccentColor(color: string) {
+  try {
+    localStorage.setItem(ACCENT_COLOR_STORAGE_KEY, normalizeAccentColor(color))
+  } catch {
+    // The choice still applies for this session when storage is unavailable.
+  }
+}
+
+export function applyAccentColorToDocument(color: string) {
+  if (typeof document === 'undefined') return
+  const validColor = normalizeAccentColor(color)
+  const root = document.documentElement
+  root.style.setProperty('--color-primary', validColor)
+  root.style.setProperty('--primary', validColor)
+  root.style.setProperty('--focus-ring', validColor)
+  root.style.setProperty('--border-focus', validColor)
+  root.style.setProperty('--color-primary-hover', `color-mix(in srgb, ${validColor} 85%, #fff)`)
+  root.style.setProperty('--primary-2', `color-mix(in srgb, ${validColor} 85%, #fff)`)
+  root.style.setProperty('--color-primary-light', `color-mix(in srgb, ${validColor} 12%, transparent)`)
+  root.style.setProperty('--primary-soft', `color-mix(in srgb, ${validColor} 14%, transparent)`)
+  root.style.setProperty('--primary-softer', `color-mix(in srgb, ${validColor} 6%, transparent)`)
+}
+
 const THEME_PAGE_BG: Record<ThemeName, string> = {
   light: '#f8f9fa',
   dark: '#16181d',
@@ -65,6 +117,7 @@ export function applyThemeToDocument(theme: ThemeName) {
   if (document.body) {
     document.body.style.backgroundColor = pageBg
   }
+  applyAccentColorToDocument(getAccentColor())
 }
 
 // Logical theme state for click coalescing (must track intended end-state).
