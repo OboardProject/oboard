@@ -996,6 +996,7 @@ type Server struct {
 	MTUProbePort                int                `json:"mtu_probe_port"`
 	MTUOverheadBytes            int                `json:"mtu_overhead_bytes"`
 	BBREnabled                  bool               `json:"bbr_enabled"`
+	TCPTuningEnabled            bool               `json:"tcp_tuning_enabled"`
 	StealthEnabled              bool               `json:"stealth_enabled"`
 	PortRangeStart              int                `json:"port_range_start"`
 	PortRangeEnd                int                `json:"port_range_end"`

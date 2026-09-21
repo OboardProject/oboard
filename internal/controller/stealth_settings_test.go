@@ -177,7 +177,7 @@ func TestStealthTransportSettingsHTTPAndMCP(t *testing.T) {
 	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	command, env, err := srv.agentEnrollmentCommand(ctx, false, true)
+	command, env, err := srv.agentEnrollmentCommand(ctx, false, false, true)
 	if err != nil || env["OBOARD_STEALTH_ADDR"] != cfg.PublicAddress || !strings.Contains(command, cfg.PublicAddress) {
 		t.Fatalf("install address: %v", err)
 	}

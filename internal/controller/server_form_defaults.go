@@ -25,6 +25,7 @@ type panelServerFormDefaults struct {
 	MTUProbePort                int
 	MTUOverheadBytes            int
 	BBREnabled                  bool
+	TCPTuningEnabled            bool
 	TimeCorrectionMode          model.TimeCorrectionMode
 	PortRangeStart              int
 	PortRangeEnd                int
@@ -52,7 +53,7 @@ func (s *Server) panelServerFormDefaults(ctx context.Context) (panelServerFormDe
 	if err != nil {
 		return panelServerFormDefaults{}, err
 	}
-	mtuMode, bbrEnabled, timeMode := serverCreationDefaults(settings)
+	mtuMode, bbrEnabled, tcpTuningEnabled, timeMode := serverCreationDefaults(settings)
 	return panelServerFormDefaults{
 		ListenIP:                    "0.0.0.0",
 		ListenMode:                  model.ListenModeAuto,
@@ -64,6 +65,7 @@ func (s *Server) panelServerFormDefaults(ctx context.Context) (panelServerFormDe
 		MTUProbeHost:                "1.1.1.1",
 		MTUProbePort:                443,
 		BBREnabled:                  bbrEnabled,
+		TCPTuningEnabled:            tcpTuningEnabled,
 		TimeCorrectionMode:          timeMode,
 		PortRangeStart:              core.DefaultPublicPortRangeStart,
 		PortRangeEnd:                core.DefaultPublicPortRangeEnd,
@@ -99,6 +101,7 @@ func (d panelServerFormDefaults) asMap() map[string]any {
 		"mtu_probe_port":                 d.MTUProbePort,
 		"mtu_overhead_bytes":             d.MTUOverheadBytes,
 		"bbr_enabled":                    d.BBREnabled,
+		"tcp_tuning_enabled":             d.TCPTuningEnabled,
 		"time_correction_mode":           string(d.TimeCorrectionMode),
 		"port_range_start":               d.PortRangeStart,
 		"port_range_end":                 d.PortRangeEnd,
@@ -221,6 +224,7 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	applyDefaultInt(serverKeys, "mtu_probe_port", &request.Server.MTUProbePort, defaults.MTUProbePort)
 	applyDefaultInt(serverKeys, "mtu_overhead_bytes", &request.Server.MTUOverheadBytes, defaults.MTUOverheadBytes)
 	applyDefaultBool(serverKeys, "bbr_enabled", &request.Server.BBREnabled, defaults.BBREnabled)
+	applyDefaultBool(serverKeys, "tcp_tuning_enabled", &request.Server.TCPTuningEnabled, defaults.TCPTuningEnabled)
 	if _, ok := serverKeys["time_correction_mode"]; !ok {
 		request.Server.TimeCorrectionMode = defaults.TimeCorrectionMode
 	}

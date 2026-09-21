@@ -254,7 +254,7 @@ func defaultDescriptors() []Descriptor {
 		"listen_ip": stringValue, "listen_mode": stringValue, "udp_inbound_mode": stringValue,
 		"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
 		"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"},
-		"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
+		"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue, "tcp_tuning_enabled": boolValue,
 		"port_range_start": publicPortStart, "port_range_end": publicPortEnd,
 		"internal_port_range_start": internalPortStart, "internal_port_range_end": internalPortEnd,
 		"port_policy_revision": map[string]any{"type": "integer"},
@@ -727,7 +727,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"port_range_start": map[string]any{"type": "integer", "description": "公网自动托管端口池起点（默认 10000）"}, "port_range_end": map[string]any{"type": "integer", "description": "公网自动托管端口池终点（默认 20000）"},
 			"internal_port_range_start": map[string]any{"type": "integer", "description": "回环内部端口池起点（默认 30000）"}, "internal_port_range_end": map[string]any{"type": "integer", "description": "回环内部端口池终点（默认 59999）"},
 			"udp_inbound_mode": stringValue, "mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
-			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"}, "mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": map[string]any{"type": "boolean", "description": "省略时使用面板默认（通常为 true）。不要因为未提到该开关就传 false"},
+			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"}, "mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": map[string]any{"type": "boolean", "description": "省略时使用面板默认（通常为 true）。不要因为未提到该开关就传 false"}, "tcp_tuning_enabled": map[string]any{"type": "boolean", "description": "安装时一并写入固定 TCP/UDP 缓冲区与转发调优参数（含 fq + bbr），仅首次安装生效；省略时使用面板默认（新装主控为 false）"},
 			"connection_audit_enabled": map[string]any{"type": "boolean", "description": "省略时跟随全局连接审计默认。不要因为未提到该开关就传 false"}, "time_correction_mode": stringValue,
 			"offline_notify_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true"}, "offline_after_seconds": map[string]any{"type": "integer"},
 			"resource_history_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true"}, "latency_probe_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true。未赋值时不要传 false"}, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
@@ -747,7 +747,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"listen_mode": stringValue, "ip_stack": stringValue, "udp_inbound_mode": stringValue,
 			"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
 			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"},
-			"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
+			"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue, "tcp_tuning_enabled": boolValue,
 			"port_range_start": map[string]any{"type": "integer", "description": "公网自动托管端口池起点"}, "port_range_end": map[string]any{"type": "integer", "description": "公网自动托管端口池终点"},
 			"internal_port_range_start": map[string]any{"type": "integer", "description": "回环内部端口池起点"}, "internal_port_range_end": map[string]any{"type": "integer", "description": "回环内部端口池终点"},
 			"connection_audit_enabled": boolValue, "resource_history_enabled": boolValue, "time_correction_mode": stringValue,
@@ -766,7 +766,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"operation_id": stringValue, "server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":
 		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
-			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "stealth_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
+			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "tcp_tuning_enabled": boolValue, "stealth_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
 			"enrollment_expires_at": stringValue, "enrollment_token": stringValue,
 		}), "server_ids"
 	case "servers.delete":

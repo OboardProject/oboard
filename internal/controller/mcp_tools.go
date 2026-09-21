@@ -732,8 +732,9 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 			continue
 		}
 		bbr, _ := server["bbr_enabled"].(bool)
+		tcpTuning, _ := server["tcp_tuning_enabled"].(bool)
 		stealth, _ := server["stealth_enabled"].(bool)
-		command, environment, err := s.agentEnrollmentCommand(ctx, bbr, stealth)
+		command, environment, err := s.agentEnrollmentCommand(ctx, bbr, tcpTuning, stealth)
 		if err != nil {
 			return "", err
 		}

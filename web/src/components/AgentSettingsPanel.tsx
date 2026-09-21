@@ -81,6 +81,7 @@ function parseNTPServers(value: unknown): string[] {
 export function AgentSettingsPanel({ data, client, load, notify, confirm }: AgentSettingsPanelProps) {
   const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState<string>(String(data.settings?.server_default_mtu_mode || 'detect'))
   const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState<boolean>(String(data.settings?.server_default_bbr_enabled ?? 'true') === 'true')
+  const [serverDefaultTCPTuningEnabled, setServerDefaultTCPTuningEnabled] = useState<boolean>(String(data.settings?.server_default_tcp_tuning_enabled ?? 'false') === 'true')
   const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'auto') as TimeCorrectionMode)
   const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => parseNTPServers(data.settings?.time_check_ntp_servers))
   const [trafficTimezone, setTrafficTimezone] = useState<string>(data.settings?.traffic_timezone || 'Asia/Shanghai')
@@ -92,9 +93,10 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   useEffect(() => {
     setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
     setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled ?? 'true') === 'true')
+    setServerDefaultTCPTuningEnabled(String(data.settings?.server_default_tcp_tuning_enabled ?? 'false') === 'true')
     setServerDefaultTimeCorrectionMode((data.settings?.server_default_time_correction_mode || 'auto') as TimeCorrectionMode)
     setTimeCheckNTPServers(parseNTPServers(data.settings?.time_check_ntp_servers))
-  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])
+  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled, data.settings?.server_default_tcp_tuning_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])
 
   useEffect(() => {
     setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai')
@@ -134,6 +136,11 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const handleBBRChange = (checked: boolean) => {
     setServerDefaultBBREnabled(checked)
     void autoSaveSetting({ server_default_bbr_enabled: checked }, 'BBR + FQ 设置已保存', () => setServerDefaultBBREnabled(serverDefaultBBREnabled))
+  }
+
+  const handleTCPTuningChange = (checked: boolean) => {
+    setServerDefaultTCPTuningEnabled(checked)
+    void autoSaveSetting({ server_default_tcp_tuning_enabled: checked }, 'TCP 调优设置已保存', () => setServerDefaultTCPTuningEnabled(serverDefaultTCPTuningEnabled))
   }
 
   const handleTimeCorrectionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -222,6 +229,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
           </Select>
         </SettingsRow>
         <SettingsSwitchRow label="BBR + FQ" description="在支持的 Linux 节点上启用 BBR 与 FQ 网络优化。" checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="新服务器默认启用 BBR + FQ" />
+        <SettingsSwitchRow label="TCP 调优" description="安装 Agent 时写入固定的 TCP/UDP 缓冲区与转发参数，当前系统不支持的项自动跳过。" checked={serverDefaultTCPTuningEnabled} onChange={handleTCPTuningChange} disabled={Boolean(savingKey)} ariaLabel="新服务器默认启用 TCP 调优" />
         <SettingsRow label="时间校准" description="选择服务器校准时间的方式。">
           <Select variant="segmented" value={serverDefaultTimeCorrectionMode} onChange={handleTimeCorrectionChange} disabled={Boolean(savingKey)} aria-label="时间校准模式">
             <option value="off">关闭</option><option value="auto">自动</option><option value="ntp">逻辑校时</option>

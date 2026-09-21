@@ -40,6 +40,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
     if (isViewer) return
     const payload: any = {}
     if(patch.bbr_enabled!==undefined) payload.bbr_enabled = patch.bbr_enabled
+    if(patch.tcp_tuning_enabled!==undefined) payload.tcp_tuning_enabled = patch.tcp_tuning_enabled
     if(patch.time_correction_mode) payload.time_correction_mode = patch.time_correction_mode
     if(patch.connection_audit_enabled!==undefined) payload.connection_audit_enabled = patch.connection_audit_enabled
     await client.request(`/servers/${server.id}`, { method:'PATCH', body: JSON.stringify(payload) })

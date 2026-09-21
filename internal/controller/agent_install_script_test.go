@@ -1150,3 +1150,120 @@ func TestAgentScriptsCloseTheCoreLockOnServiceRestarts(t *testing.T) {
 		}
 	}
 }
+
+// tcpTuningHarness renders the tuning helpers against a fake /proc/sys tree so
+// the best-effort behaviour can be exercised without touching the host kernel.
+func tcpTuningHarness(t *testing.T, script, procDir, configPath string, extra ...string) string {
+	t.Helper()
+	lines := []string{
+		"set -eu",
+		"INSTALL_TCP_TUNING=1",
+		"TCP_TUNING_PROC_DIR=" + shellQuote(procDir),
+		"TCP_TUNING_CONFIG_PATH=" + shellQuote(configPath),
+		extractShellFunction(t, script, "tcp_tuning_requested"),
+		extractShellFunction(t, script, "tcp_tuning_parameters"),
+		extractShellFunction(t, script, "tcp_tuning_normalize"),
+		extractShellFunction(t, script, "tcp_tuning_apply_key"),
+		extractShellFunction(t, script, "persist_tcp_tuning"),
+		extractShellFunction(t, script, "enable_tcp_tuning"),
+		extractShellFunction(t, script, "try_enable_tcp_tuning"),
+	}
+	return strings.Join(append(lines, extra...), "\n")
+}
+
+func writeTestProcKey(t *testing.T, procDir, key, value string) string {
+	t.Helper()
+	path := filepath.Join(procDir, filepath.FromSlash(strings.ReplaceAll(key, ".", "/")))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, path, value)
+	return path
+}
+
+func TestAgentInstallScriptTCPTuningSkipsUnsupportedKeys(t *testing.T) {
+	script := testAgentInstallScript(t)
+	shell := testPOSIXShell(t)
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc-sys")
+	config := filepath.Join(root, "sysctl.d", "99-oboard-tcp.conf")
+
+	rmem := writeTestProcKey(t, proc, "net.ipv4.tcp_rmem", "4096\t131072\t6291456\n")
+	forward := writeTestProcKey(t, proc, "net.ipv4.ip_forward", "0\n")
+	v6forward := writeTestProcKey(t, proc, "net.ipv6.conf.all.forwarding", "0\n")
+	// A kernel that dropped the key (tcp_fack) and a read-only knob (a
+	// restricted container) must both be skipped instead of failing the run.
+	readonly := writeTestProcKey(t, proc, "net.ipv4.tcp_ecn", "1\n")
+	if err := os.Chmod(readonly, 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := exec.Command(shell, "-c", tcpTuningHarness(t, script, proc, config, "enable_tcp_tuning")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("enable_tcp_tuning failed: %v\n%s", err, output)
+	}
+	assertTestFile(t, rmem, "4096 87380 33554432\n")
+	assertTestFile(t, forward, "1\n")
+	assertTestFile(t, v6forward, "1\n")
+	assertTestFile(t, readonly, "1\n")
+	assertTestFile(t, config, "net.ipv4.tcp_rmem = 4096 87380 33554432\nnet.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n")
+	assertPathMode(t, config, 0o600)
+	text := string(output)
+	if !strings.Contains(text, "net.ipv4.tcp_fack") || !strings.Contains(text, "net.ipv4.tcp_ecn") {
+		t.Fatalf("skipped keys are not reported:\n%s", output)
+	}
+	if !strings.Contains(text, "已应用 3 项参数") {
+		t.Fatalf("unexpected tuning summary:\n%s", output)
+	}
+}
+
+func TestAgentInstallScriptContinuesWhenTCPTuningIsUnavailable(t *testing.T) {
+	script := testAgentInstallScript(t)
+	shell := testPOSIXShell(t)
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc-sys")
+	if err := os.MkdirAll(proc, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "sysctl.d", "99-oboard-tcp.conf")
+
+	harness := tcpTuningHarness(t, script, proc, config, "try_enable_tcp_tuning", "echo install-continued")
+	output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("unavailable TCP tuning stopped installation: %v\n%s", err, output)
+	}
+	text := string(output)
+	if !strings.Contains(text, "常见于受限容器") || !strings.Contains(text, "Agent 安装将继续") || !strings.Contains(text, "install-continued") {
+		t.Fatalf("unexpected unavailable tuning output:\n%s", output)
+	}
+	if _, err := os.Stat(config); !os.IsNotExist(err) {
+		t.Fatalf("a sysctl file was written even though nothing applied: %v", err)
+	}
+}
+
+func TestAgentInstallScriptTCPTuningIsInstallOnly(t *testing.T) {
+	script := testAgentInstallScript(t)
+	for _, want := range []string{
+		"OBOARD_INSTALL_TCP_TUNING",
+		"INSTALL_TCP_TUNING=${OBOARD_INSTALL_TCP_TUNING:-0}",
+		"net.ipv6.conf.all.forwarding=1",
+		"net.ipv6.conf.default.forwarding=1",
+		"net.ipv4.tcp_congestion_control=bbr",
+		"/etc/sysctl.d/99-oboard-tcp.conf",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("Agent installer is missing %q", want)
+		}
+	}
+	installCase := shellCaseBranch(t, script, "install)", "update)")
+	if strings.Count(installCase, "try_enable_tcp_tuning") != 2 {
+		t.Fatal("both install branches must attempt the requested TCP tuning")
+	}
+	if strings.Index(installCase, "try_enable_tcp_tuning") > strings.Index(installCase, "-enroll-only") {
+		t.Fatal("Agent installer consumes the enrollment token before attempting TCP tuning")
+	}
+	updateCase := shellCaseBranch(t, script, "update)", "uninstall)")
+	if strings.Contains(updateCase, "try_enable_tcp_tuning") {
+		t.Fatal("Agent update branch repeats TCP tuning")
+	}
+}

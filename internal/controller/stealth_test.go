@@ -136,11 +136,11 @@ func TestServerPatchStealthRoundTrip(t *testing.T) {
 }
 
 func TestAgentInstallCommandCarriesStealthSwitch(t *testing.T) {
-	enabled := agentInstallCommand("https://panel.example.com", agentInstallBBRValue(true), agentInstallStealthValue(true))
+	enabled := agentInstallCommand("https://panel.example.com", agentInstallBBRValue(true), agentInstallTCPTuningValue(false), agentInstallStealthValue(true))
 	if !strings.Contains(enabled, "OBOARD_INSTALL_STEALTH='1'") {
 		t.Fatalf("install command missing stealth switch: %s", enabled)
 	}
-	disabled := agentInstallCommand("https://panel.example.com/", agentInstallBBRValue(false), agentInstallStealthValue(false))
+	disabled := agentInstallCommand("https://panel.example.com/", agentInstallBBRValue(false), agentInstallTCPTuningValue(false), agentInstallStealthValue(false))
 	if !strings.Contains(disabled, "OBOARD_INSTALL_STEALTH='0'") {
 		t.Fatalf("install command missing explicit stealth off: %s", disabled)
 	}
@@ -270,7 +270,7 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 			t.Fatalf("command missing %s", want)
 		}
 	}
-	plain, env, err := srv.agentEnrollmentCommand(ctx, false, false)
+	plain, env, err := srv.agentEnrollmentCommand(ctx, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

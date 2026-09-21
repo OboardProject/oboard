@@ -53,6 +53,7 @@ export type Server = {
   mtu_probe_port: number
   mtu_overhead_bytes: number
   bbr_enabled: boolean
+  tcp_tuning_enabled?: boolean
   stealth_enabled: boolean
   port_range_start: number
   port_range_end: number

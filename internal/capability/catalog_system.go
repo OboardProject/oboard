@@ -189,7 +189,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"subscription_relay_url":                 map[string]any{"type": "string", "maxLength": 2048},
 			"subscription_controller_direct_enabled": boolValue,
 			"subscription_custom_path_mode":          map[string]any{"type": "string", "enum": []string{"disabled", "selective", "enabled"}},
-			"server_default_mtu_mode":                stringValue, "server_default_bbr_enabled": boolValue,
+			"server_default_mtu_mode":                stringValue, "server_default_bbr_enabled": boolValue, "server_default_tcp_tuning_enabled": boolValue,
 			"server_default_time_correction_mode": stringValue, "time_check_ntp_servers": stringArray(0, 8),
 			"server_monitoring_retention_days":          map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
 			"connection_audit_retention_days":           map[string]any{"type": "integer", "minimum": 1, "maximum": 30},

@@ -139,7 +139,8 @@ import {
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
   ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick,
-  Clock, Power, WifiOff, Building2, MapPin, Code
+  Clock, Power, WifiOff, Building2, MapPin, Code,
+  Palette, Sparkles
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -166,6 +167,7 @@ import type { NodePreset } from './components/NodePresetsPanel'
 const NodePresetsPanel = lazySurface(() => import('./components/NodePresetsPanel').then(module => ({ default: module.NodePresetsPanel })))
 const SubscriptionTemplatesPanel = lazySurface(() => import('./components/SubscriptionTemplatesPanel').then(module => ({ default: module.SubscriptionTemplatesPanel })))
 import { StealthTransportSettings } from './components/settings/StealthTransportSettings'
+import { AppearanceSettingsPanel } from './components/settings/AppearanceSettingsPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import { ServerAboutDialog } from './components/server/ServerAboutDialog'
@@ -1435,7 +1437,7 @@ const fieldLabels: Record<string, string> = {
   entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', interface_ipv6: '网卡 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_mode: '监听模式', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: '自动更新地址', ddns_interval_seconds: '更新间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
-  ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', bbr_enabled: 'BBR + FQ', stealth_enabled: '安全进程',
+  ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', bbr_enabled: 'BBR + FQ', tcp_tuning_enabled: 'TCP 调优', stealth_enabled: '安全进程',
   os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
   tls: 'TLS', certificate_mode: '证书模式', certificate_id: '证书', certificate_domain: '证书域名', config_json: 'JSON 配置', match_json: '匹配规则 JSON', result_json: '结果 JSON', events: '事件',
   proxy_uuid: '代理 UUID', proxy_password: '代理密码', speed_limit_mbps: '限速 Mbps', traffic_limit_bytes: '流量额度', traffic_used_bytes: '已用流量', subscription_token: '订阅令牌',
@@ -3496,9 +3498,9 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
   </MotionDialogPanel>
 }
 
-function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
+function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange, theme, onThemeChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'appearance' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3714,6 +3716,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   }
   const settingsNavigation: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> = [
     { key: 'connection', label: '面板访问', icon: LinkIcon, description: '设置面板地址、用户注册和远程访问权限。' },
+    { key: 'appearance', label: '界面外观', icon: Palette, description: '自定义面板主题风格与视觉显示效果。' },
     { key: 'servers', label: '服务器', icon: ServerIcon, description: '管理新服务器默认值、下载来源和数据保留时间。' },
     { key: 'presets', label: '节点预设', icon: Layers, description: '保存常用协议参数，创建入口时直接套用。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
@@ -3842,6 +3845,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </SettingsGroup>
       </section>}
+      {activeSection === 'appearance' && <AppearanceSettingsPanel theme={theme} onThemeChange={onThemeChange} notify={notify} />}
       {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={dialogs.confirm} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" className="settings-card">
@@ -6207,8 +6211,8 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
   )
 }
 
-function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number; latency_probe_interval_seconds?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',  expiry_notify_enabled: true, display_tags: [] }
+function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; tcp_tuning_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number; latency_probe_interval_seconds?: number }): any {
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, tcp_tuning_enabled: Boolean(defaults?.tcp_tuning_enabled), stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',  expiry_notify_enabled: true, display_tags: [] }
 }
 
 const serverSettingTabs = [
@@ -7464,7 +7468,7 @@ function AgentInstallDialog({ server, installCommand, controllerURL, onClose }: 
   const [action, setAction] = useState<'install' | 'update' | 'uninstall'>(isOnline ? 'update' : 'install')
   const actionTitle = action === 'install' ? '安装' : action === 'update' ? '更新' : '卸载'
   const actionDescription = action === 'install'
-    ? `安装 Agent 和内核并连接当前面板${server.bbr_enabled ? '，同时尝试启用 BBR + FQ' : ''}。`
+    ? `安装 Agent 和内核并连接当前面板${server.bbr_enabled ? '，同时尝试启用 BBR + FQ' : ''}${server.tcp_tuning_enabled ? '，并尝试写入 TCP 调优参数' : ''}。`
     : action === 'update'
       ? '从当前面板更新 Agent 和内核，保留配置。'
       : '移除 Agent、内核和本机配置。'
@@ -7835,6 +7839,10 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
 
+          <FormField label="TCP 调优" hint="首次安装 Agent 时写入固定的 TCP/UDP 缓冲区与转发参数，当前系统不支持的项自动跳过。">
+            <Switch checked={Boolean(draft.tcp_tuning_enabled)} onChange={checked => update({ tcp_tuning_enabled: checked })} ariaLabel="TCP 调优" />
+          </FormField>
+
           <FormField label="安全进程" hint="安装命令自动使用随机目录并启动 Agent，配置加密存储；若已有 Agent，重装成功后自动清理旧安装。">
             <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
           </FormField>
@@ -8013,6 +8021,10 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           <div className="form-section-title">主机设置</div>
           <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
             <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
+          </FormField>
+
+          <FormField label="TCP 调优" hint="下次重新安装 Agent 时写入固定的 TCP/UDP 缓冲区与转发参数，当前系统不支持的项自动跳过。">
+            <Switch checked={Boolean(draft.tcp_tuning_enabled)} onChange={checked => update({ tcp_tuning_enabled: checked })} ariaLabel="TCP 调优" />
           </FormField>
 
           <FormField label="安全进程" hint="开启后必须重新生成接入命令并在服务器执行。安装命令将重新安装并启动随机目录的 Agent，成功后自动清理旧安装；关闭时在线 Agent 自动切回普通模式。">
@@ -9365,6 +9377,7 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
             <ServerDetailItem label="公网端口范围" value={portRangeLabel(server)} />
             <ServerDetailItem label="内部回环端口范围" value={internalPortRangeLabel(server)} />
             <ServerDetailItem label="安装时尝试 BBR + FQ" value={server.bbr_enabled ? '是' : '否'} />
+            <ServerDetailItem label="安装时写入 TCP 调优" value={server.tcp_tuning_enabled ? '是' : '否'} />
             <ServerDetailItem label="延迟测试" value={connectivityLabel} />
           </dl>
         </section>

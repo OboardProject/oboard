@@ -53,6 +53,7 @@ import (
 const (
 	settingServerDefaultMTUMode           = "server_default_mtu_mode"
 	settingServerDefaultBBREnabled        = "server_default_bbr_enabled"
+	settingServerDefaultTCPTuningEnabled  = "server_default_tcp_tuning_enabled"
 	settingServerDefaultTimeCorrection    = "server_default_time_correction_mode"
 	settingServerMonitoringRetentionDays  = "server_monitoring_retention_days"
 	settingConnectionAuditRetentionDays   = "connection_audit_retention_days"
@@ -1080,6 +1081,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			UpdateWindowEndHour                       *int               `json:"update_window_end_hour"`
 			ServerDefaultMTUMode                      *string            `json:"server_default_mtu_mode"`
 			ServerDefaultBBREnabled                   *bool              `json:"server_default_bbr_enabled"`
+			ServerDefaultTCPTuningEnabled             *bool              `json:"server_default_tcp_tuning_enabled"`
 			ServerDefaultTimeCorrection               *string            `json:"server_default_time_correction_mode"`
 			ServerMonitoringRetentionDays             *int               `json:"server_monitoring_retention_days"`
 			ConnectionAuditRetentionDays              *int               `json:"connection_audit_retention_days"`
@@ -1506,6 +1508,13 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingServerDefaultBBREnabled)
 		}
+		if req.ServerDefaultTCPTuningEnabled != nil {
+			if err := s.store.SetSetting(r.Context(), settingServerDefaultTCPTuningEnabled, strconv.FormatBool(*req.ServerDefaultTCPTuningEnabled)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingServerDefaultTCPTuningEnabled)
+		}
 		if req.ServerDefaultTimeCorrection != nil {
 			mode := normalizeControllerTimeCorrectionMode(model.TimeCorrectionMode(*req.ServerDefaultTimeCorrection))
 			if mode != model.TimeCorrectionMode(strings.ToLower(strings.TrimSpace(*req.ServerDefaultTimeCorrection))) {
@@ -1708,7 +1717,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 }
 
 func (s *Server) publicSettingsValues(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: false, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: false, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTCPTuningEnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[resourceDownloadSourceSetting] = "controller"
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
@@ -1810,14 +1819,14 @@ func (s *Server) cachedStorageDiagnostics(ctx context.Context) (store.StorageDia
 	return diagnostics, nil
 }
 
-func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool, model.TimeCorrectionMode) {
+func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool, bool, model.TimeCorrectionMode) {
 	mode := model.MTUMode(strings.ToLower(strings.TrimSpace(settings[settingServerDefaultMTUMode])))
 	switch mode {
 	case model.MTUModeDisabled, model.MTUModeDetect, model.MTUModeApply:
 	default:
 		mode = model.MTUModeDetect
 	}
-	return mode, settingBool(settings, settingServerDefaultBBREnabled, true), normalizeControllerTimeCorrectionMode(model.TimeCorrectionMode(settings[settingServerDefaultTimeCorrection]))
+	return mode, settingBool(settings, settingServerDefaultBBREnabled, true), settingBool(settings, settingServerDefaultTCPTuningEnabled, false), normalizeControllerTimeCorrectionMode(model.TimeCorrectionMode(settings[settingServerDefaultTimeCorrection]))
 }
 
 func normalizeControllerTimeCorrectionMode(mode model.TimeCorrectionMode) model.TimeCorrectionMode {
@@ -2070,8 +2079,8 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		mtuMode, bbrEnabled, timeMode := serverCreationDefaults(settings)
-		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled, "time_correction_mode": timeMode, "public_port_range_start": core.DefaultPublicPortRangeStart, "public_port_range_end": core.DefaultPublicPortRangeEnd, "internal_port_range_start": core.DefaultInternalPortRangeStart, "internal_port_range_end": core.DefaultInternalPortRangeEnd}
+		mtuMode, bbrEnabled, tcpTuningEnabled, timeMode := serverCreationDefaults(settings)
+		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled, "tcp_tuning_enabled": tcpTuningEnabled, "time_correction_mode": timeMode, "public_port_range_start": core.DefaultPublicPortRangeStart, "public_port_range_end": core.DefaultPublicPortRangeEnd, "internal_port_range_start": core.DefaultInternalPortRangeStart, "internal_port_range_end": core.DefaultInternalPortRangeEnd}
 		return nil
 	}
 	addUsers := func() error {
@@ -3898,6 +3907,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			model.Server
 			MTUMode                *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled             *bool                     `json:"bbr_enabled"`
+			TCPTuningEnabled       *bool                     `json:"tcp_tuning_enabled"`
 			StealthEnabled         *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled *bool                     `json:"resource_history_enabled"`
@@ -3924,7 +3934,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		defaultMTU, defaultBBR, defaultTimeMode := serverCreationDefaults(settings)
+		defaultMTU, defaultBBR, defaultTCPTuning, defaultTimeMode := serverCreationDefaults(settings)
 		if input.MTUMode == nil {
 			v.MTUMode = defaultMTU
 		} else {
@@ -3934,6 +3944,11 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.BBREnabled = defaultBBR
 		} else {
 			v.BBREnabled = *input.BBREnabled
+		}
+		if input.TCPTuningEnabled == nil {
+			v.TCPTuningEnabled = defaultTCPTuning
+		} else {
+			v.TCPTuningEnabled = *input.TCPTuningEnabled
 		}
 		if input.StealthEnabled != nil {
 			v.StealthEnabled = *input.StealthEnabled
@@ -4310,6 +4325,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			model.Server
 			MTUMode                  *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled               *bool                     `json:"bbr_enabled"`
+			TCPTuningEnabled         *bool                     `json:"tcp_tuning_enabled"`
 			StealthEnabled           *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled   *bool                     `json:"resource_history_enabled"`
@@ -4363,6 +4379,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.BBREnabled = current.BBREnabled
 		} else {
 			v.BBREnabled = *input.BBREnabled
+		}
+		if input.TCPTuningEnabled == nil {
+			v.TCPTuningEnabled = current.TCPTuningEnabled
+		} else {
+			v.TCPTuningEnabled = *input.TCPTuningEnabled
 		}
 		if input.StealthEnabled == nil {
 			v.StealthEnabled = current.StealthEnabled
@@ -6174,7 +6195,7 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, store.ErrServerDeleting, http.StatusConflict)
 		return
 	}
-	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.BBREnabled, srv.StealthEnabled)
+	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.BBREnabled, srv.TCPTuningEnabled, srv.StealthEnabled)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
@@ -16254,7 +16275,10 @@ UPDATE_SOURCE=${OBOARD_UPDATE_SOURCE:-panel}
 UPDATE_REPO=${OBOARD_UPDATE_REPO:-OboardProject/oboard-agent}
 OBOARD_PURGE=${OBOARD_PURGE:-1}
 INSTALL_BBR=${OBOARD_INSTALL_BBR:-0}
+INSTALL_TCP_TUNING=${OBOARD_INSTALL_TCP_TUNING:-0}
 STEALTH_MODE=${OBOARD_INSTALL_STEALTH:-0}
+TCP_TUNING_PROC_DIR=${OBOARD_TCP_TUNING_PROC_DIR:-/proc/sys}
+TCP_TUNING_CONFIG_PATH=${OBOARD_TCP_TUNING_CONFIG_PATH:-/etc/sysctl.d/99-oboard-tcp.conf}
 BBR_AVAILABLE_PATH=${OBOARD_BBR_AVAILABLE_PATH:-/proc/sys/net/ipv4/tcp_available_congestion_control}
 BBR_CONGESTION_PATH=${OBOARD_BBR_CONGESTION_PATH:-/proc/sys/net/ipv4/tcp_congestion_control}
 BBR_QDISC_PATH=${OBOARD_BBR_QDISC_PATH:-/proc/sys/net/core/default_qdisc}
@@ -16263,6 +16287,7 @@ BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-oboard-bbr.conf}
 # uses a neutral sysctl file name instead.
 if [ "$STEALTH_MODE" = 1 ]; then
   BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-net-tuning.conf}
+  TCP_TUNING_CONFIG_PATH=${OBOARD_TCP_TUNING_CONFIG_PATH:-/etc/sysctl.d/99-net-params.conf}
 fi
 RELEASE_PUBLIC_KEY=__RELEASE_PUBLIC_KEY__
 ACME_SH_VERSION=3.1.4
@@ -16680,6 +16705,150 @@ try_enable_bbr_fq() {
     return 0
   fi
   echo "提示：BBR + FQ 未能启用，Agent 安装将继续，其他功能不受影响。你可以稍后在宿主机确认内核支持和参数权限。" >&2
+  return 0
+}
+
+tcp_tuning_requested() {
+  case "$INSTALL_TCP_TUNING" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF|'') return 1 ;;
+    *)
+      echo "TCP 调优安装选项无效，请回到面板重新复制安装命令。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# The tuning set is fixed. Every key is applied independently so that a kernel
+# without it (for example tcp_fack on 4.15+) or a container that keeps /proc/sys
+# read-only (common on LXC) only loses that key, never the whole install.
+tcp_tuning_parameters() {
+  cat <<'OBOARD_TCP_TUNING_PARAMS'
+fs.file-max=6815744
+net.ipv4.tcp_no_metrics_save=1
+net.ipv4.tcp_ecn=0
+net.ipv4.tcp_frto=0
+net.ipv4.tcp_mtu_probing=0
+net.ipv4.tcp_rfc1337=0
+net.ipv4.tcp_sack=1
+net.ipv4.tcp_fack=1
+net.ipv4.tcp_window_scaling=1
+net.ipv4.tcp_adv_win_scale=1
+net.ipv4.tcp_moderate_rcvbuf=1
+net.core.rmem_max=33554432
+net.core.wmem_max=33554432
+net.ipv4.tcp_rmem=4096 87380 33554432
+net.ipv4.tcp_wmem=4096 16384 33554432
+net.ipv4.udp_rmem_min=8192
+net.ipv4.udp_wmem_min=8192
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.route_localnet=1
+net.ipv4.conf.all.forwarding=1
+net.ipv4.conf.default.forwarding=1
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+net.ipv6.conf.all.forwarding=1
+net.ipv6.conf.default.forwarding=1
+OBOARD_TCP_TUNING_PARAMS
+}
+
+tcp_tuning_normalize() {
+  printf '%s' "$1" | tr '\t' ' ' | tr -s ' ' | sed 's/^ *//; s/ *$//'
+}
+
+tcp_tuning_apply_key() {
+  tuning_path="$TCP_TUNING_PROC_DIR/$(printf '%s' "$1" | tr '.' '/')"
+  tuning_want=$(tcp_tuning_normalize "$2")
+  [ -f "$tuning_path" ] && [ -r "$tuning_path" ] || return 1
+  if [ "$(tcp_tuning_normalize "$(cat "$tuning_path" 2>/dev/null || true)")" = "$tuning_want" ]; then
+    return 0
+  fi
+  [ -w "$tuning_path" ] || return 1
+  printf '%s\n' "$2" > "$tuning_path" 2>/dev/null || return 1
+  [ "$(tcp_tuning_normalize "$(cat "$tuning_path" 2>/dev/null || true)")" = "$tuning_want" ] || return 1
+  return 0
+}
+
+persist_tcp_tuning() {
+  tuning_content=$1
+  if [ -L "$TCP_TUNING_CONFIG_PATH" ] || { [ -e "$TCP_TUNING_CONFIG_PATH" ] && [ ! -f "$TCP_TUNING_CONFIG_PATH" ]; }; then
+    echo "TCP 调优配置保存位置不是普通文件：$TCP_TUNING_CONFIG_PATH" >&2
+    return 1
+  fi
+  tuning_config_dir=${TCP_TUNING_CONFIG_PATH%/*}
+  [ "$tuning_config_dir" != "$TCP_TUNING_CONFIG_PATH" ] || tuning_config_dir=.
+  install -d -m 0755 "$tuning_config_dir" || return 1
+  tuning_config_new="$TCP_TUNING_CONFIG_PATH.new.$$"
+  rm -f "$tuning_config_new"
+  if ! (umask 077; printf '%s\n' "$tuning_content" > "$tuning_config_new"); then
+    rm -f "$tuning_config_new"
+    return 1
+  fi
+  chmod 0600 "$tuning_config_new" || {
+    rm -f "$tuning_config_new"
+    return 1
+  }
+  if ! mv -f "$tuning_config_new" "$TCP_TUNING_CONFIG_PATH"; then
+    rm -f "$tuning_config_new"
+    return 1
+  fi
+}
+
+enable_tcp_tuning() {
+  tcp_tuning_requested || {
+    return 0
+  }
+  echo "正在应用 TCP 调优参数..."
+  if command -v modprobe >/dev/null 2>&1; then
+    modprobe tcp_bbr 2>/dev/null || true
+    modprobe sch_fq 2>/dev/null || true
+  fi
+  tuning_list="${TMPDIR:-/tmp}/oboard-tcp-tuning.$$"
+  rm -f "$tuning_list"
+  if ! (umask 077; tcp_tuning_parameters > "$tuning_list"); then
+    rm -f "$tuning_list"
+    echo "未能准备 TCP 调优参数列表。" >&2
+    return 1
+  fi
+  tuning_applied=
+  tuning_applied_count=0
+  tuning_skipped_count=0
+  tuning_skipped_keys=
+  while IFS= read -r tuning_line; do
+    case "$tuning_line" in
+      ''|'#'*) continue ;;
+    esac
+    tuning_key=${tuning_line%%=*}
+    tuning_value=${tuning_line#*=}
+    if tcp_tuning_apply_key "$tuning_key" "$tuning_value"; then
+      tuning_applied="$tuning_applied$tuning_key = $tuning_value
+"
+      tuning_applied_count=$((tuning_applied_count + 1))
+    else
+      tuning_skipped_count=$((tuning_skipped_count + 1))
+      tuning_skipped_keys="$tuning_skipped_keys $tuning_key"
+    fi
+  done < "$tuning_list"
+  rm -f "$tuning_list"
+  if [ "$tuning_applied_count" -eq 0 ]; then
+    echo "未能应用 TCP 调优：当前环境不允许修改内核网络参数，常见于受限容器（例如部分 LXC）。" >&2
+    return 1
+  fi
+  if [ -n "$tuning_skipped_keys" ]; then
+    echo "当前系统不支持或不允许修改的参数已跳过：$tuning_skipped_keys"
+  fi
+  if ! persist_tcp_tuning "$(printf '%s' "$tuning_applied")"; then
+    echo "TCP 调优参数已在当前运行中生效，但未能保存到 $TCP_TUNING_CONFIG_PATH，重启后不会保留。" >&2
+    return 1
+  fi
+  echo "TCP 调优已应用 $tuning_applied_count 项参数（跳过 $tuning_skipped_count 项），并会在重启后继续生效。"
+}
+
+try_enable_tcp_tuning() {
+  if enable_tcp_tuning; then
+    return 0
+  fi
+  echo "提示：TCP 调优未能完整启用，Agent 安装将继续，其他功能不受影响。你可以稍后在宿主机确认内核支持和参数权限。" >&2
   return 0
 }
 
@@ -17433,6 +17602,7 @@ case "$ACTION" in
     if [ "$STEALTH_MODE" = 1 ]; then
       resolve_update_policy
       try_enable_bbr_fq
+      try_enable_tcp_tuning
       # Security-process install: the binaries prefer the GitHub release
       # (github.com is a neutral target with no panel association) and
       # integrity is enforced by the same Ed25519 manifest verification
@@ -17566,6 +17736,7 @@ case "$ACTION" in
       echo "[4/4] 注册并启动 Agent 服务"
       resolve_update_policy
       try_enable_bbr_fq
+      try_enable_tcp_tuning
       if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
         -config "$CONFIG_PATH" \
         -controller "$BASE_URL" \

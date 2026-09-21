@@ -64,7 +64,7 @@ describe('theme preference', () => {
   })
 })
 
-it('cycles one button through automatic, dark, glass, light, and automatic', async () => {
+it('toggles theme selector between standard and transparent themes', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -77,8 +77,8 @@ it('cycles one button through automatic, dark, glass, light, and automatic', asy
     await act(async () => root.render(<Harness />))
     const button = container.querySelector('button')!
     button.focus()
-    expect(button.textContent).toBe('自动主题')
-    for (const label of ['深色主题', '液态玻璃', '浅色主题', '自动主题']) {
+    expect(button.textContent).toBe('标准主题')
+    for (const label of ['通透主题', '标准主题', '通透主题']) {
       await act(async () => button.click())
       expect(button.textContent).toBe(label)
       expect(button.getAttribute('aria-label')).toContain(`当前${label}`)
@@ -90,3 +90,4 @@ it('cycles one button through automatic, dark, glass, light, and automatic', asy
     container.remove()
   }
 })
+

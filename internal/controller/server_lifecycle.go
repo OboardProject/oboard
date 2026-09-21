@@ -102,12 +102,22 @@ func (s *Server) issueServerEnrollmentToken(ctx context.Context, serverID int64)
 
 func enrollmentServerView(srv model.Server) map[string]any {
 	return map[string]any{
-		"id": srv.ID, "name": srv.Name, "bbr_enabled": srv.BBREnabled, "stealth_enabled": srv.StealthEnabled,
+		"id": srv.ID, "name": srv.Name, "bbr_enabled": srv.BBREnabled, "tcp_tuning_enabled": srv.TCPTuningEnabled, "stealth_enabled": srv.StealthEnabled,
 		"agent_connected": srv.AgentID != "", "status": srv.Status,
 	}
 }
 
 func agentInstallBBRValue(enabled bool) string {
+	if enabled {
+		return "1"
+	}
+	return "0"
+}
+
+// agentInstallTCPTuningValue renders the TCP tuning switch for install
+// commands. Like BBR, the literal is always explicit (0 or 1) so a stale
+// default can never leak through.
+func agentInstallTCPTuningValue(enabled bool) string {
 	if enabled {
 		return "1"
 	}
@@ -124,20 +134,21 @@ func agentInstallStealthValue(enabled bool) string {
 	return "0"
 }
 
-func agentInstallCommand(baseURL, bbrValue, stealthValue string) string {
+func agentInstallCommand(baseURL, bbrValue, tcpTuningValue, stealthValue string) string {
 	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(baseURL, "/")+"/install/agent.sh") +
 		` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR=` + shellSingleQuote(bbrValue) +
+		` OBOARD_INSTALL_TCP_TUNING=` + shellSingleQuote(tcpTuningValue) +
 		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
 }
 
-func (s *Server) agentEnrollmentCommand(ctx context.Context, bbr, stealth bool) (string, map[string]any, error) {
+func (s *Server) agentEnrollmentCommand(ctx context.Context, bbr, tcpTuning, stealth bool) (string, map[string]any, error) {
 	base, err := s.publicBaseURL(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	bbrValue, stealthValue := agentInstallBBRValue(bbr), agentInstallStealthValue(stealth)
-	command := agentInstallCommand(base, bbrValue, stealthValue)
-	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_STEALTH": stealthValue}
+	bbrValue, tcpTuningValue, stealthValue := agentInstallBBRValue(bbr), agentInstallTCPTuningValue(tcpTuning), agentInstallStealthValue(stealth)
+	command := agentInstallCommand(base, bbrValue, tcpTuningValue, stealthValue)
+	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_TCP_TUNING": tcpTuningValue, "OBOARD_INSTALL_STEALTH": stealthValue}
 	if stealth {
 		addr, pin, err := s.agentStealthInstallEnv()
 		if err != nil {
