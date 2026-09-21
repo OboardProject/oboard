@@ -21613,6 +21613,117 @@ select:-webkit-autofill {
   transition: background-color 99999s ease-in-out 0s;
 }
 
+.login-hero {
+  position: relative;
+  min-height: 100vh;
+  padding: 28px 32px 24px;
+  color: rgba(255, 255, 255, 0.86);
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 255, 255, 0.05), transparent 28%),
+    radial-gradient(circle at 78% 72%, rgba(255, 255, 255, 0.035), transparent 24%),
+    #0b0d12;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.login-hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.95), transparent 88%);
+  pointer-events: none;
+}
+
+.login-hero-topline {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.login-hero-dot { opacity: 0.5; }
+
+.login-hero-network {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 420px;
+  margin: 18px 0 8px;
+}
+
+.login-hero-svg {
+  position: absolute;
+  inset: 8% 6% auto;
+  width: min(78%, 560px);
+  height: auto;
+  opacity: 0.95;
+}
+
+.login-hero-copy {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  padding-top: 12px;
+  max-width: 28rem;
+}
+
+.login-hero-copy h1 {
+  margin: 0 0 10px;
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: clamp(48px, 7vw, 72px);
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 0.95;
+}
+
+.login-hero-copy p {
+  margin: 0 0 18px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.login-hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+}
+
+.login-hero-meta span::before {
+  content: "";
+  display: inline-block;
+  width: 28px;
+  height: 1px;
+  margin-right: 10px;
+  vertical-align: middle;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.login-hero-footer {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 12px;
+}
+
 .login-float-card {
   position: absolute;
   z-index: 2;
@@ -22051,6 +22162,9 @@ select:-webkit-autofill {
 @media (max-width: 980px) {
   .login-screen {
     grid-template-columns: 1fr;
+  }
+  .login-hero {
+    display: none;
   }
   .login-panel {
     min-height: 100vh;

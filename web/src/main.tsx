@@ -118,7 +118,6 @@ import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-bind
 import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
-import './styles/signin.css'
 import './components/proxy-path/ProxyCanvas.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
@@ -2851,23 +2850,92 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
   }
 
   return (
-    <div className="signin-screen">
-      <header className="signin-header">
-        <a className="signin-brand" href={appPath('/')} aria-label="OBoard">
-          <img src={logo} alt="" width={32} height={32} />
-          <span>OBoard</span>
-        </a>
-        <ThemeSelector value={theme} onChange={onThemeChange} variant="login" />
-      </header>
-      <main className="signin-main">
-        <section className="signin-card" aria-label={loginStep === 'totp' ? '验证身份' : registerMode ? '创建账号' : '登录'}>
-          <h1>{loginStep === 'totp' ? '验证身份' : registerMode ? '创建账号' : '登录'}</h1>
-          {loginStep === 'totp' && <p className="login-panel-desc">输入认证器验证码或恢复码。</p>}
-          {registerMode && <p className="login-panel-desc">注册后需管理员分配访问权限。</p>}
+    <div className="login-screen">
+      <section className="login-hero" aria-label="产品介绍">
+        <div className="login-hero-grid" />
+        <div className="login-hero-topline">
+          <span>OBOARD</span>
+          <span className="login-hero-dot">·</span>
+          <span>控制台</span>
+        </div>
+
+        <div className="login-hero-network">
+          <svg className="login-hero-svg" viewBox="0 0 640 640" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M120 180 L320 280 L520 160" stroke="rgba(255,255,255,0.14)" strokeWidth="1.2" strokeDasharray="5 7" />
+            <path d="M160 460 L320 280 L480 470" stroke="rgba(255,255,255,0.12)" strokeWidth="1.2" strokeDasharray="5 7" />
+            <path d="M120 180 L160 460" stroke="rgba(255,255,255,0.1)" strokeWidth="1.2" strokeDasharray="5 7" />
+            <path d="M520 160 L480 470" stroke="rgba(255,255,255,0.1)" strokeWidth="1.2" strokeDasharray="5 7" />
+            <circle cx="120" cy="180" r="18" stroke="rgba(255,255,255,0.28)" strokeWidth="1.2" />
+            <circle cx="120" cy="180" r="4" fill="rgba(255,255,255,0.85)" />
+            <circle cx="320" cy="280" r="28" stroke="rgba(255,255,255,0.22)" strokeWidth="1.2" />
+            <circle cx="320" cy="280" r="8" fill="rgba(255,255,255,0.9)" />
+            <circle cx="520" cy="160" r="16" stroke="rgba(255,255,255,0.24)" strokeWidth="1.2" />
+            <circle cx="520" cy="160" r="4" fill="rgba(255,255,255,0.8)" />
+            <circle cx="160" cy="460" r="14" stroke="rgba(255,255,255,0.2)" strokeWidth="1.2" />
+            <circle cx="160" cy="460" r="3.5" fill="rgba(255,255,255,0.75)" />
+            <circle cx="480" cy="470" r="14" stroke="rgba(255,255,255,0.2)" strokeWidth="1.2" />
+            <circle cx="480" cy="470" r="3.5" fill="rgba(255,255,255,0.75)" />
+          </svg>
+
+          <div className="login-float-card login-float-server">
+            <div className="login-float-head">
+              <span>服务器</span>
+              <span className="login-online"><i />在线</span>
+            </div>
+            <strong>oboard-node-01</strong>
+            <div className="login-meter"><span>CPU</span><div className="login-meter-bar"><i style={{ width: '42%' }} /></div><em>42%</em></div>
+            <div className="login-meter"><span>内存</span><div className="login-meter-bar"><i style={{ width: '68%' }} /></div><em>68%</em></div>
+            <div className="login-meter"><span>磁盘</span><div className="login-meter-bar"><i style={{ width: '21%' }} /></div><em>21%</em></div>
+          </div>
+
+          <div className="login-float-card login-float-regions">
+            <div className="login-float-head"><span>节点</span><i className="login-pulse" /></div>
+            <strong>12 个地区</strong>
+            <div className="login-region-chips">
+              {['HK', 'SG', 'TYO', 'NRT', 'LAX', 'FRA'].map(x => <span key={x}>{x}</span>)}
+            </div>
+          </div>
+
+          <div className="login-float-card login-float-term">
+            <div className="login-float-head">
+              <span>终端</span>
+              <span className="login-term-dots"><i /><i /><i /></span>
+            </div>
+            <pre>{`$ ssh root@oboard-node-01
+$ uptime
+已运行 42 天，负载 0.18
+$ _`}</pre>
+          </div>
+        </div>
+
+        <div className="login-hero-copy">
+          <h1>OBOARD</h1>
+          <p>高性能代理基础设施，一键编排、按需部署。</p>
+          <div className="login-hero-meta">
+            <span>账户访问</span>
+          </div>
+        </div>
+
+        <div className="login-hero-footer">
+          <span>© {new Date().getFullYear()} OBoard</span>
+          <ThemeSelector value={theme} onChange={onThemeChange} variant="hero" />
+        </div>
+      </section>
+
+      <section className="login-panel">
+        <motion.div
+          className="login-panel-card"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <div className="login-panel-kicker">{loginStep === 'totp' ? '双重认证' : registerMode ? '注册' : '登录'}</div>
+          <h2>{loginStep === 'totp' ? '确认是你本人' : registerMode ? '创建账号' : '欢迎回来'}</h2>
+          <p className="login-panel-desc">{loginStep === 'totp' ? '输入认证器中的六位验证码，也可以使用一枚恢复码。' : registerMode ? '注册后需管理员分配访问权限。' : '请输入账号信息以访问控制台。'}</p>
 
           <form className="login-form-hyvps" onSubmit={registerMode ? handleRegister : handleSubmit}>
             {loginStep === 'password' ? <><label className="login-field">
-              <span className="signin-field-label">用户名</span>
+              <span className="sr-only">用户名</span>
               <div className="login-input-wrap">
                 <User size={16} className="login-input-leading" aria-hidden="true" />
                 <input
@@ -2882,7 +2950,7 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
             </label>
 
             <label className="login-field">
-              <span className="signin-field-label">密码</span>
+              <span className="sr-only">密码</span>
               <div className="login-input-wrap">
                 <Lock size={16} className="login-input-leading" aria-hidden="true" />
                 <input
@@ -2907,7 +2975,7 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
 
             {registerMode && <>
               <label className="login-field">
-                <span className="signin-field-label">昵称（可选）</span>
+                <span className="sr-only">昵称（可选）</span>
                 <div className="login-input-wrap">
                   <User size={16} className="login-input-leading" aria-hidden="true" />
                   <input
@@ -2921,7 +2989,7 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
                 </div>
               </label>
               <label className="login-field">
-                <span className="signin-field-label">确认密码</span>
+                <span className="sr-only">确认密码</span>
                 <div className="login-input-wrap">
                   <Lock size={16} className="login-input-leading" aria-hidden="true" />
                   <input
@@ -2936,7 +3004,7 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
                 </div>
               </label>
             </>}</> : <label className="login-field">
-              <span className="signin-field-label">验证码或恢复码</span>
+              <span className="sr-only">验证码或恢复码</span>
               <div className="login-input-wrap">
                 <Smartphone size={16} className="login-input-leading" aria-hidden="true" />
                 <input
@@ -2966,9 +3034,10 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
             {loginStep === 'password' && registrationAvailable === true && <button type="button" className="login-back login-register-toggle" onClick={toggleRegisterMode} disabled={isLoading}>{registerMode ? '已有账号？返回登录' : '没有账号？立即注册'}</button>}
           </form>
 
-
-        </section>
-      </main>
+          {/* Shown when the left hero (and its theme control) is hidden on narrow screens. */}
+          <ThemeSelector value={theme} onChange={onThemeChange} variant="login" />
+        </motion.div>
+      </section>
     </div>
   )
 }
