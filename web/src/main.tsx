@@ -2725,7 +2725,7 @@ export function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={chromeTab}>
-                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus)}
+                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus, theme, changeTheme)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -3042,7 +3042,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify: (message: string, tone?: ToastKind) => void = () => {}, sessionUser?: SessionUser | null, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch, proxyInboundFocus?: ProxyInboundFocusRequest | null) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify: (message: string, tone?: ToastKind) => void = () => {}, sessionUser?: SessionUser | null, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch, proxyInboundFocus?: ProxyInboundFocusRequest | null, theme?: ThemePreference, onThemeChange?: (theme: ThemePreference, origin: ThemeOrigin) => void) {
   if (tab === 'account') return (
     <AccountPage
       data={data}
@@ -3086,7 +3086,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'tasks') return <Tasks tasks={data.agent_tasks} servers={data.servers} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} load={load} notify={notify} />
   if (isAutomationNavTab(tab)) return <AutomationWorkspace tab={tab} data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
-  if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
+  if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} theme={theme} onThemeChange={onThemeChange} />
   return null
 }
 
