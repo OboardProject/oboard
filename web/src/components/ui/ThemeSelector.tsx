@@ -1,13 +1,14 @@
 import { Monitor, Moon, Sun } from 'lucide-react'
-import { type ThemeOrigin, type ThemePreference, resolveThemeOrigin } from '../../theme'
+import { type ThemeOrigin, type ThemePreference, resolveThemeOrigin, getThemeMode, isGlassTheme, withThemeStyle } from '../../theme'
 
 export function ThemeSelector({ value, onChange, variant }: {
   value: ThemePreference
   onChange: (value: ThemePreference, origin: ThemeOrigin) => void
   variant: 'sidebar' | 'hero' | 'login'
 }) {
-  const isAuto = value === 'auto'
-  const isLight = value === 'light'
+  const mode = getThemeMode(value)
+  const isAuto = mode === 'auto'
+  const isLight = mode === 'light'
   const isDark = !isAuto && !isLight
 
   const Icon = isAuto ? Monitor : isLight ? Sun : Moon
@@ -21,7 +22,7 @@ export function ThemeSelector({ value, onChange, variant }: {
     className={className}
     aria-label={`当前${label}${isAuto ? '（跟随系统）' : ''}；点击切换为${nextLabel}`}
     title={`${label}${isAuto ? '（跟随系统）' : ''} · 点击切换为${nextLabel}`}
-    onClick={event => onChange(next, resolveThemeOrigin(event))}
+    onClick={event => onChange(withThemeStyle(next, isGlassTheme(value)), resolveThemeOrigin(event))}
   >
     <Icon size={variant === 'sidebar' ? 16 : 14} aria-hidden="true" />
     <span>{label}</span>

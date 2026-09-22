@@ -1,5 +1,5 @@
-export type ThemeName = 'light' | 'dark' | 'glass'
-export type ThemePreference = ThemeName | 'auto'
+export type ThemeName = 'light' | 'dark' | 'glass' | 'glass-light'
+export type ThemePreference = ThemeName | 'auto' | 'glass-auto'
 
 export type ThemeOrigin = { x: number; y: number }
 
@@ -11,13 +11,13 @@ const THEME_KEYBOARD_MIN_WAIT_MS = 160
 const THEME_KEYBOARD_MAX_WAIT_MS = 520
 
 export function normalizeTheme(value: string | null | undefined): ThemeName {
-  return value === 'dark' ? 'dark' : value === 'glass' ? 'glass' : 'light'
+  return value === 'dark' ? 'dark' : value === 'glass' ? 'glass' : value === 'glass-light' ? 'glass-light' : 'light'
 }
 
 export function getThemePreference(): ThemePreference {
   try {
     const value = localStorage.getItem(THEME_STORAGE_KEY)
-    return value === 'light' || value === 'dark' || value === 'glass' ? value : 'auto'
+    return value === 'light' || value === 'dark' || value === 'glass' || value === 'glass-light' || value === 'glass-auto' ? value : 'auto'
   } catch {
     return 'auto'
   }
@@ -31,19 +31,34 @@ export function saveThemePreference(preference: ThemePreference) {
   }
 }
 
+export function isGlassTheme(theme: ThemePreference): boolean {
+  return theme === 'glass' || theme === 'glass-light' || theme === 'glass-auto'
+}
+
+export function getThemeMode(theme: ThemePreference): 'light' | 'dark' | 'auto' {
+  return theme === 'glass' ? 'dark' : theme === 'glass-light' ? 'light' : theme === 'glass-auto' ? 'auto' : theme
+}
+
+export function withThemeStyle(theme: ThemePreference, glass: boolean): ThemePreference {
+  const mode = getThemeMode(theme)
+  return glass ? mode === 'dark' ? 'glass' : mode === 'light' ? 'glass-light' : 'glass-auto' : mode
+}
+
 export function resolveTheme(preference: ThemePreference): ThemeName {
-  if (preference !== 'auto') return preference
+  if (getThemeMode(preference) !== 'auto') return preference as ThemeName
+  let dark = false
   try {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    dark = window.matchMedia('(prefers-color-scheme: dark)').matches
   } catch {
-    return 'light'
+    // Use the light palette when system preferences are unavailable.
   }
+  return withThemeStyle(dark ? 'dark' : 'light', isGlassTheme(preference)) as ThemeName
 }
 
 export function watchSystemTheme(preference: ThemePreference, onChange: (theme: ThemeName) => void) {
-  if (preference !== 'auto' || typeof window.matchMedia !== 'function') return
+  if (getThemeMode(preference) !== 'auto' || typeof window.matchMedia !== 'function') return
   const media = window.matchMedia('(prefers-color-scheme: dark)')
-  const update = () => onChange(media.matches ? 'dark' : 'light')
+  const update = () => onChange(resolveTheme(preference))
   media.addEventListener('change', update)
   return () => media.removeEventListener('change', update)
 }
@@ -104,15 +119,16 @@ const THEME_PAGE_BG: Record<ThemeName, string> = {
   light: '#f8f9fa',
   dark: '#16181d',
   glass: '#0c1017',
+  'glass-light': '#eef4fa',
 }
 
 export function applyThemeToDocument(theme: ThemeName) {
   const root = document.documentElement
   root.dataset.theme = theme
-  root.classList.toggle('dark', theme === 'dark' || theme === 'glass')
-  root.classList.toggle('theme-glass', theme === 'glass')
+  root.classList.toggle('dark', getThemeMode(theme) === 'dark')
+  root.classList.toggle('theme-glass', isGlassTheme(theme))
   const pageBg = getComputedStyle(root).getPropertyValue('--bg-page').trim() || THEME_PAGE_BG[theme]
-  root.style.colorScheme = theme === 'glass' ? 'dark' : theme
+  root.style.colorScheme = getThemeMode(theme)
   root.style.backgroundColor = pageBg
   if (document.body) {
     document.body.style.backgroundColor = pageBg
@@ -374,8 +390,8 @@ export async function transitionThemeTo(
     oldLayer.id = 'oboard-theme-old-layer'
     oldLayer.className = targetEl.className
     oldLayer.dataset.theme = currentTheme
-    oldLayer.classList.toggle('dark', currentTheme === 'dark' || currentTheme === 'glass')
-    oldLayer.classList.toggle('theme-glass', currentTheme === 'glass')
+    oldLayer.classList.toggle('dark', getThemeMode(currentTheme) === 'dark')
+    oldLayer.classList.toggle('theme-glass', isGlassTheme(currentTheme))
 
     // Copy scroll states from original elements
     const origEls = targetEl.querySelectorAll('*')
@@ -403,6 +419,7 @@ export async function transitionThemeTo(
     oldLayer.style.margin = '0'
     oldLayer.style.padding = `${window.getComputedStyle(targetEl).padding}`
     oldLayer.style.backgroundColor = THEME_PAGE_BG[currentTheme]
+    oldLayer.style.colorScheme = getThemeMode(currentTheme)
 
     // Create glowing water ripple edge ring at absolute screen coordinates
     ring = document.createElement('div')
@@ -416,7 +433,7 @@ export async function transitionThemeTo(
     ring.style.transform = 'translate(-50%, -50%)'
     ring.style.pointerEvents = 'none'
     ring.style.zIndex = 'var(--z-theme-transition)'
-    ring.style.boxShadow = targetTheme === 'dark'
+    ring.style.boxShadow = getThemeMode(targetTheme) === 'dark'
       ? '0 0 24px 6px rgba(147, 197, 253, 0.45), inset 0 0 16px 4px rgba(255, 255, 255, 0.35)'
       : '0 0 24px 6px rgba(59, 130, 246, 0.4), inset 0 0 16px 4px rgba(17, 24, 39, 0.25)'
     ring.style.opacity = '0.95'

@@ -6,6 +6,8 @@ import {
   DEFAULT_ACCENT_COLOR,
   applyAccentColorToDocument,
   getAccentColor,
+  isGlassTheme,
+  withThemeStyle,
   resolveThemeOrigin,
   saveAccentColor,
   type ThemeOrigin,
@@ -27,7 +29,7 @@ export function AppearanceSettingsPanel({
   onAccentColorChange,
   notify,
 }: AppearanceSettingsPanelProps) {
-  const isGlass = theme === 'glass'
+  const isGlass = isGlassTheme(theme)
   const [internalAccent, setInternalAccent] = useState<string>(() => controlledAccent ?? getAccentColor())
   const currentAccent = controlledAccent ?? internalAccent
 
@@ -50,7 +52,7 @@ export function AppearanceSettingsPanel({
             aria-checked={!isGlass}
             aria-label="标准主题"
             onClick={e => {
-              onThemeChange?.('dark', resolveThemeOrigin(e))
+              onThemeChange?.(withThemeStyle(theme, false), resolveThemeOrigin(e))
               notify?.('已应用标准主题', 'success')
             }}
           >
@@ -87,7 +89,7 @@ export function AppearanceSettingsPanel({
             aria-checked={isGlass}
             aria-label="通透主题"
             onClick={e => {
-              onThemeChange?.('glass', resolveThemeOrigin(e))
+              onThemeChange?.(withThemeStyle(theme, true), resolveThemeOrigin(e))
               notify?.('已应用通透主题', 'success')
             }}
           >
