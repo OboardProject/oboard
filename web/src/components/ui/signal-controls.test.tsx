@@ -39,12 +39,13 @@ function contrast(first: RGB, second: RGB) {
 }
 
 describe('Signal design contract', () => {
-  it('uses local Chinese system type, tabular numerals and one shared palette per theme', () => {
-    expect(source).not.toMatch(/@import\s+(?:url\()?['"]?https?:/)
+  it('uses Chinese system type, Outfit numeric stack and one shared palette per theme', () => {
+    expect(source).toMatch(/@import\s+url\(['"]?https:\/\/fonts\.googleapis\.com/)
     const root = declarations(ruleFor(':root')[0])
     expect(root['--font-sans']).toContain('PingFang SC')
     expect(root['--font-sans']).toContain('Microsoft YaHei')
     expect(root['--font-display']).toBe('var(--font-sans)')
+    expect(root['--font-numeric']).toContain('Outfit')
     expect(root['--font-numeric']).toContain('DIN Alternate')
     expect(root['--font-numeric']).toContain('Bahnschrift')
     expect(root['font-variant-numeric']).toBe('tabular-nums')
