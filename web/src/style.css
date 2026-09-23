@@ -30897,16 +30897,17 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 }
 
 /* Popover & Menus */
-:root:is([data-theme="glass"], [data-theme="glass-light"]) :is(.custom-select-menu, .searchable-multi-select-menu, .searchable-combobox-menu, .dropdown-menu-content) {
-  background: rgba(var(--glass-surface-rgb, 14, 20, 30), 0.86) !important;
-  backdrop-filter: blur(32px) saturate(200%) !important;
-  -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
+:root:is([data-theme="glass"], [data-theme="glass-light"]) :is(.custom-select-menu, .searchable-multi-select-menu, .searchable-combobox-menu, .dropdown-menu-content,
+  .region-picker-panel, .server-region-dropdown-panel, .server-actions-menu, .node-scope-menu, .graph-context-menu) {
+  background: rgba(var(--glass-surface-rgb, 14, 20, 30), 0.94) !important;
+  backdrop-filter: blur(40px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(180%) !important;
   border: 1px solid rgba(var(--glass-edge-rgb, 255, 255, 255), 0.18) !important;
   border-top-color: rgba(var(--glass-edge-rgb, 255, 255, 255), 0.34) !important;
   box-shadow: 0 24px 60px rgba(0, 0, 0, calc(0.7 * var(--glass-shadow-strength, 1))), inset 0 1px 1px rgba(255, 255, 255, 0.25) !important;
 }
-:root:is([data-theme="glass"], [data-theme="glass-light"]) :is([role="menuitem"]:hover, [role="option"]:hover, .custom-select-option:hover) {
-  background: rgba(255, 255, 255, 0.08) !important;
+:root:is([data-theme="glass"], [data-theme="glass-light"]) :is([role="menuitem"]:not(.danger):hover, [role="option"]:hover, .custom-select-option:hover) {
+  background: rgba(var(--glass-edge-rgb, 255, 255, 255), 0.1) !important;
   color: var(--text-primary) !important;
 }
 
