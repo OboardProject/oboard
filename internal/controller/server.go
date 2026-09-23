@@ -17761,6 +17761,10 @@ case "$ACTION" in
       echo "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装；请通过面板更新 Agent。" >&2
       exit 1
     fi
+    if [ ! -s "$CONFIG_PATH" ] || [ ! -x "$INSTALL_DIR/oboard-agent" ]; then
+      echo "未找到普通 Agent 的配置和二进制文件，无法执行命令行更新。安全进程请在面板更新；需要恢复离线服务器时，请重新获取接入命令执行安装。" >&2
+      exit 1
+    fi
     need_base_url
     acquire_core_lifecycle_lock
     download_binaries

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -180,6 +181,24 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 	}
 	if !strings.Contains(script, "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装") {
 		t.Fatal("uninstall must refuse stealth installs with guidance")
+	}
+}
+
+func TestAgentCommandLineUpdateRejectsMissingStandardInstall(t *testing.T) {
+	script := testAgentInstallScript(t)
+	branch := shellCaseBranch(t, script, "update)", "uninstall)")
+	start := strings.Index(branch, "\n    if [ \"$STEALTH_MODE\" = 1 ]; then")
+	end := strings.Index(branch, "\n    need_base_url")
+	if start < 0 || end <= start {
+		t.Fatal("update preflight is missing")
+	}
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	cmd := exec.Command(testPOSIXShell(t), "-c", "set -eu\nSTEALTH_MODE=0\nCONFIG_PATH=\"$TEST_CONFIG\"\nINSTALL_DIR=\"$TEST_INSTALL\"\n"+branch[start:end]+"\necho update-accepted")
+	cmd.Env = append(os.Environ(), "TEST_CONFIG="+configPath, "TEST_INSTALL="+dir)
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "未找到普通 Agent") || strings.Contains(string(output), "update-accepted") {
+		t.Fatalf("missing standard install was accepted: %v\n%s", err, output)
 	}
 }
 

@@ -6872,13 +6872,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const diagnose = async (s: Server) => {
     if (agentBuildMismatch(s, data)) {
       const expected = data.version?.agent_expected_build || data.version?.build || ''
-      const command = agentUpdateCommand(effectiveControllerURL(data))
+      const stealthActive = isStealthAgent(s)
       await dialogs.alert({
         title: 'Agent 需要先更新',
         message: <div>
           <p>{s.name || '这台服务器'} 的 Agent 构建号是 <strong>{s.agent_build || '未知'}</strong>，当前主控需要 <strong>{expected}</strong>。</p>
-          <p className="muted">旧 Agent 不支持网络诊断任务。请先在服务器上执行更新命令，然后再重新诊断。</p>
-          <CommandCopyBlock value={command} buttonText="复制更新命令" />
+          <p className="muted">旧 Agent 不支持网络诊断任务。{stealthActive ? '请在服务器详情中更新 Agent，然后重新诊断。' : '请先在服务器上执行更新命令，然后再重新诊断。'}</p>
+          {!stealthActive && <CommandCopyBlock value={agentUpdateCommand(effectiveControllerURL(data))} buttonText="复制更新命令" />}
         </div>,
       })
       return
@@ -6979,13 +6979,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         res.existing ? 'info' : 'success',
       )
     } catch (err: any) {
-      const command = agentUpdateCommand(effectiveControllerURL(data))
+      const stealthActive = isStealthAgent(s)
       await dialogs.alert({
-        title: '需要命令行更新一次',
+        title: stealthActive ? '安全进程更新失败' : '需要命令行更新一次',
         message: <div>
           <p>{err?.message || '当前 Agent 版本不支持面板自更新。'}</p>
-          <p className="muted">在服务器上执行下面命令，更新完成后再使用面板更新。</p>
-          <CommandCopyBlock value={command} buttonText="复制更新命令" />
+          <p className="muted">{stealthActive ? '请检查 Agent 连接状态和任务日志；离线时可重新获取接入命令进行安装。' : '在服务器上执行下面命令，更新完成后再使用面板更新。'}</p>
+          {!stealthActive && <CommandCopyBlock value={agentUpdateCommand(effectiveControllerURL(data))} buttonText="复制更新命令" />}
         </div>,
       })
     }
@@ -7477,7 +7477,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     {monitoringServer && <ServerMonitoringTargetDialog key={monitoringServer.id} server={monitoringServer} client={client} onClose={() => setMonitoringServer(null)} onSaved={updated => { setServers(current => current.map(server => server.id === updated.id ? updated : server)); notify?.('默认监控目标已保存', 'success') }} />}
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
-    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
+    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} controllerURL={effectiveControllerURL(data)} onUpdate={updateAgent} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     </div>
@@ -7571,6 +7571,10 @@ function agentUpdateCommand(controllerURL: string) {
   return agentScriptCommand(controllerURL, 'update')
 }
 
+function isStealthAgent(server: Server) {
+  return Boolean(server.stealth_enabled || server.kernel_capabilities?.includes?.('stealth_active_v1'))
+}
+
 function agentBuildMismatch(server: Server, data: any) {
   const expected = String(data.version?.agent_expected_build || data.version?.build || '').trim()
   const actual = String(server.agent_build || '').trim()
@@ -7601,8 +7605,9 @@ function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Serv
   </MotionDialogPanel>
 }
 
-function AgentInstallDialog({ server, installCommand, controllerURL, onClose }: { server: Server; installCommand: string; controllerURL: string; onClose: () => void }) {
+function AgentInstallDialog({ server, installCommand, controllerURL, onUpdate, onClose }: { server: Server; installCommand: string; controllerURL: string; onUpdate: (server: Server) => Promise<void>; onClose: () => void }) {
   const isOnline = String(server.status || '').toLowerCase() === 'online'
+  const stealthActive = isStealthAgent(server)
   const [action, setAction] = useState<'install' | 'update' | 'uninstall'>(isOnline ? 'update' : 'install')
   const actionTitle = action === 'install' ? '安装' : action === 'update' ? '更新' : '卸载'
   const actionDescription = action === 'install'
@@ -7610,6 +7615,7 @@ function AgentInstallDialog({ server, installCommand, controllerURL, onClose }: 
     : action === 'update'
       ? '从当前面板更新 Agent 和内核，保留配置。'
       : '移除 Agent、内核和本机配置。'
+  const showCommand = action === 'install' || !stealthActive
   const command = action === 'install' ? installCommand : agentScriptCommand(controllerURL, action)
   return <MotionDialogPanel onCancel={onClose} className="install-dialog">
       <header className="dialog-head">
@@ -7622,9 +7628,9 @@ function AgentInstallDialog({ server, installCommand, controllerURL, onClose }: 
           <option value="update">更新</option>
           <option value="uninstall">卸载</option>
         </Select>
-        <p className="install-root-note">请在目标服务器的 root SSH 中执行。安装包由当前面板提供并经过签名校验。</p>
+        <p className="install-root-note">{showCommand ? '请在目标服务器的 root SSH 中执行。安装包由当前面板提供并经过签名校验。' : action === 'update' ? '安全进程通过面板更新，保留随机化安装布局。' : '安全进程请通过面板的服务器删除操作卸载。'}</p>
         <div className="install-command-current">
-          <InstallCommandCard title={actionTitle} desc={actionDescription} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} />
+          {showCommand ? <InstallCommandCard title={actionTitle} desc={actionDescription} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} /> : action === 'update' && isOnline ? <button type="button" onClick={() => { onClose(); void onUpdate(server) }}>从面板更新 Agent</button> : action === 'update' ? <p>Agent 当前离线。请重新获取接入命令并选择“安装”。</p> : null}
         </div>
       </div>
       <footer className="dialog-actions"><button onClick={onClose}>完成</button></footer>
@@ -7646,7 +7652,7 @@ function AgentLogsDialog({ server, data, client, onClose }: { server: Server; da
   const [result, setResult] = useState<any>(null)
   const [operation, setOperation] = useState('')
   const mismatch = agentBuildMismatch(server, data)
-  const updateCommand = agentUpdateCommand(effectiveControllerURL(data))
+  const stealthActive = isStealthAgent(server)
   const pull = async () => {
     setLoading(true)
     setTask(null)
@@ -7708,7 +7714,7 @@ function AgentLogsDialog({ server, data, client, onClose }: { server: Server; da
         {mismatch
           ? <div className="install-command-card danger">
             <div><h3>Agent 需要先更新</h3><p className="muted">当前构建 {server.agent_build || '未知'}，主控需要 {data.version?.agent_expected_build || data.version?.build || '最新构建'}。旧 Agent 不支持日志拉取任务。</p></div>
-            <CommandCopyBlock value={updateCommand} buttonText="复制更新命令" />
+            {stealthActive ? <p className="muted">请在服务器详情中通过面板更新 Agent。</p> : <CommandCopyBlock value={agentUpdateCommand(effectiveControllerURL(data))} buttonText="复制更新命令" />}
           </div>
           : <div className="logs-dialog-grid">
             <div className="form logs-form">
