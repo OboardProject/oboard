@@ -107,7 +107,7 @@ else
   attempts=1
   delay=0
   if [ "$CHANNEL" = dev ]; then
-    attempts=${OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS:-10}
+    attempts=${OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS:-40}
     delay=${OBOARD_AGENT_RELEASE_WAIT_SECONDS:-15}
   fi
   case "$attempts" in *[!0-9]*|0) echo "OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS must be a positive integer" >&2; exit 2 ;; esac
