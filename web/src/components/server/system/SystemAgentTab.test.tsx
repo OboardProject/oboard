@@ -17,7 +17,7 @@ it.each(['', 'agent-1'])('copies the complete issued command for agent %s', asyn
   try {
     await act(async () => root.render(<SystemAgentTab
       server={{ id: 1, agent_id: agentID, stealth_enabled: true } as Server}
-      onEnroll={async () => command}
+      onEnroll={async () => ({ command })}
       onUpdateAgent={async () => {}}
     />))
     if (agentID) expect(host.textContent).toContain('待重新安装')
@@ -27,6 +27,37 @@ it.each(['', 'agent-1'])('copies the complete issued command for agent %s', asyn
     vi.useFakeTimers()
     await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.includes('复制接入命令'))!.click())
     expect(writeText).toHaveBeenCalledWith(command)
+    await act(async () => vi.runAllTimers())
+  } finally {
+    act(() => root.unmount())
+    host.remove()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = false
+  }
+})
+
+it('shows the Windows command beside the Linux command when the panel issues one', async () => {
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const root = createRoot(host)
+  const command = "curl -fsSL 'https://panel.example/install/agent.sh' | env OBOARD_ENROLL_TOKEN='test' sh"
+  const windowsCommand = "$env:OBOARD_ENROLL_TOKEN = 'test'; & ([scriptblock]::Create('x'))"
+  const writeText = vi.fn(async () => {})
+  vi.stubGlobal('isSecureContext', true)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  try {
+    await act(async () => root.render(<SystemAgentTab
+      server={{ id: 1, agent_id: '' } as Server}
+      onEnroll={async () => ({ command, windowsCommand })}
+      onUpdateAgent={async () => {}}
+    />))
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.includes('生成接入命令'))!.click())
+    expect([...host.querySelectorAll('pre')].map(pre => pre.textContent)).toEqual([command, windowsCommand])
+    vi.useFakeTimers()
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.includes('复制 Windows 接入命令'))!.click())
+    expect(writeText).toHaveBeenCalledWith(windowsCommand)
     await act(async () => vi.runAllTimers())
   } finally {
     act(() => root.unmount())

@@ -747,6 +747,15 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 			"sensitive":   true, "must_not_log": true,
 			"completion_condition": map[string]any{"resource_uri": fmt.Sprintf("oboard://servers/%v/health", server["id"]), "field": "agent_connected", "equals": true},
 		}
+		// Windows targets run the PowerShell installer with the same
+		// environment; the security-process layout is Linux-only.
+		if !stealth {
+			base, err := s.publicBaseURL(ctx)
+			if err != nil {
+				return "", err
+			}
+			action["windows_command"] = agentWindowsInstallCommand(base)
+		}
 		encoded, err := json.Marshal(action)
 		if err != nil {
 			return "", err

@@ -24,7 +24,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
 
   const handleEnroll=async()=>{
     const res = await client.request(`/servers/${server.id}/enroll-token`, { method:'POST', body:'{}' })
-    return res.install_command as string
+    return { command: String(res.install_command || ''), windowsCommand: res.windows_install_command ? String(res.windows_install_command) : undefined }
   }
   const handleUpdateAgent=async()=>{
     try{

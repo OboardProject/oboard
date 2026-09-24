@@ -99,17 +99,20 @@ func main() {
 		fatal(errors.New("manifest release metadata is incomplete"))
 	}
 	required := map[string]string{
-		"oboard-agent-linux-amd64": "agent",
-		"oboard-agent-linux-arm64": "agent",
-		"oboard-sb-linux-amd64":    "sb",
-		"oboard-sb-linux-arm64":    "sb",
-		"oboard-realm-linux-amd64": "realm",
-		"oboard-realm-linux-arm64": "realm",
+		"oboard-agent-linux-amd64":   "agent",
+		"oboard-agent-linux-arm64":   "agent",
+		"oboard-sb-linux-amd64":      "sb",
+		"oboard-sb-linux-arm64":      "sb",
+		"oboard-realm-linux-amd64":   "realm",
+		"oboard-realm-linux-arm64":   "realm",
+		"oboard-agent-windows-amd64": "agent",
+		"oboard-sb-windows-amd64":    "sb",
+		"oboard-realm-windows-amd64": "realm",
 	}
 	seen := make(map[string]bool, len(required))
 	for _, file := range release.Files {
 		component, requiredFile := required[file.Name]
-		if !requiredFile || component != file.Component || file.OS != "linux" || (file.Arch != "amd64" && file.Arch != "arm64") || !safeName(file.Name) || file.Size <= 0 {
+		if !requiredFile || component != file.Component || file.Name != releaseAssetName(component, file.OS, file.Arch) || !safeName(file.Name) || file.Size <= 0 {
 			fatal(fmt.Errorf("invalid manifest file entry %q", file.Name))
 		}
 		if seen[file.Name] {
@@ -125,12 +128,18 @@ func main() {
 		}
 	}
 	if len(seen) != len(required) {
-		fatal(errors.New("manifest does not contain every required Linux Agent, kernel, and realm asset"))
+		fatal(errors.New("manifest does not contain every required Linux and Windows Agent, kernel, and realm asset"))
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	if err := encoder.Encode(release); err != nil {
 		fatal(err)
 	}
+}
+
+// releaseAssetName binds a manifest entry's declared platform to its file name,
+// so an entry cannot claim one platform while naming another's asset.
+func releaseAssetName(component, osName, arch string) string {
+	return "oboard-" + component + "-" + osName + "-" + arch
 }
 
 func safeName(name string) bool {

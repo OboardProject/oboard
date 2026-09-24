@@ -641,6 +641,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/subscription-relay/heartbeat", s.subscriptionRelayHeartbeat)
 	mux.HandleFunc("/api/v1/subscription-relay/uninstall", s.subscriptionRelayUninstall)
 	mux.HandleFunc("/install/agent.sh", s.agentInstallScript)
+	mux.HandleFunc("/install/agent.ps1", s.agentInstallPowerShell)
 	mux.HandleFunc("/install/agent-self-update.sh", s.agentSelfUpdateScript)
 	mux.HandleFunc("/install/subscription-relay.sh", s.subscriptionRelayInstallScript)
 	mux.HandleFunc("/downloads", notFound)
@@ -6225,8 +6226,19 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	command = strings.Replace(command, `"$OBOARD_ENROLL_TOKEN"`, shellSingleQuote(token), 1)
+	response := map[string]any{"enrollment_token": token, "install_command": command, "expires_at": expiresAt, "expires_in_seconds": int(enrollmentTokenTTL.Seconds())}
+	// The security-process layout is Linux-only, so a stealth server gets no
+	// Windows command.
+	if !srv.StealthEnabled {
+		base, err := s.publicBaseURL(r.Context())
+		if err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		response["windows_install_command"] = agentWindowsInstallCommandWithToken(base, token)
+	}
 	auditReq(s, r, "create", "enroll-token", fmt.Sprint(id))
-	write(w, 200, map[string]any{"enrollment_token": token, "install_command": command, "expires_at": expiresAt, "expires_in_seconds": int(enrollmentTokenTTL.Seconds())})
+	write(w, 200, response)
 }
 
 func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
@@ -18838,7 +18850,7 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	name := urlpath.Base(r.URL.Path)
 	switch name {
-	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64", "release-manifest.json", "release-manifest.json.sig", "oboard-subscription-relay-linux-amd64.tar.gz", "oboard-subscription-relay-linux-arm64.tar.gz", "subscription-relay-sha256s.txt":
+	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64", "oboard-agent-windows-amd64", "oboard-sb-windows-amd64", "oboard-realm-windows-amd64", "release-manifest.json", "release-manifest.json.sig", "oboard-subscription-relay-linux-amd64.tar.gz", "oboard-subscription-relay-linux-arm64.tar.gz", "subscription-relay-sha256s.txt":
 	default:
 		http.NotFound(w, r)
 		return

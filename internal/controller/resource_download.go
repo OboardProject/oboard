@@ -40,7 +40,7 @@ func resourceReleaseTag(releaseVersion, build string) string {
 func resourceGitHubURL(name string) string {
 	repo, releaseVersion, build := "OboardProject/oboard-agent", version.AgentVersion, version.AgentBuild
 	switch name {
-	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64":
+	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64", "oboard-agent-windows-amd64", "oboard-sb-windows-amd64", "oboard-realm-windows-amd64":
 	default:
 		return ""
 	}

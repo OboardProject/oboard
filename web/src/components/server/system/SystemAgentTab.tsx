@@ -10,10 +10,35 @@ function CopyButton({ value, label }:{ value:string; label?:string }){
   return <button type="button" className="ghost" onClick={async()=>{ const ok=await copyText(value); if(ok){setCopied(true); setTimeout(()=>setCopied(false),1500)}}}>{copied ? <Check size={14}/>: <Copy size={14}/>} {copied? '已复制': label||'复制'}</button>
 }
 
-export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent, disabled, disabledReason, notify }: { server: Server; expectedBuild?: string; onEnroll: ()=>Promise<string>; onUpdateAgent: ()=>Promise<void>; disabled?: boolean; disabledReason?:string; notify?:(m:string,t?:string)=>void }) {
+export type EnrollCommands = { command: string; windowsCommand?: string }
+
+const commandStyle: React.CSSProperties = {whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}
+
+function EnrollCommandBlocks({ commands }:{ commands: EnrollCommands }){
+  return <>
+    <div style={{marginTop:12}}>
+      {commands.windowsCommand ? <small className="muted">Linux · 在 root SSH 中执行</small> : null}
+      <pre style={commandStyle}>{commands.command}</pre>
+      <div style={{marginTop:8, display:'flex', gap:8}}>
+        <CopyButton value={commands.command} label="复制接入命令" />
+      </div>
+    </div>
+    {commands.windowsCommand ? (
+      <div style={{marginTop:12}}>
+        <small className="muted">Windows · 在“以管理员身份运行”的 PowerShell 中执行</small>
+        <pre style={commandStyle}>{commands.windowsCommand}</pre>
+        <div style={{marginTop:8, display:'flex', gap:8}}>
+          <CopyButton value={commands.windowsCommand} label="复制 Windows 接入命令" />
+        </div>
+      </div>
+    ) : null}
+  </>
+}
+
+export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent, disabled, disabledReason, notify }: { server: Server; expectedBuild?: string; onEnroll: ()=>Promise<EnrollCommands>; onUpdateAgent: ()=>Promise<void>; disabled?: boolean; disabledReason?:string; notify?:(m:string,t?:string)=>void }) {
   const isOnline = String(server.status||'').toLowerCase()==='online'
   const enrolled = Boolean(String(server.agent_id||'').trim())
-  const [command, setCommand]=useState('')
+  const [commands, setCommands]=useState<EnrollCommands|null>(null)
   const [loading, setLoading]=useState(false)
   const [updating, setUpdating]=useState(false)
   const currentBuild = String(server.agent_build||'').trim()
@@ -31,8 +56,7 @@ export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent,
     if(disabled) return
     setLoading(true)
     try{
-      const t = await onEnroll()
-      setCommand(t)
+      setCommands(await onEnroll())
     } catch(e:any){ notify?.(e?.message||String(e),'error') } finally{ setLoading(false) }
   }
   const handleUpdate=async()=>{
@@ -49,14 +73,7 @@ export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent,
           <p className="muted">需要在目标服务器执行接入命令以完成注册。</p>
           <div className="server-operation-card" style={{flexDirection:'column', alignItems:'stretch'}}>
             <button type="button" onClick={()=>void handleEnroll()} disabled={loading || disabled}>{loading? '生成中...':'生成接入命令'}</button>
-            {command ? (
-              <div style={{marginTop:12}}>
-                <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{command}</pre>
-                <div style={{marginTop:8, display:'flex', gap:8}}>
-                  <CopyButton value={command} label="复制接入命令" />
-                </div>
-              </div>
-            ) : null}
+            {commands ? <EnrollCommandBlocks commands={commands} /> : null}
             {disabled && <small className="muted">{disabledReason}</small>}
           </div>
         </section>
@@ -101,12 +118,7 @@ export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent,
         <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
           <button type="button" className="ghost" onClick={()=>void handleEnroll()} disabled={loading || disabled}><Terminal size={14}/> {loading? '生成中...':'重新生成接入 Token'}</button>
         </div>
-        {command ? (
-          <div style={{marginTop:12}}>
-            <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{command}</pre>
-            <CopyButton value={command} label="复制接入命令" />
-          </div>
-        ) : null}
+        {commands ? <EnrollCommandBlocks commands={commands} /> : null}
       </section>
     </div>
   )

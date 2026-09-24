@@ -16,6 +16,9 @@ RELEASE_FILES=(
   oboard-sb-linux-arm64
   oboard-realm-linux-amd64
   oboard-realm-linux-arm64
+  oboard-agent-windows-amd64
+  oboard-sb-windows-amd64
+  oboard-realm-windows-amd64
   release-manifest.json
   release-manifest.json.sig
 )
@@ -116,6 +119,8 @@ else
     if gh release download "$tag" --repo "$REPO" --dir "$staged" --clobber \
       --pattern 'oboard-agent-linux-*' --pattern 'oboard-sb-linux-*' \
       --pattern 'oboard-realm-linux-*' \
+      --pattern 'oboard-agent-windows-*' --pattern 'oboard-sb-windows-*' \
+      --pattern 'oboard-realm-windows-*' \
       --pattern release-manifest.json --pattern release-manifest.json.sig \
       && verify_release "$staged"; then
       promote_release "$staged"
