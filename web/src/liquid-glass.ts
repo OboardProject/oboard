@@ -40,6 +40,17 @@ export const LIQUID_GLASS_SELECTOR = [
   '.audit-console-tabs button.active',
   ':is(.node-mode-switch, .node-workspace-tabs) button.active',
   '.nav-item.active',
+  'button:not([class])[aria-pressed="true"]',
+  'button.ghost[aria-pressed="true"]',
+  '.task-category-filter > button[aria-pressed="true"]',
+  '.server-region-filter-trigger.is-active',
+  '.notification-type-toggle button.active',
+  '.controller-update-channel-toggle button.active',
+  '.controller-update-interval button.active',
+  '.age-policy-toggle button.active',
+  '.udp-mode-selector button.active',
+  '.automation-connect-segments button.active',
+  '.latency-pill-btn.active',
 ].join(', ')
 
 // Dense repeated rows would stack dozens of live backdrop filters; they keep

@@ -458,6 +458,88 @@
 }
 
 /* --------------------------------------------------------------------------
+   Selected toggles and filter chips. The standard themes mark the selection
+   with a solid accent fill; in glass it is an accent-tinted lens instead.
+   -------------------------------------------------------------------------- */
+:root:is([data-theme="glass"], [data-theme="glass-light"]) :is(.task-category-filter) {
+  display: inline-flex !important;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px !important;
+  gap: 3px !important;
+  background: var(--lg-track) !important;
+  border: 1px solid var(--lg-track-edge) !important;
+  border-radius: 22px !important;
+  box-shadow: var(--lg-track-inset) !important;
+}
+
+:root:is([data-theme="glass"], [data-theme="glass-light"]) .task-category-filter > button:not([aria-pressed="true"]) {
+  --lg-fill-now: transparent;
+  color: var(--lg-ink-soft) !important;
+  background: linear-gradient(var(--lg-fill-now), var(--lg-fill-now)) padding-box !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root:is([data-theme="glass"], [data-theme="glass-light"]) .task-category-filter > button:not([aria-pressed="true"]):hover:not(:disabled) {
+  --lg-fill-now: var(--lg-track);
+  color: var(--lg-ink) !important;
+  background: linear-gradient(var(--lg-fill-now), var(--lg-fill-now)) padding-box !important;
+  box-shadow: none !important;
+}
+
+:root:is([data-theme="glass"], [data-theme="glass-light"]) :is(
+  button:not([class])[aria-pressed="true"],
+  button.ghost[aria-pressed="true"],
+  .task-category-filter > button[aria-pressed="true"],
+  .server-region-filter-trigger.is-active,
+  .notification-type-toggle button.active,
+  .controller-update-channel-toggle button.active,
+  .controller-update-interval button.active,
+  .age-policy-toggle button.active,
+  .terminal-sidebar-actions .ghost.is-active,
+  .udp-mode-selector button.active,
+  .automation-connect-segments button.active,
+  .latency-pill-btn.active
+):not(:disabled) {
+  --lg-fill-now: color-mix(in srgb, var(--color-primary) 22%, var(--lg-fill-active));
+  color: var(--lg-ink) !important;
+  text-shadow: var(--lg-ink-shadow);
+  background:
+    linear-gradient(var(--lg-fill-now), var(--lg-fill-now)) padding-box,
+    var(--lg-rim) border-box !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-full) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(180%) !important;
+  backdrop-filter: var(--lg-backdrop-pre) var(--lg-refract,) var(--lg-backdrop-post) !important;
+  box-shadow:
+    inset 0 1px 0 var(--lg-crest),
+    inset 0 0 6px 0 var(--lg-fresnel),
+    0 0 0 0.5px color-mix(in srgb, var(--color-primary) 35%, var(--lg-outline)),
+    var(--lg-drop) !important;
+  transition: var(--lg-transition) !important;
+}
+
+:root:is([data-theme="glass"], [data-theme="glass-light"]) :is(
+  button:not([class])[aria-pressed="true"],
+  button.ghost[aria-pressed="true"],
+  .task-category-filter > button[aria-pressed="true"],
+  .server-region-filter-trigger.is-active,
+  .notification-type-toggle button.active,
+  .controller-update-channel-toggle button.active,
+  .controller-update-interval button.active,
+  .age-policy-toggle button.active,
+  .terminal-sidebar-actions .ghost.is-active,
+  .udp-mode-selector button.active,
+  .automation-connect-segments button.active,
+  .latency-pill-btn.active
+):not(:disabled) svg {
+  color: inherit !important;
+}
+
+/* --------------------------------------------------------------------------
    Sidebar navigation
    -------------------------------------------------------------------------- */
 :root:is([data-theme="glass"], [data-theme="glass-light"]) :is(.nav-item, .sidebar-footer-btn) {
