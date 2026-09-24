@@ -50,7 +50,7 @@ export function SignalEmptyState({
       </h4>
 
       {description && (
-        <div className="signal-empty-desc text-sm text-secondary max-w-md leading-relaxed mb-5">
+        <div className="signal-empty-desc text-sm text-muted-foreground max-w-md leading-relaxed mb-5">
           {description}
         </div>
       )}

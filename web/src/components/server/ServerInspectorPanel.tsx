@@ -152,7 +152,7 @@ export function ServerInspectorPanel({
         {/* CPU */}
         <div>
           <div className="flex justify-between text-xs mb-1">
-            <span className="flex items-center gap-1.5 text-secondary">
+            <span className="flex items-center gap-1.5 text-muted-foreground">
               <Cpu size={13} className="text-muted" /> CPU 使用率
             </span>
             <span className="font-mono font-medium text-foreground">{cpuPercent}%</span>
@@ -170,7 +170,7 @@ export function ServerInspectorPanel({
         {/* Memory */}
         <div>
           <div className="flex justify-between text-xs mb-1">
-            <span className="flex items-center gap-1.5 text-secondary">
+            <span className="flex items-center gap-1.5 text-muted-foreground">
               <Activity size={13} className="text-muted" /> 内存使用
             </span>
             <span className="font-mono font-medium text-foreground">
@@ -191,7 +191,7 @@ export function ServerInspectorPanel({
         {diskTotal > 0 && (
           <div>
             <div className="flex justify-between text-xs mb-1">
-              <span className="flex items-center gap-1.5 text-secondary">
+              <span className="flex items-center gap-1.5 text-muted-foreground">
                 <HardDrive size={13} className="text-muted" /> 磁盘使用
               </span>
               <span className="font-mono font-medium text-foreground">
@@ -231,33 +231,33 @@ export function ServerInspectorPanel({
         <div className="text-xs font-semibold text-muted uppercase tracking-wider">网络与接入</div>
         <dl className="grid grid-cols-1 gap-2 text-xs">
           <div className="flex items-center justify-between py-1 border-b border-border/50">
-            <dt className="text-secondary">公网 IPv4</dt>
+            <dt className="text-muted-foreground">公网 IPv4</dt>
             <dd className="font-mono text-foreground select-all">{server.public_ipv4 || '—'}</dd>
           </div>
           {server.public_ipv6 && (
             <div className="flex items-center justify-between py-1 border-b border-border/50">
-              <dt className="text-secondary">公网 IPv6</dt>
+              <dt className="text-muted-foreground">公网 IPv6</dt>
               <dd className="font-mono text-foreground truncate max-w-[200px] select-all" title={server.public_ipv6}>
                 {server.public_ipv6}
               </dd>
             </div>
           )}
           <div className="flex items-center justify-between py-1 border-b border-border/50">
-            <dt className="text-secondary">活跃连接数</dt>
+            <dt className="text-muted-foreground">活跃连接数</dt>
             <dd className="font-mono text-foreground">
               TCP {server.tcp_connection_count ?? '—'} / UDP {server.udp_connection_count ?? '—'}
             </dd>
           </div>
           <div className="flex items-center justify-between py-1 border-b border-border/50">
-            <dt className="text-secondary">Agent 版本</dt>
+            <dt className="text-muted-foreground">Agent 版本</dt>
             <dd className="font-mono text-foreground">{server.agent_version || '—'}</dd>
           </div>
           <div className="flex items-center justify-between py-1 border-b border-border/50">
-            <dt className="text-secondary">sing-box 核心</dt>
+            <dt className="text-muted-foreground">sing-box 核心</dt>
             <dd className="font-mono text-foreground">{server.sing_box_version || '—'}</dd>
           </div>
           <div className="flex items-center justify-between py-1 border-b border-border/50">
-            <dt className="text-secondary">系统平台</dt>
+            <dt className="text-muted-foreground">系统平台</dt>
             <dd className="text-foreground truncate max-w-[200px]" title={`${server.distro_name || server.os || ''} (${server.arch || ''})`}>
               {server.distro_name || server.os || '—'} {server.arch ? `· ${server.arch}` : ''}
             </dd>
@@ -270,7 +270,7 @@ export function ServerInspectorPanel({
         <button
           type="button"
           onClick={() => onAction('about', server)}
-          className="w-full flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-medium border border-border rounded-lg text-secondary hover:text-foreground hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 py-2 px-3 text-xs font-medium border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
         >
           <span>查看全部系统参数与技术指标</span>
           <ChevronRight size={14} />

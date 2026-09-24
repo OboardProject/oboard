@@ -1,3 +1,5 @@
+import { syncLiquidGlass } from './liquid-glass'
+
 export type ThemeName = 'light' | 'dark' | 'glass' | 'glass-light'
 export type ThemePreference = ThemeName | 'auto' | 'glass-auto'
 
@@ -113,6 +115,18 @@ export function applyAccentColorToDocument(color: string) {
   root.style.setProperty('--color-primary-light', `color-mix(in srgb, ${validColor} 12%, transparent)`)
   root.style.setProperty('--primary-soft', `color-mix(in srgb, ${validColor} 14%, transparent)`)
   root.style.setProperty('--primary-softer', `color-mix(in srgb, ${validColor} 6%, transparent)`)
+  root.style.setProperty('--accent-contrast', accentContrastColor(validColor))
+}
+
+// White text needs about 3:1 against a filled control; light accents such as
+// the gold preset get dark text instead.
+export function accentContrastColor(color: string): string {
+  const channel = (offset: number) => {
+    const value = Number.parseInt(normalizeAccentColor(color).slice(offset, offset + 2), 16) / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  }
+  const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+  return (1.05) / (luminance + 0.05) >= 3 ? '#ffffff' : '#111827'
 }
 
 const THEME_PAGE_BG: Record<ThemeName, string> = {
@@ -134,6 +148,7 @@ export function applyThemeToDocument(theme: ThemeName) {
     document.body.style.backgroundColor = pageBg
   }
   applyAccentColorToDocument(getAccentColor())
+  syncLiquidGlass(isGlassTheme(theme))
 }
 
 // Logical theme state for click coalescing (must track intended end-state).

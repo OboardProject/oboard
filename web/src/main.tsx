@@ -118,6 +118,7 @@ import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-bind
 import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
+import './styles/liquid-glass.css'
 import './components/proxy-path/ProxyCanvas.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
