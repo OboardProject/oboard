@@ -244,6 +244,7 @@ import {
 import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { dnsCandidateInput, parseDNSCandidate } from './dns-candidate'
+import { localizeDNSError } from './dns-errors'
 import { DNSResolverFields, dnsResolverDraft, dnsResolverPayload, isSharedDNSList } from './components/server/network/DNSResolverFields'
 import { latencyChartRequestPath, type LatencyChartResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
@@ -1575,6 +1576,8 @@ function localizeErrorMessage(message: unknown) {
   if (raw.startsWith('config_json.tls.reality.short_id:') || raw.startsWith('reality.short_id:')) return 'Reality Short ID 必须是 2 到 16 位偶数长度的十六进制字符串。'
   const planApplying = localizePlanChangeApplying(raw)
   if (planApplying) return planApplying
+  const dnsError = localizeDNSError(raw)
+  if (dnsError) return dnsError
   if (/timed out or was not allowed/i.test(raw) || /sctn-privacy-considerations/i.test(raw)) return '未完成通行密钥验证'
   return errorMessages[raw] || errorMessages[raw.toLowerCase()] || raw
 }

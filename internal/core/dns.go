@@ -335,7 +335,11 @@ func ValidateDNSList(v model.DNSList) error {
 			return fmt.Errorf("candidate[%d]: dns tag must be non-empty and unique", i)
 		}
 		seen[candidate.Tag] = true
-		if err := ValidateDNSCandidate(candidate); err != nil {
+		// A server's custom resolvers may be private or loopback addresses the
+		// server itself can reach (an intranet or local resolver); shared lists
+		// serve every server and stay public.
+		custom := v.OwnerServerID != 0
+		if err := validateDNSCandidate(candidate, custom); err != nil {
 			return fmt.Errorf("candidate[%d]: %w", i, err)
 		}
 		if v.Kind == model.DNSListEncrypted {
@@ -351,6 +355,9 @@ func ValidateDNSList(v model.DNSList) error {
 				return fmt.Errorf("candidate[%d]: bootstrap list only supports udp or tcp", i)
 			}
 			if net.ParseIP(strings.Trim(candidate.Server, "[]")) == nil {
+				if custom {
+					return fmt.Errorf("candidate[%d]: bootstrap server must be an IP literal", i)
+				}
 				return fmt.Errorf("candidate[%d]: bootstrap server must be a public IP literal", i)
 			}
 		}
@@ -377,13 +384,21 @@ func ValidateDNSAutoTest(v model.DNSAutoTestMode) error {
 }
 
 func ValidateDNSCandidate(c model.DNSCandidate) error {
+	return validateDNSCandidate(c, false)
+}
+
+func validateDNSCandidate(c model.DNSCandidate, allowPrivate bool) error {
 	if err := ValidateDNSTransport(c.Transport); err != nil {
 		return err
 	}
 	if err := ValidateSafeHost(c.Server); err != nil {
 		return fmt.Errorf("dns server: %w", err)
 	}
-	if err := rejectPrivateDNSHost(c.Server); err != nil {
+	if allowPrivate {
+		if err := rejectUnroutableDNSHost(c.Server); err != nil {
+			return err
+		}
+	} else if err := rejectPrivateDNSHost(c.Server); err != nil {
 		return err
 	}
 	if c.Port != 0 {
@@ -421,6 +436,15 @@ func ValidateDNSCandidates(items []model.DNSCandidate) error {
 		if err := ValidateDNSCandidate(candidate); err != nil {
 			return fmt.Errorf("candidate[%d]: %w", i, err)
 		}
+	}
+	return nil
+}
+
+// rejectUnroutableDNSHost rejects only addresses no resolver can answer from.
+func rejectUnroutableDNSHost(host string) error {
+	ip := net.ParseIP(strings.Trim(strings.TrimSpace(host), "[]"))
+	if ip != nil && (ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalMulticast()) {
+		return errors.New("dns server must be a unicast address")
 	}
 	return nil
 }

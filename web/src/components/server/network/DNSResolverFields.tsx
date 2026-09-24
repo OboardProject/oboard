@@ -86,7 +86,7 @@ export function DNSResolverFields({ draft, setDraft, lists, policy, disabled }: 
       {draft.encryptedListID === 0 && <small className="muted">服务器将只用普通解析查询域名，查询内容在链路上不加密。</small>}
       {draft.encryptedListID === CUSTOM_DNS_LIST && <>
         <textarea rows={3} value={draft.encryptedCustom} onChange={event => setDraft({ ...draft, encryptedCustom: event.target.value })} disabled={disabled} placeholder={'https://dns.example.com/dns-query\ntls://1.1.1.1'} aria-label="自定义加密解析服务" spellCheck={false} />
-        <small className="muted">每行一个，支持 DoH（https://）、DoT（tls://）和 DoQ（quic://），按顺序使用，最多 32 个。</small>
+        <small className="muted">每行一个，支持 DoH（https://）、DoT（tls://）和 DoQ（quic://），可用内网地址，按顺序使用，最多 32 个。</small>
       </>}
     </FormField>
     <FormField label="基础解析服务" full>
@@ -96,7 +96,7 @@ export function DNSResolverFields({ draft, setDraft, lists, policy, disabled }: 
       </Select>
       {draft.bootstrapListID === CUSTOM_DNS_LIST && <>
         <textarea rows={3} value={draft.bootstrapCustom} onChange={event => setDraft({ ...draft, bootstrapCustom: event.target.value })} disabled={disabled} placeholder={'223.5.5.5\ntcp://8.8.8.8'} aria-label="自定义基础解析服务" spellCheck={false} />
-        <small className="muted">每行一个公网 IP，默认 UDP 53，可写 tcp:// 或自定义端口，按顺序使用，最多 32 个。</small>
+        <small className="muted">每行一个 IP，可填内网或本机地址，默认 UDP 53，可写 tcp:// 或自定义端口，按顺序使用，最多 32 个。</small>
       </>}
     </FormField>
   </>

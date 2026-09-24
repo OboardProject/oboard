@@ -202,6 +202,29 @@ func TestValidateDNSListRejectsWrongKindAndPrivateBootstrap(t *testing.T) {
 	}
 }
 
+func TestServerCustomDNSListAllowsPrivateResolvers(t *testing.T) {
+	bootstrap := ServerDNSCustomList(7, model.DNSListBootstrap, ServerDNSCustomCandidates([]model.DNSCandidate{
+		{Transport: model.DNSTransportUDP, Server: "10.10.10.10", Port: 53},
+		{Transport: model.DNSTransportTCP, Server: "127.0.0.1", Port: 5353},
+		{Transport: model.DNSTransportUDP, Server: "fd00::53", Port: 53},
+	}))
+	if err := ValidateDNSList(bootstrap); err != nil {
+		t.Fatalf("custom private bootstrap resolvers rejected: %v", err)
+	}
+	encrypted := ServerDNSCustomList(7, model.DNSListEncrypted, ServerDNSCustomCandidates([]model.DNSCandidate{
+		{Transport: model.DNSTransportDoT, Server: "192.168.1.53", Port: 853},
+	}))
+	if err := ValidateDNSList(encrypted); err != nil {
+		t.Fatalf("custom private encrypted resolver rejected: %v", err)
+	}
+	for _, server := range []string{"0.0.0.0", "224.0.0.1", "::"} {
+		unroutable := ServerDNSCustomList(7, model.DNSListBootstrap, []model.DNSCandidate{{Tag: "x", Transport: model.DNSTransportUDP, Server: server, Port: 53}})
+		if err := ValidateDNSList(unroutable); err == nil {
+			t.Fatalf("custom resolver %s must be rejected", server)
+		}
+	}
+}
+
 func TestValidateDNSCandidateAllowsAtSignInDoHPath(t *testing.T) {
 	candidate := model.DNSCandidate{
 		Tag:       "novaxns",
