@@ -1820,14 +1820,20 @@ func (s *Server) cachedStorageDiagnostics(ctx context.Context) (store.StorageDia
 	return diagnostics, nil
 }
 
-func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool, bool, model.TimeCorrectionMode) {
+// agentInstallTuningSettings returns the panel-wide BBR + FQ and TCP tuning
+// switches that every issued Linux install command carries.
+func agentInstallTuningSettings(settings map[string]string) (bbr, tcpTuning bool) {
+	return settingBool(settings, settingServerDefaultBBREnabled, true), settingBool(settings, settingServerDefaultTCPTuningEnabled, false)
+}
+
+func serverCreationDefaults(settings map[string]string) (model.MTUMode, model.TimeCorrectionMode) {
 	mode := model.MTUMode(strings.ToLower(strings.TrimSpace(settings[settingServerDefaultMTUMode])))
 	switch mode {
 	case model.MTUModeDisabled, model.MTUModeDetect, model.MTUModeApply:
 	default:
 		mode = model.MTUModeDetect
 	}
-	return mode, settingBool(settings, settingServerDefaultBBREnabled, true), settingBool(settings, settingServerDefaultTCPTuningEnabled, false), normalizeControllerTimeCorrectionMode(model.TimeCorrectionMode(settings[settingServerDefaultTimeCorrection]))
+	return mode, normalizeControllerTimeCorrectionMode(model.TimeCorrectionMode(settings[settingServerDefaultTimeCorrection]))
 }
 
 func normalizeControllerTimeCorrectionMode(mode model.TimeCorrectionMode) model.TimeCorrectionMode {
@@ -2080,8 +2086,8 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		mtuMode, bbrEnabled, tcpTuningEnabled, timeMode := serverCreationDefaults(settings)
-		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled, "tcp_tuning_enabled": tcpTuningEnabled, "time_correction_mode": timeMode, "public_port_range_start": core.DefaultPublicPortRangeStart, "public_port_range_end": core.DefaultPublicPortRangeEnd, "internal_port_range_start": core.DefaultInternalPortRangeStart, "internal_port_range_end": core.DefaultInternalPortRangeEnd}
+		mtuMode, timeMode := serverCreationDefaults(settings)
+		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "time_correction_mode": timeMode, "public_port_range_start": core.DefaultPublicPortRangeStart, "public_port_range_end": core.DefaultPublicPortRangeEnd, "internal_port_range_start": core.DefaultInternalPortRangeStart, "internal_port_range_end": core.DefaultInternalPortRangeEnd}
 		return nil
 	}
 	addUsers := func() error {
@@ -3907,8 +3913,6 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			model.Server
 			MTUMode                *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled             *bool                     `json:"bbr_enabled"`
-			TCPTuningEnabled       *bool                     `json:"tcp_tuning_enabled"`
 			StealthEnabled         *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled *bool                     `json:"resource_history_enabled"`
@@ -3935,21 +3939,11 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		defaultMTU, defaultBBR, defaultTCPTuning, defaultTimeMode := serverCreationDefaults(settings)
+		defaultMTU, defaultTimeMode := serverCreationDefaults(settings)
 		if input.MTUMode == nil {
 			v.MTUMode = defaultMTU
 		} else {
 			v.MTUMode = *input.MTUMode
-		}
-		if input.BBREnabled == nil {
-			v.BBREnabled = defaultBBR
-		} else {
-			v.BBREnabled = *input.BBREnabled
-		}
-		if input.TCPTuningEnabled == nil {
-			v.TCPTuningEnabled = defaultTCPTuning
-		} else {
-			v.TCPTuningEnabled = *input.TCPTuningEnabled
 		}
 		if input.StealthEnabled != nil {
 			v.StealthEnabled = *input.StealthEnabled
@@ -4325,8 +4319,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			model.Server
 			MTUMode                  *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled               *bool                     `json:"bbr_enabled"`
-			TCPTuningEnabled         *bool                     `json:"tcp_tuning_enabled"`
 			StealthEnabled           *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled   *bool                     `json:"resource_history_enabled"`
@@ -4375,16 +4367,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.MTUMode = current.MTUMode
 		} else {
 			v.MTUMode = *input.MTUMode
-		}
-		if input.BBREnabled == nil {
-			v.BBREnabled = current.BBREnabled
-		} else {
-			v.BBREnabled = *input.BBREnabled
-		}
-		if input.TCPTuningEnabled == nil {
-			v.TCPTuningEnabled = current.TCPTuningEnabled
-		} else {
-			v.TCPTuningEnabled = *input.TCPTuningEnabled
 		}
 		if input.StealthEnabled == nil {
 			v.StealthEnabled = current.StealthEnabled
@@ -6211,7 +6193,7 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, store.ErrServerDeleting, http.StatusConflict)
 		return
 	}
-	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.BBREnabled, srv.TCPTuningEnabled, srv.StealthEnabled)
+	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.StealthEnabled)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return

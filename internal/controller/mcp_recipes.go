@@ -261,7 +261,7 @@ func hasInboundCreateParams(params map[string]any) bool {
 func hasServerManageParams(params map[string]any) bool {
 	for _, key := range []string{
 		"changes", "name", "server.name", "ip_stack", "server.ip_stack", "listen_ip", "server.listen_ip", "listen_mode", "udp_inbound_mode",
-		"mtu_mode", "mtu_value", "mtu_probe_host", "server.mtu_probe_host", "mtu_probe_port", "server.mtu_probe_port", "mtu_overhead_bytes", "server.mtu_overhead_bytes", "bbr_enabled", "server.bbr_enabled", "tcp_tuning_enabled", "server.tcp_tuning_enabled", "time_correction_mode", "server.time_correction_mode", "entry_address", "server.entry_address", "entry_ip_mode", "server.entry_ip_mode",
+		"mtu_mode", "mtu_value", "mtu_probe_host", "server.mtu_probe_host", "mtu_probe_port", "server.mtu_probe_port", "mtu_overhead_bytes", "server.mtu_overhead_bytes", "time_correction_mode", "server.time_correction_mode", "entry_address", "server.entry_address", "entry_ip_mode", "server.entry_ip_mode",
 		"region_code", "server.region_code", "region_mode", "server.region_mode", "port_range_start", "server.port_range_start", "port_range_end", "server.port_range_end", "internal_port_range_start", "server.internal_port_range_start",
 		"internal_port_range_end", "server.internal_port_range_end", "connection_audit_enabled", "server.connection_audit_enabled", "resource_history_enabled", "server.resource_history_enabled",
 		"offline_notify_enabled", "server.offline_notify_enabled", "offline_after_seconds", "server.offline_after_seconds", "expires_at", "server.expires_at", "clear_expires_at", "server.clear_expires_at",
@@ -366,10 +366,6 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 		"server.mtu_probe_port":                 "mtu_probe_port",
 		"mtu_overhead_bytes":                    "mtu_overhead_bytes",
 		"server.mtu_overhead_bytes":             "mtu_overhead_bytes",
-		"bbr_enabled":                           "bbr_enabled",
-		"server.bbr_enabled":                    "bbr_enabled",
-		"tcp_tuning_enabled":                    "tcp_tuning_enabled",
-		"server.tcp_tuning_enabled":             "tcp_tuning_enabled",
 		"connection_audit_enabled":              "connection_audit_enabled",
 		"server.connection_audit_enabled":       "connection_audit_enabled",
 		"time_correction_mode":                  "time_correction_mode",
@@ -422,20 +418,14 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 	if region != "" {
 		server["region_code"] = region
 	}
-	if containsAnyFold(input.Goal, "关闭 bbr", "禁用 bbr", "不启用 bbr", "disable bbr", "without bbr", "no bbr") {
-		server["bbr_enabled"] = false
-	} else if containsAnyFold(input.Goal, "开启 bbr", "打开 bbr", "启用 bbr", "enable bbr", "with bbr") {
-		server["bbr_enabled"] = true
-	}
 	defaults, err := s.panelServerFormDefaults(ctx)
 	if err != nil {
 		return nil, err
 	}
 	fillServerMapDefaults(server, defaults)
 	issueToken := taskBoolParam(input.Params, defaults.IssueEnrollmentToken, "issue_enrollment_token")
-	bbrEnabled, _ := server["bbr_enabled"].(bool)
 	operation := mcpOperationRef{Capability: "servers.onboard", Input: map[string]any{"server": server, "issue_enrollment_token": issueToken}}
-	return &mcpPreparedRecipe{Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "onboard_server", "server_name": name, "region_code": region, "ip_stack": ipStack, "bbr_enabled": bbrEnabled, "requires_external_install": true}, Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}}}, nil
+	return &mcpPreparedRecipe{Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "onboard_server", "server_name": name, "region_code": region, "ip_stack": ipStack, "requires_external_install": true}, Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}}}, nil
 }
 
 func (s *Server) prepareExistingServerEnrollmentRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput, existing []model.Server) (*mcpPreparedRecipe, error) {
@@ -535,17 +525,11 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 			changes[key] = value
 		}
 	}
-	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_ip": "listen_ip", "server.listen_ip": "listen_ip", "listen_mode": "listen_mode", "server.listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "mtu_probe_host": "mtu_probe_host", "server.mtu_probe_host": "mtu_probe_host", "mtu_probe_port": "mtu_probe_port", "server.mtu_probe_port": "mtu_probe_port", "mtu_overhead_bytes": "mtu_overhead_bytes", "server.mtu_overhead_bytes": "mtu_overhead_bytes", "bbr_enabled": "bbr_enabled", "server.bbr_enabled": "bbr_enabled", "tcp_tuning_enabled": "tcp_tuning_enabled", "server.tcp_tuning_enabled": "tcp_tuning_enabled", "time_correction_mode": "time_correction_mode", "server.time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "server.entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "server.entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "server.region_code": "region_code", "region_mode": "region_mode", "server.region_mode": "region_mode", "port_range_start": "port_range_start", "server.port_range_start": "port_range_start", "port_range_end": "port_range_end", "server.port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "server.internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "server.internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "server.connection_audit_enabled": "connection_audit_enabled", "resource_history_enabled": "resource_history_enabled", "server.resource_history_enabled": "resource_history_enabled", "offline_notify_enabled": "offline_notify_enabled", "server.offline_notify_enabled": "offline_notify_enabled", "offline_after_seconds": "offline_after_seconds", "server.offline_after_seconds": "offline_after_seconds", "expires_at": "expires_at", "server.expires_at": "expires_at", "clear_expires_at": "clear_expires_at", "server.clear_expires_at": "clear_expires_at", "auto_renew_enabled": "auto_renew_enabled", "server.auto_renew_enabled": "auto_renew_enabled", "renewal_cycle": "renewal_cycle", "server.renewal_cycle": "renewal_cycle", "expiry_notify_enabled": "expiry_notify_enabled", "server.expiry_notify_enabled": "expiry_notify_enabled", "latency_probe_enabled": "latency_probe_enabled", "latency_probe_mode": "latency_probe_mode", "latency_probe_public_target": "latency_probe_public_target", "latency_probe_interval_seconds": "latency_probe_interval_seconds", "latency_probe_sample_count": "latency_probe_sample_count", "latency_probe_max_targets": "latency_probe_max_targets", "monitoring_target_task_id": "monitoring_target_task_id", "display_tags": "display_tags", "server.display_tags": "display_tags", "authorization_fast_lane": "authorization_fast_lane", "runtime_users_enabled": "runtime_users_enabled", "stealth_enabled": "stealth_enabled", "service_start_at": "service_start_at", "clear_service_start_at": "clear_service_start_at", "traffic_reset_mode": "traffic_reset_mode", "traffic_reset_day": "traffic_reset_day", "traffic_limit_bytes": "traffic_limit_bytes"})
+	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_ip": "listen_ip", "server.listen_ip": "listen_ip", "listen_mode": "listen_mode", "server.listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "mtu_probe_host": "mtu_probe_host", "server.mtu_probe_host": "mtu_probe_host", "mtu_probe_port": "mtu_probe_port", "server.mtu_probe_port": "mtu_probe_port", "mtu_overhead_bytes": "mtu_overhead_bytes", "server.mtu_overhead_bytes": "mtu_overhead_bytes", "time_correction_mode": "time_correction_mode", "server.time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "server.entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "server.entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "server.region_code": "region_code", "region_mode": "region_mode", "server.region_mode": "region_mode", "port_range_start": "port_range_start", "server.port_range_start": "port_range_start", "port_range_end": "port_range_end", "server.port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "server.internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "server.internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "server.connection_audit_enabled": "connection_audit_enabled", "resource_history_enabled": "resource_history_enabled", "server.resource_history_enabled": "resource_history_enabled", "offline_notify_enabled": "offline_notify_enabled", "server.offline_notify_enabled": "offline_notify_enabled", "offline_after_seconds": "offline_after_seconds", "server.offline_after_seconds": "offline_after_seconds", "expires_at": "expires_at", "server.expires_at": "expires_at", "clear_expires_at": "clear_expires_at", "server.clear_expires_at": "clear_expires_at", "auto_renew_enabled": "auto_renew_enabled", "server.auto_renew_enabled": "auto_renew_enabled", "renewal_cycle": "renewal_cycle", "server.renewal_cycle": "renewal_cycle", "expiry_notify_enabled": "expiry_notify_enabled", "server.expiry_notify_enabled": "expiry_notify_enabled", "latency_probe_enabled": "latency_probe_enabled", "latency_probe_mode": "latency_probe_mode", "latency_probe_public_target": "latency_probe_public_target", "latency_probe_interval_seconds": "latency_probe_interval_seconds", "latency_probe_sample_count": "latency_probe_sample_count", "latency_probe_max_targets": "latency_probe_max_targets", "monitoring_target_task_id": "monitoring_target_task_id", "display_tags": "display_tags", "server.display_tags": "display_tags", "authorization_fast_lane": "authorization_fast_lane", "runtime_users_enabled": "runtime_users_enabled", "stealth_enabled": "stealth_enabled", "service_start_at": "service_start_at", "clear_service_start_at": "clear_service_start_at", "traffic_reset_mode": "traffic_reset_mode", "traffic_reset_day": "traffic_reset_day", "traffic_limit_bytes": "traffic_limit_bytes"})
 	if _, ok := changes["ip_stack"]; !ok {
 		if value := inferredIPStack(input.Goal); value != "" {
 			changes["ip_stack"] = value
 		}
-	}
-	if containsAnyFold(input.Goal, "开启 bbr", "打开 bbr", "enable bbr") {
-		changes["bbr_enabled"] = true
-	}
-	if containsAnyFold(input.Goal, "关闭 bbr", "disable bbr") {
-		changes["bbr_enabled"] = false
 	}
 	if len(changes) == 0 {
 		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "changes", "type": "object", "reason": "未识别到要修改的服务器设置"}}}, nil

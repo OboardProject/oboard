@@ -102,7 +102,7 @@ func (s *Server) issueServerEnrollmentToken(ctx context.Context, serverID int64)
 
 func enrollmentServerView(srv model.Server) map[string]any {
 	return map[string]any{
-		"id": srv.ID, "name": srv.Name, "bbr_enabled": srv.BBREnabled, "tcp_tuning_enabled": srv.TCPTuningEnabled, "stealth_enabled": srv.StealthEnabled,
+		"id": srv.ID, "name": srv.Name, "stealth_enabled": srv.StealthEnabled,
 		"agent_connected": srv.AgentID != "", "status": srv.Status,
 	}
 }
@@ -141,11 +141,19 @@ func agentInstallCommand(baseURL, bbrValue, tcpTuningValue, stealthValue string)
 		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
 }
 
-func (s *Server) agentEnrollmentCommand(ctx context.Context, bbr, tcpTuning, stealth bool) (string, map[string]any, error) {
+// agentEnrollmentCommand renders the Linux install command. BBR + FQ and TCP
+// tuning are panel-wide switches, so every issued command reads the current
+// settings instead of a per-server choice.
+func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool) (string, map[string]any, error) {
 	base, err := s.publicBaseURL(ctx)
 	if err != nil {
 		return "", nil, err
 	}
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	bbr, tcpTuning := agentInstallTuningSettings(settings)
 	bbrValue, tcpTuningValue, stealthValue := agentInstallBBRValue(bbr), agentInstallTCPTuningValue(tcpTuning), agentInstallStealthValue(stealth)
 	command := agentInstallCommand(base, bbrValue, tcpTuningValue, stealthValue)
 	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_TCP_TUNING": tcpTuningValue, "OBOARD_INSTALL_STEALTH": stealthValue}

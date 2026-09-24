@@ -282,7 +282,6 @@ function server(patch: Partial<Server>): Server {
     mtu_probe_host: '',
     mtu_probe_port: 0,
     mtu_overhead_bytes: 0,
-    bbr_enabled: false,
     port_range_start: 10000,
     port_range_end: 20000,
     internal_port_range_start: 30000,

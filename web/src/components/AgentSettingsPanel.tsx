@@ -222,14 +222,16 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
         <SettingsSwitchRow label="优先从 GitHub 下载" description="开启后优先从 GitHub 下载，无法下载时改用主控。" checked={data.settings?.resource_download_source === 'github'} onChange={checked => void autoSaveSetting({ resource_download_source: checked ? 'github' : 'controller' }, '资源下载来源已保存')} disabled={Boolean(savingKey)} ariaLabel="优先从 GitHub 下载资源" />
         <SettingsSwitchRow label="中国大陆服务器优先从主控下载" description="中国大陆服务器固定从主控下载，其他服务器使用上方设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆服务器优先从主控下载" />
       </SettingsGroup>
+      <SettingsGroup title="网络优化" description="统一作用于所有服务器，在首次安装 Agent 时执行；已安装的服务器需重新安装才会生效。">
+        <SettingsSwitchRow label="BBR + FQ" description="在支持的 Linux 节点上启用 BBR 与 FQ 网络优化，失败不影响安装。" checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="BBR + FQ" />
+        <SettingsSwitchRow label="TCP 调优" description="写入固定的 TCP/UDP 缓冲区与转发参数，当前系统不支持的项自动跳过。" checked={serverDefaultTCPTuningEnabled} onChange={handleTCPTuningChange} disabled={Boolean(savingKey)} ariaLabel="TCP 调优" />
+      </SettingsGroup>
       <SettingsGroup title="新服务器默认值" description="创建服务器时自动带入，可在创建窗口中单独修改。">
         <SettingsRow label="MTU" description="根据节点网络环境检测 MTU，并决定是否自动应用检测结果。">
           <Select aria-label="MTU" variant="segmented" value={serverDefaultMTUMode} onChange={handleMTUChange} disabled={Boolean(savingKey)}>
             {mtuModes.map(mode => <option key={mode} value={mode}>{mtuLabels[mode] || mode}</option>)}
           </Select>
         </SettingsRow>
-        <SettingsSwitchRow label="BBR + FQ" description="在支持的 Linux 节点上启用 BBR 与 FQ 网络优化。" checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="新服务器默认启用 BBR + FQ" />
-        <SettingsSwitchRow label="TCP 调优" description="安装 Agent 时写入固定的 TCP/UDP 缓冲区与转发参数，当前系统不支持的项自动跳过。" checked={serverDefaultTCPTuningEnabled} onChange={handleTCPTuningChange} disabled={Boolean(savingKey)} ariaLabel="新服务器默认启用 TCP 调优" />
         <SettingsRow label="时间校准" description="选择服务器校准时间的方式。">
           <Select variant="segmented" value={serverDefaultTimeCorrectionMode} onChange={handleTimeCorrectionChange} disabled={Boolean(savingKey)} aria-label="时间校准模式">
             <option value="off">关闭</option><option value="auto">自动</option><option value="ntp">逻辑校时</option>

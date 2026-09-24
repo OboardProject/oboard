@@ -281,7 +281,7 @@ var settingsAutomationFields = map[string]bool{
 	"audit_action": true, "traffic_timezone": true,
 	"subscription_age_policy": true, "subscription_always_use_domain_host": true, "subscription_custom_path_mode": true,
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
-	"server_default_mtu_mode": true, "server_default_bbr_enabled": true,
+	"server_default_mtu_mode": true, "server_default_bbr_enabled": true, "server_default_tcp_tuning_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
 	"server_monitoring_retention_days":          true,
 	"notification_server_offline_after_seconds": true,
@@ -633,6 +633,11 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	}
 	if value, ok := fields["server_default_bbr_enabled"]; ok {
 		if err := setBool(settingServerDefaultBBREnabled, value); err != nil {
+			return nil, err
+		}
+	}
+	if value, ok := fields["server_default_tcp_tuning_enabled"]; ok {
+		if err := setBool(settingServerDefaultTCPTuningEnabled, value); err != nil {
 			return nil, err
 		}
 	}

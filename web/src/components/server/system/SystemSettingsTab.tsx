@@ -12,8 +12,6 @@ function formatTimeOffset(ms:number){
 }
 
 export function SystemSettingsTab({ server, onSave, onCheckTime, disabled, disabledReason }: { server: Server; onSave:(patch:any)=>Promise<void>; onCheckTime?:()=>Promise<void>; disabled?:boolean; disabledReason?:string }) {
-  const [bbr, setBbr]=useState(Boolean(server.bbr_enabled))
-  const [tcpTuning, setTcpTuning]=useState(Boolean(server.tcp_tuning_enabled))
   const [mode, setMode]=useState((server.time_correction_mode||'off') as string)
   const [audit, setAudit]=useState(Boolean(server.connection_audit_enabled))
   const [saving, setSaving]=useState(false)
@@ -23,7 +21,7 @@ export function SystemSettingsTab({ server, onSave, onCheckTime, disabled, disab
     if(saving|| disabled) return
     setSaving(true)
     try{
-      await onSave({ bbr_enabled: bbr, tcp_tuning_enabled: tcpTuning, time_correction_mode: mode, connection_audit_enabled: audit })
+      await onSave({ time_correction_mode: mode, connection_audit_enabled: audit })
     } finally{ setSaving(false) }
   }
 
@@ -46,16 +44,6 @@ export function SystemSettingsTab({ server, onSave, onCheckTime, disabled, disab
 
   return (
     <div className="server-system-settings-tab">
-      <section className="server-detail-section">
-        <h3>性能</h3>
-        <FormField label="BBR + FQ" hint="仅在首次 Agent 安装时生效，切换后不会立即修改内核">
-          <Switch checked={bbr} onChange={setBbr} disabled={disabled} ariaLabel="BBR" />
-        </FormField>
-        <FormField label="TCP 调优" hint="仅在首次 Agent 安装时写入，当前系统不支持的参数会自动跳过">
-          <Switch checked={tcpTuning} onChange={setTcpTuning} disabled={disabled} ariaLabel="TCP 调优" />
-        </FormField>
-      </section>
-
       <section className="server-detail-section">
         <h3>时间</h3>
         <FormField label="时间校正模式" hint="自动：优先系统校时；逻辑校时：不修改系统时钟">

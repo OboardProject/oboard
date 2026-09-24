@@ -29,8 +29,6 @@ type ServerDTO struct {
 	MTUProbeHost                string                     `json:"mtu_probe_host"`
 	MTUProbePort                int                        `json:"mtu_probe_port"`
 	MTUOverheadBytes            int                        `json:"mtu_overhead_bytes"`
-	BBREnabled                  bool                       `json:"bbr_enabled"`
-	TCPTuningEnabled            bool                       `json:"tcp_tuning_enabled"`
 	PortRangeStart              int                        `json:"port_range_start"`
 	PortRangeEnd                int                        `json:"port_range_end"`
 	InternalPortRangeStart      int                        `json:"internal_port_range_start"`
@@ -258,7 +256,7 @@ func serverDTO(item model.Server) ServerDTO {
 		PublicIPv6: item.PublicIPv6, InterfaceIPv6: item.InterfaceIPv6, IPStack: item.IPStack,
 		ListenIP: item.ListenIP, ListenMode: item.ListenMode, UDPInboundMode: item.UDPInboundMode,
 		MTUMode: item.MTUMode, MTUValue: item.MTUValue, MTUProbeHost: item.MTUProbeHost,
-		MTUProbePort: item.MTUProbePort, MTUOverheadBytes: item.MTUOverheadBytes, BBREnabled: item.BBREnabled, TCPTuningEnabled: item.TCPTuningEnabled,
+		MTUProbePort: item.MTUProbePort, MTUOverheadBytes: item.MTUOverheadBytes,
 		PortRangeStart: item.PortRangeStart, PortRangeEnd: item.PortRangeEnd,
 		InternalPortRangeStart: item.InternalPortRangeStart, InternalPortRangeEnd: item.InternalPortRangeEnd,
 		PortPolicyRevision: item.PortPolicyRevision, AgentConnected: item.AgentID != "",

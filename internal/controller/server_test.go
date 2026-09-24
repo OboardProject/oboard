@@ -1306,8 +1306,11 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 
 	initialPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
 	initialDefaults := initialPage["server_creation_defaults"].(map[string]any)
-	if initialDefaults["mtu_mode"] != "detect" || initialDefaults["bbr_enabled"] != true {
+	if initialDefaults["mtu_mode"] != "detect" {
 		t.Fatalf("initial server creation defaults = %#v", initialDefaults)
+	}
+	if _, ok := initialDefaults["bbr_enabled"]; ok {
+		t.Fatalf("install tuning is a panel-wide setting, not a server default: %#v", initialDefaults)
 	}
 	initialCreated := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "initial-server"}, http.StatusCreated)
 	initialID := int64(initialCreated["server"].(map[string]any)["id"].(float64))
@@ -1315,22 +1318,19 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initialServer.MTUMode != model.MTUModeDetect || !initialServer.BBREnabled {
+	if initialServer.MTUMode != model.MTUModeDetect {
 		t.Fatalf("initial server policy = %#v", initialServer)
 	}
 
-	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
-		"server_default_mtu_mode":    "apply",
-		"server_default_bbr_enabled": false,
-	}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_mtu_mode": "apply"}, http.StatusOK)
 	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
 	defaults := page["server_creation_defaults"].(map[string]any)
-	if defaults["mtu_mode"] != "apply" || defaults["bbr_enabled"] != false {
+	if defaults["mtu_mode"] != "apply" {
 		t.Fatalf("server creation defaults = %#v", defaults)
 	}
 	proxyPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
 	proxyDefaults := proxyPage["server_creation_defaults"].(map[string]any)
-	if proxyDefaults["mtu_mode"] != "apply" || proxyDefaults["bbr_enabled"] != false {
+	if proxyDefaults["mtu_mode"] != "apply" {
 		t.Fatalf("proxy-path server creation defaults = %#v", proxyDefaults)
 	}
 
@@ -1340,23 +1340,52 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaultServer.MTUMode != model.MTUModeApply || defaultServer.BBREnabled {
+	if defaultServer.MTUMode != model.MTUModeApply {
 		t.Fatalf("default server policy = %#v", defaultServer)
 	}
 
-	overridden := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{
-		"name": "override-server", "mtu_mode": "disabled", "bbr_enabled": true,
-	}, http.StatusCreated)
+	overridden := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "override-server", "mtu_mode": "disabled"}, http.StatusCreated)
 	overrideID := int64(overridden["server"].(map[string]any)["id"].(float64))
 	overrideServer, err := db.GetServer(ctx, overrideID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overrideServer.MTUMode != model.MTUModeDisabled || !overrideServer.BBREnabled {
+	if overrideServer.MTUMode != model.MTUModeDisabled {
 		t.Fatalf("explicit server policy = %#v", overrideServer)
 	}
 
 	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_mtu_mode": "always"}, http.StatusBadRequest)
+}
+
+// TestAgentInstallCommandUsesPanelWideTuningSettings verifies that every
+// issued install command, including a re-issue for an existing server, carries
+// the current panel-wide BBR + FQ and TCP tuning switches.
+func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "tuning-server"}, http.StatusCreated)
+	path := fmt.Sprintf("/api/v1/ui/servers/%d/enroll-token", int64(created["server"].(map[string]any)["id"].(float64)))
+
+	command := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='1'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
+		t.Fatalf("fresh panel defaults not rendered: %s", command)
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_enabled": false, "server_default_tcp_tuning_enabled": true}, http.StatusOK)
+	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
+		t.Fatalf("panel-wide switches not applied to re-issued command: %s", command)
+	}
 }
 
 func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {

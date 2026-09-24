@@ -30,8 +30,6 @@ type serverUpdateChanges struct {
 	MTUProbeHost             *string                   `json:"mtu_probe_host,omitempty"`
 	MTUProbePort             *int                      `json:"mtu_probe_port,omitempty"`
 	MTUOverheadBytes         *int                      `json:"mtu_overhead_bytes,omitempty"`
-	BBREnabled               *bool                     `json:"bbr_enabled,omitempty"`
-	TCPTuningEnabled         *bool                     `json:"tcp_tuning_enabled,omitempty"`
 	PortRangeStart           *int                      `json:"port_range_start,omitempty"`
 	PortRangeEnd             *int                      `json:"port_range_end,omitempty"`
 	InternalPortRangeStart   *int                      `json:"internal_port_range_start,omitempty"`
@@ -217,8 +215,6 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("mtu_probe_host", changes.MTUProbeHost != nil, func() { next.MTUProbeHost = *changes.MTUProbeHost })
 	set("mtu_probe_port", changes.MTUProbePort != nil, func() { next.MTUProbePort = *changes.MTUProbePort })
 	set("mtu_overhead_bytes", changes.MTUOverheadBytes != nil, func() { next.MTUOverheadBytes = *changes.MTUOverheadBytes })
-	set("bbr_enabled", changes.BBREnabled != nil, func() { next.BBREnabled = *changes.BBREnabled })
-	set("tcp_tuning_enabled", changes.TCPTuningEnabled != nil, func() { next.TCPTuningEnabled = *changes.TCPTuningEnabled })
 	set("port_range_start", changes.PortRangeStart != nil, func() { next.PortRangeStart = *changes.PortRangeStart })
 	set("port_range_end", changes.PortRangeEnd != nil, func() { next.PortRangeEnd = *changes.PortRangeEnd })
 	set("internal_port_range_start", changes.InternalPortRangeStart != nil, func() { next.InternalPortRangeStart = *changes.InternalPortRangeStart })

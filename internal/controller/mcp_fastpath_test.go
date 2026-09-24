@@ -48,7 +48,7 @@ func TestMCPRecipeRouting(t *testing.T) {
 			case "structured proxy ref":
 				input.TargetRefs = []string{"inbound:7"}
 			case "structured server settings":
-				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"bbr_enabled": true}
+				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"resource_history_enabled": false}
 			case "structured server expiry":
 				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"expires_at": "2027-01-02T03:04:05Z", "renewal_cycle": "quarterly"}
 			case "explicit inbound":
@@ -77,12 +77,12 @@ func TestMCPRecipeRouting(t *testing.T) {
 }
 
 func TestMCPPreparedPlanHashIsCanonicalAndIdentityBound(t *testing.T) {
-	left := mcpPreparedPlanHash("p", "g", "server.manage", "1", []mcpOperationRef{{Capability: "servers.update", Input: map[string]any{"changes": map[string]any{"bbr_enabled": true, "ip_stack": "prefer_ipv6"}, "server_id": 1}}}, map[string]string{"server:1": "rev", "routing": "topology"})
-	right := mcpPreparedPlanHash("p", "g", "server.manage", "1", []mcpOperationRef{{Capability: "servers.update", Input: map[string]any{"server_id": 1, "changes": map[string]any{"ip_stack": "prefer_ipv6", "bbr_enabled": true}}}}, map[string]string{"routing": "topology", "server:1": "rev"})
+	left := mcpPreparedPlanHash("p", "g", "server.manage", "1", []mcpOperationRef{{Capability: "servers.update", Input: map[string]any{"changes": map[string]any{"resource_history_enabled": false, "ip_stack": "prefer_ipv6"}, "server_id": 1}}}, map[string]string{"server:1": "rev", "routing": "topology"})
+	right := mcpPreparedPlanHash("p", "g", "server.manage", "1", []mcpOperationRef{{Capability: "servers.update", Input: map[string]any{"server_id": 1, "changes": map[string]any{"ip_stack": "prefer_ipv6", "resource_history_enabled": false}}}}, map[string]string{"routing": "topology", "server:1": "rev"})
 	if left != right {
 		t.Fatalf("canonical hashes differ: %s != %s", left, right)
 	}
-	if left == mcpPreparedPlanHash("other", "g", "server.manage", "1", []mcpOperationRef{{Capability: "servers.update", Input: map[string]any{"server_id": 1, "changes": map[string]any{"ip_stack": "prefer_ipv6", "bbr_enabled": true}}}}, map[string]string{"routing": "topology", "server:1": "rev"}) {
+	if left == mcpPreparedPlanHash("other", "g", "server.manage", "1", []mcpOperationRef{{Capability: "servers.update", Input: map[string]any{"server_id": 1, "changes": map[string]any{"ip_stack": "prefer_ipv6", "resource_history_enabled": false}}}}, map[string]string{"routing": "topology", "server:1": "rev"}) {
 		t.Fatal("plan hash is not bound to principal identity")
 	}
 }
@@ -102,8 +102,8 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	if !request.Server.LatencyProbeEnabled || !request.Server.ConnectionAuditEnabled {
 		t.Fatalf("missing controller defaults: latency_probe_enabled=%v connection_audit_enabled=%v", request.Server.LatencyProbeEnabled, request.Server.ConnectionAuditEnabled)
 	}
-	if !request.Server.BBREnabled || !request.Server.ResourceHistoryEnabled || !request.Server.OfflineNotifyEnabled || !request.Server.ExpiryNotifyEnabled || !request.IssueEnrollmentToken {
-		t.Fatalf("missing panel defaults: bbr=%v history=%v offline=%v expiry_notify=%v enroll=%v", request.Server.BBREnabled, request.Server.ResourceHistoryEnabled, request.Server.OfflineNotifyEnabled, request.Server.ExpiryNotifyEnabled, request.IssueEnrollmentToken)
+	if !request.Server.ResourceHistoryEnabled || !request.Server.OfflineNotifyEnabled || !request.Server.ExpiryNotifyEnabled || !request.IssueEnrollmentToken {
+		t.Fatalf("missing panel defaults: history=%v offline=%v expiry_notify=%v enroll=%v", request.Server.ResourceHistoryEnabled, request.Server.OfflineNotifyEnabled, request.Server.ExpiryNotifyEnabled, request.IssueEnrollmentToken)
 	}
 	if request.Server.ListenIP != "0.0.0.0" || request.Server.MonitoringMode != "lightweight" || request.Server.UDPInboundMode != model.UDPInboundAllow {
 		t.Fatalf("missing addressing defaults: listen_ip=%q monitoring=%q udp=%q", request.Server.ListenIP, request.Server.MonitoringMode, request.Server.UDPInboundMode)
@@ -125,7 +125,7 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverForm, _ := normalized["server"].(map[string]any)
-	if serverForm["latency_probe_enabled"] != true || serverForm["resource_history_enabled"] != true || serverForm["bbr_enabled"] != true {
+	if serverForm["latency_probe_enabled"] != true || serverForm["resource_history_enabled"] != true {
 		t.Fatalf("validate form missing default-on switches: %#v", serverForm)
 	}
 	if normalized["issue_enrollment_token"] != true {
@@ -150,7 +150,7 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 		t.Fatalf("name-only prepared=%#v err=%v", nameOnly, err)
 	}
 	nameServer, _ := nameOnly.Operations[0].Input["server"].(map[string]any)
-	if nameServer["latency_probe_enabled"] != true || nameServer["resource_history_enabled"] != true || nameServer["bbr_enabled"] != true || nameServer["offline_notify_enabled"] != true {
+	if nameServer["latency_probe_enabled"] != true || nameServer["resource_history_enabled"] != true || nameServer["offline_notify_enabled"] != true {
 		t.Fatalf("name-only onboard missing panel defaults: %#v", nameServer)
 	}
 	if nameOnly.Operations[0].Input["issue_enrollment_token"] != true {
@@ -407,7 +407,7 @@ func TestMCPFastPathContinuationAndStaleRevision(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	choose := fastPathCall(t, session, "oboard_task", map[string]any{"intent": "server.manage", "goal": "修改东京服务器", "params": map[string]any{"bbr_enabled": true}})
+	choose := fastPathCall(t, session, "oboard_task", map[string]any{"intent": "server.manage", "goal": "修改东京服务器", "params": map[string]any{"resource_history_enabled": false}})
 	if choose["status"] != "choose_candidate" {
 		t.Fatalf("choose_candidate=%#v", choose)
 	}
@@ -421,7 +421,7 @@ func TestMCPFastPathContinuationAndStaleRevision(t *testing.T) {
 	if err := db.CreateServer(ctx, &server); err != nil {
 		t.Fatal(err)
 	}
-	prepared := fastPathPreparedID(t, fastPathCall(t, session, "oboard_task", map[string]any{"intent": "server.manage", "target_refs": []any{fmt.Sprintf("server:%d", server.ID)}, "params": map[string]any{"bbr_enabled": true}}))
+	prepared := fastPathPreparedID(t, fastPathCall(t, session, "oboard_task", map[string]any{"intent": "server.manage", "target_refs": []any{fmt.Sprintf("server:%d", server.ID)}, "params": map[string]any{"resource_history_enabled": false}}))
 	server.Name = "stale-updated"
 	if err := db.UpdateServer(ctx, &server); err != nil {
 		t.Fatal(err)

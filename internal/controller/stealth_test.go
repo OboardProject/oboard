@@ -266,7 +266,7 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	node := &model.Server{Name: "enrollment-stealth", StealthEnabled: true, BBREnabled: true}
+	node := &model.Server{Name: "enrollment-stealth", StealthEnabled: true}
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 			t.Fatalf("command missing %s", want)
 		}
 	}
-	plain, env, err := srv.agentEnrollmentCommand(ctx, false, false, false)
+	plain, env, err := srv.agentEnrollmentCommand(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}

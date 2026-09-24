@@ -155,7 +155,7 @@ describe('AgentSettingsPanel', () => {
       root.render(<AgentSettingsPanel data={{ settings: {} }} client={mockClient} load={mockLoad} notify={mockNotify} />)
     })
 
-    const bbrSwitch = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="新服务器默认启用 BBR + FQ"]')!
+    const bbrSwitch = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="BBR + FQ"]')!
     expect(bbrSwitch).not.toBeNull()
     expect(bbrSwitch.checked).toBe(true)
 
@@ -173,7 +173,7 @@ describe('AgentSettingsPanel', () => {
   it('restores the persisted BBR value and shows an error when auto-save fails', async () => {
     const client = { request: vi.fn(async () => { throw new Error('保存失败，请重试') }) }
     act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={vi.fn()} />))
-    const toggle = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="新服务器默认启用 BBR + FQ"]')!
+    const toggle = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="BBR + FQ"]')!
     await act(async () => toggle.click())
     expect(toggle.checked).toBe(true)
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('保存失败，请重试')
