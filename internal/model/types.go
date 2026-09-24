@@ -694,6 +694,10 @@ type SubscriptionNodeOrderPolicy struct {
 	EntryOrder           []string                  `json:"entry_order"`
 	NewNodePlacement     SubscriptionNodePlacement `json:"new_node_placement,omitempty"`
 	UnmatchedPlacement   SubscriptionNodePlacement `json:"unmatched_placement,omitempty"`
+	// GroupByLanding keeps paths that share one landing (exit server or
+	// external outbound) adjacent inside their exit region. Stored revisions
+	// without the field decode as false and keep their issued order.
+	GroupByLanding bool `json:"group_by_landing,omitempty"`
 }
 
 // DefaultSubscriptionNodeOrderPolicy returns the migration default used for
@@ -732,6 +736,7 @@ func NewSubscriptionNodeOrderPolicy() SubscriptionNodeOrderPolicy {
 		EntryOrder:           []string{},
 		NewNodePlacement:     SubscriptionNodePlacementByTemplate,
 		UnmatchedPlacement:   SubscriptionNodePlacementAppend,
+		GroupByLanding:       true,
 	}
 }
 
@@ -771,6 +776,7 @@ type NodeOrderTemplatePolicy struct {
 	EntryOrder           []string                  `json:"entry_order"`
 	NewNodePlacement     SubscriptionNodePlacement `json:"new_node_placement"`
 	UnmatchedPlacement   SubscriptionNodePlacement `json:"unmatched_placement"`
+	GroupByLanding       bool                      `json:"group_by_landing,omitempty"`
 }
 
 type NodeOrderTemplate struct {

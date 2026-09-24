@@ -23,7 +23,40 @@
 .signal-plan-content .plan-node-table { min-width: 650px; }
 .signal-plan-content .plan-node-table :is(th, td) { padding: 12px 8px; }
 .signal-plan-content .plan-node-save-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-block: 12px; }
-.signal-ordering-section { border-block: 1px solid var(--border); padding: 20px 0; }
+.signal-ordering-drawer .plan-ordering-panel { display: flex; flex-direction: column; gap: 14px; min-height: 100%; }
+.signal-ordering-drawer .plan-ordering-meta { margin: 0; font-size: 12px; }
+.signal-ordering-drawer .plan-ordering-layout { display: grid; grid-template-columns: minmax(0, 21rem) minmax(0, 1fr); gap: 20px; align-items: start; flex: 1 1 auto; }
+.signal-ordering-drawer .plan-ordering-settings { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.signal-ordering-drawer .plan-ordering-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.signal-ordering-drawer .plan-ordering-status .plan-order-template-actions { grid-column: 1 / -1; justify-content: flex-start; }
+.signal-ordering-drawer .plan-ordering-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.signal-ordering-drawer .plan-ordering-group h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-strong); }
+.signal-ordering-drawer .plan-ordering-group > p.muted { margin: 0; font-size: 12px; }
+.signal-ordering-drawer .plan-ordering-modes { display: flex; flex-wrap: wrap; gap: 6px; }
+.signal-ordering-drawer .plan-ordering-add-region { display: flex; gap: 6px; }
+.signal-ordering-drawer .plan-ordering-add-region input { width: 120px; }
+.signal-ordering-drawer .plan-ordering-inline-switch { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.signal-ordering-drawer .plan-ordering-switch { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); cursor: pointer; }
+.signal-ordering-drawer .plan-ordering-switch > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.signal-ordering-drawer .plan-ordering-switch strong { font-size: 13px; }
+.signal-ordering-drawer .plan-ordering-switch small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.signal-ordering-drawer .plan-ordering-result { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-left: 20px; border-left: 1px solid var(--border); }
+.signal-ordering-drawer .plan-ordering-result-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.signal-ordering-drawer .plan-ordering-result-head h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-strong); }
+.signal-ordering-drawer .plan-ordering-result-head p { margin: 2px 0 0; font-size: 12px; }
+.signal-ordering-drawer .plan-ordering-result-list { display: flex; flex-direction: column; gap: 4px; }
+.signal-ordering-drawer .plan-ordering-region-head { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 2px; font-size: 12px; font-family: var(--font-mono); }
+.signal-ordering-drawer .plan-ordering-region-head:first-child { margin-top: 0; }
+.signal-ordering-drawer .plan-ordering-landing-head { margin: 4px 0 0 8px; font-size: 11px; color: var(--muted); }
+.signal-ordering-drawer :is(.plan-ordering-result-row, .sortable-row) { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-solid); }
+.signal-ordering-drawer .plan-ordering-result-row.is-landing-member { margin-left: 8px; border-left: 3px solid var(--primary, var(--border-strong)); }
+.signal-ordering-drawer .plan-ordering-index { width: 24px; flex: 0 0 auto; font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.signal-ordering-drawer .plan-ordering-row-name { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.signal-ordering-drawer .plan-ordering-row-name small { overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.signal-ordering-drawer .plan-ordering-unplaced { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.signal-ordering-drawer .plan-ordering-unplaced h4 { margin: 0 0 2px; font-size: 12px; }
+.signal-ordering-drawer .plan-ordering-warnings p { margin: 2px 0; font-size: 12px; }
+.signal-ordering-drawer .plan-ordering-actions { position: sticky; bottom: calc(-1 * var(--drawer-content-padding, 1.25rem)); z-index: 2; display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 0 calc(-1 * var(--drawer-content-padding, 1.25rem)) calc(-1 * var(--drawer-content-padding, 1.25rem)); padding: 12px var(--drawer-content-padding, 1.25rem); border-top: 1px solid var(--border); background: var(--surface-solid); }
 .signal-plan-form .form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .signal-plan-form .form > :nth-child(-n+2) { grid-column: 1 / -1; }
 .user-plan-dialog .user-plan-dialog-layout { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.5fr); gap: 28px; }
@@ -37,6 +70,10 @@
 .signal-exception-dialog .user-plan-dialog-exception-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .signal-exception-dialog .user-plan-dialog-search-results { max-height: 260px; overflow-y: auto; margin-top: 16px; }
 .signal-exception-dialog .user-plan-dialog-search-results label { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid var(--border); }
+@media (max-width: 760px) {
+  .signal-ordering-drawer .plan-ordering-layout { grid-template-columns: minmax(0, 1fr); }
+  .signal-ordering-drawer .plan-ordering-result { padding-left: 0; border-left: 0; padding-top: 16px; border-top: 1px solid var(--border); }
+}
 @media (max-width: 800px) {
   .signal-plan-list :is(table, tbody, tr, td) { display: block; }
   .signal-plan-list thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }

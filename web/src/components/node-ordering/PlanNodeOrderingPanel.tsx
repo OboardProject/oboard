@@ -48,6 +48,7 @@ type OrderingPolicy = {
   entry_order: string[]
   new_node_placement: 'by_template' | 'append' | 'pending'
   unmatched_placement: 'append' | 'pending'
+  group_by_landing?: boolean
 }
 
 type OrderingNode = {
@@ -63,6 +64,8 @@ type OrderingNode = {
   entry_server_id?: number
   entry_region?: string
   exit_server_id?: number
+  exit_external_outbound_id?: number
+  exit_name?: string
   exit_region?: string
   manual_position?: number
   effective_position: number
@@ -110,6 +113,7 @@ function emptyPolicy(mode: string): OrderingPolicy {
     entry_order: [],
     new_node_placement: 'by_template',
     unmatched_placement: 'append',
+    group_by_landing: true,
   }
 }
 
@@ -121,7 +125,14 @@ function normalizeOrderingPolicy(policy: OrderingPolicy): OrderingPolicy {
     entry_order: policy.entry_order || [],
     new_node_placement: policy.new_node_placement || 'pending',
     unmatched_placement: policy.unmatched_placement || 'pending',
+    group_by_landing: Boolean(policy.group_by_landing),
   }
+}
+
+function landingKey(node: OrderingNode) {
+  if (node.exit_server_id) return `server:${node.exit_server_id}`
+  if (node.exit_external_outbound_id) return `external:${node.exit_external_outbound_id}`
+  return ''
 }
 
 function normalizeRegion(code: string) {
@@ -412,25 +423,51 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved, onD
   const isManual = workingPolicy?.mode === 'manual'
   const unplacedNodes = isManual ? (state?.nodes || []).filter(n => !placedKeys.has(n.key)) : []
   const applying = Boolean(state?.pending_revision_id && !plan.pending_change_failed)
+  const policyDirty = Boolean(state && workingPolicy && JSON.stringify(normalizeOrderingPolicy(state.policy)) !== JSON.stringify(workingPolicy))
+  const editable = Boolean(state && workingPolicy && !loading && !state.read_only)
+
+  // Rule modes show their resulting order live: every policy edit refreshes the
+  // preview after a short pause, so the list on the right is always the order
+  // that saving would publish.
+  const policyKey = workingPolicy ? JSON.stringify(workingPolicy) : ''
+  React.useEffect(() => {
+    if (!editable || isManual || !policyDirty) return
+    const timer = window.setTimeout(() => { void runPreview() }, 350)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policyKey, editable, isManual, policyDirty])
+
+  const resultNodes = policyDirty ? previewNodes : state?.nodes || []
+  const setGroupByLanding = (checked: boolean) => {
+    if (!workingPolicy) return
+    setWorkingPolicy({ ...workingPolicy, version: 2, group_by_landing: checked })
+    setPreviewNodes(null)
+  }
+  const landingLabel = (node: OrderingNode) => node.exit_name || (node.exit_server_id ? serverName(node.exit_server_id) : '') || '未解析落地'
+
+  const landingSwitch = (
+    <label className="plan-ordering-switch">
+      <Switch size="sm" checked={Boolean(workingPolicy?.group_by_landing)} onChange={setGroupByLanding} ariaLabel="同一落地的路径排在一起" />
+      <span>
+        <strong>同一落地的路径排在一起</strong>
+        <small>同一出口地区内，经不同入口到达同一台落地服务器或导入节点的路径会相邻排列，不改变地区顺序。</small>
+      </span>
+    </label>
+  )
 
   return (
-    <div className="plan-ordering-panel" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <div>
-          <h3 style={{ margin: 0 }}>订阅排序 · {plan.name}</h3>
-          {state && (
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              最新 <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(state.version_created_at)}</span> · {state.nodes.length} 个节点
-              {state.is_current ? ' · 当前生效' : ''}
-              {state.is_latest && !state.is_current ? ' · 最新保存' : ''}
-              {applying ? ' · 有版本正在应用' : ''}
-              {!state.is_latest ? ' · 只读（历史版本）' : ''}
-            </p>
-          )}
-        </div>
-      </div>
+    <div className="plan-ordering-panel">
+      {state && (
+        <p className="muted plan-ordering-meta">
+          最新 <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(state.version_created_at)}</span> · {state.nodes.length} 个节点
+          {state.is_current ? ' · 当前生效' : ''}
+          {state.is_latest && !state.is_current ? ' · 最新保存' : ''}
+          {applying ? ' · 有版本正在应用' : ''}
+          {!state.is_latest ? ' · 只读（历史版本）' : ''}
+        </p>
+      )}
 
-      {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}
+      {error && <p role="alert" style={{ color: 'var(--color-danger)', margin: 0 }}>{error}</p>}
       {loading && <p className="muted">正在加载排序状态...</p>}
       {applying && (
         <p style={{ color: 'var(--color-warning)', margin: 0 }}>
@@ -438,221 +475,221 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved, onD
         </p>
       )}
 
-      {state && workingPolicy && !loading && !state.read_only && (
-        <>
-          <div className="plan-order-template-status">
-            <div>
-              <span className="muted">当前排序</span>
-              <strong>{MODE_LABELS[workingPolicy.mode] || workingPolicy.mode}</strong>
+      {state && workingPolicy && !loading && state.read_only && (
+        <p className="muted">当前查看的是历史版本，只读；编辑默认基于最新保存版本。</p>
+      )}
+
+      {editable && state && workingPolicy && (
+        <div className="plan-ordering-layout">
+          <section className="plan-ordering-settings" aria-label="排序设置">
+            <div className="plan-order-template-status plan-ordering-status">
+              <div>
+                <span className="muted">规则来源</span>
+                <strong>{state.order_source_plan?.name || '本方案设置'}</strong>
+                {state.order_source_revision_id && <small>复制自版本 #{state.order_source_revision_id} · 快照</small>}
+              </div>
+              <div>
+                <span className="muted">新增节点</span>
+                <strong>{{ by_template: '按规则自动插入', append: '追加到末尾', pending: '进入待排区' }[workingPolicy.new_node_placement || 'pending']}</strong>
+              </div>
+              <div className="plan-order-template-actions">
+                <Button variant="outline" size="sm" onClick={() => { setCopyOpen(true); setCopyPreview(null) }}><Copy size={14} /> 从其他方案复制</Button>
+              </div>
             </div>
-            <div>
-              <span className="muted">规则来源</span>
-              <strong>{state.order_source_plan?.name || '本方案设置'}</strong>
-              {state.order_source_revision_id && <small>复制自版本 #{state.order_source_revision_id} · 快照</small>}
-            </div>
-            <div>
-              <span className="muted">新增节点</span>
-              <strong>{{ by_template: '按规则自动插入', append: '追加到末尾', pending: '进入待排区' }[workingPolicy.new_node_placement || 'pending']}</strong>
-            </div>
-            <div className="plan-order-template-actions">
-              <Button variant="outline" size="sm" onClick={() => { setCopyOpen(true); setCopyPreview(null) }}><Copy size={14} /> 从其他方案复制</Button>
-            </div>
-          </div>
-          <div>
-            <h3 style={{ marginTop: 0 }}>排序模式</h3>
-            <div className="section-toolbar" style={{ gap: 8 }}>
-              {MODE_LABELS[workingPolicy.mode] && workingPolicy.mode === 'legacy_group_name' && (
-                <Badge variant="secondary">当前为兼容排序</Badge>
+
+            <div className="plan-ordering-group">
+              <h4>排序模式</h4>
+              <div className="plan-ordering-modes" role="group" aria-label="排序模式">
+                {MODES.map(mode => (
+                  <Button key={mode} aria-pressed={workingPolicy.mode === mode} variant={workingPolicy.mode === mode ? 'default' : 'outline'} size="sm" onClick={() => setMode(mode)}>
+                    {MODE_LABELS[mode]}
+                  </Button>
+                ))}
+              </div>
+              {workingPolicy.mode === 'legacy_group_name' && (
+                <p className="muted">当前使用兼容排序（分组 → 名称）。切换到出口地区、入口或手动排序后，订阅节点顺序将发生变化。</p>
               )}
-              {MODES.map(mode => (
-                <Button key={mode} aria-pressed={workingPolicy.mode === mode} variant={workingPolicy.mode === mode ? 'default' : 'outline'} size="sm" onClick={() => setMode(mode)}>
-                  {MODE_LABELS[mode]}
-                </Button>
-              ))}
             </div>
-            {workingPolicy.mode === 'legacy_group_name' && (
-              <p className="muted" style={{ marginTop: 8 }}>当前套餐使用兼容排序（分组 → 名称）。切换到出口地区、入口或手动排序后，订阅节点顺序将发生变化。</p>
-            )}
-          </div>
 
-          {workingPolicy.mode === 'exit_region' && (
-            <div>
-              <h3>出口地区顺序</h3>
-              <p className="muted">已配置的地区优先，未配置的有效地区按代码排序，未解析地区最后。</p>
-              <RegionOrderEditor list={workingPolicy.exit_region_order} onChange={list => setRegionList('exit_region_order', list)} />
-              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <Input value={regionInput} onChange={e => setRegionInput(e.target.value)} placeholder="如 JP" style={{ width: 120 }} onKeyDown={e => { if (e.key === 'Enter') addRegion('exit_region_order') }} />
-                <Button variant="outline" size="sm" onClick={() => addRegion('exit_region_order')}><Plus size={14} /> 添加地区</Button>
-              </div>
-            </div>
-          )}
-
-          {workingPolicy.mode === 'entry' && (
-            <>
-              <div>
-                <h3>入口地区顺序</h3>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 8, cursor: 'pointer' }}>
-                  <Switch
-                    size="sm"
-                    checked={workingPolicy.entry_region_order_mode !== 'custom'}
-                    onChange={checked => setWorkingPolicy({ ...workingPolicy, entry_region_order_mode: checked ? 'inherit_exit' : 'custom' })}
-                    ariaLabel="入口地区顺序跟随出口地区顺序"
-                  />
-                  入口地区顺序跟随出口地区顺序
-                </label>
-                {workingPolicy.entry_region_order_mode === 'custom' && (
-                  <>
-                    <RegionOrderEditor list={workingPolicy.entry_region_order} onChange={list => setRegionList('entry_region_order', list)} />
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                      <Input value={regionInput} onChange={e => setRegionInput(e.target.value)} placeholder="如 JP" style={{ width: 120 }} onKeyDown={e => { if (e.key === 'Enter') addRegion('entry_region_order') }} />
-                      <Button variant="outline" size="sm" onClick={() => addRegion('entry_region_order')}><Plus size={14} /> 添加地区</Button>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div>
-                <h3>同地区内入口顺序</h3>
-                <p className="muted">拖拽调整每个入口组的顺序；入口不能跨越地区。</p>
-                {entryKeys.length === 0 ? (
-                  <p className="muted">没有可排序的入口。</p>
-                ) : (
-                  <SortableList items={entryKeyList} onReorder={setEntryOrder} renderRow={(key, index) => {
-                    const entry = entryKeys.find(e => e.key === key)
-                    return (
-                      <>
-                        <span style={{ width: 28, fontSize: 12, color: 'var(--color-muted)' }}>{index + 1}</span>
-                        <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry?.label}>
-                          {entry?.label || key}
-                        </span>
-                        <span className="muted" style={{ fontSize: 12 }}>{entry?.count || 0} 个节点</span>
-                        <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => setEntryOrder(moveItem(entryKeyList, index, -1))} aria-label="上移"><ChevronUp size={14} /></Button>
-                        <Button type="button" variant="ghost" size="icon" disabled={index === entryKeyList.length - 1} onPointerDown={isolateSortableAction} onClick={() => setEntryOrder(moveItem(entryKeyList, index, 1))} aria-label="下移"><ChevronDown size={14} /></Button>
-                      </>
-                    )
-                  }} />
-                )}
-              </div>
-            </>
-          )}
-
-          {workingPolicy.mode === 'manual' && (
-            <>
-              <div>
-                <h3>手动排序</h3>
-                <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  <Select value={workingPolicy.manual_seed || 'exit_region'} onChange={e => setWorkingPolicy({ ...workingPolicy, manual_seed: e.target.value })} style={{ width: 180 }}>
-                    <option value="exit_region">基础规则：按出口地区</option>
-                    <option value="entry">基础规则：按入口</option>
-                  </Select>
-                  <Button variant="outline" size="sm" busy={previewing} onClick={() => void generateManualSeed()}><Sparkles size={14} /> 按规则生成手动顺序</Button>
-                  <Button variant="ghost" size="sm" onClick={appendAllUnplaced}><MoveDown size={14} /> 把待排节点追加到末尾</Button>
+            {workingPolicy.mode === 'exit_region' && (
+              <>
+                <div className="plan-ordering-group">
+                  <h4>出口地区顺序</h4>
+                  <p className="muted">已配置的地区优先，未配置的有效地区按代码排序，未解析地区最后。</p>
+                  <RegionOrderEditor list={workingPolicy.exit_region_order} onChange={list => setRegionList('exit_region_order', list)} />
+                  <div className="plan-ordering-add-region">
+                    <Input value={regionInput} onChange={e => setRegionInput(e.target.value)} placeholder="如 JP" onKeyDown={e => { if (e.key === 'Enter') addRegion('exit_region_order') }} />
+                    <Button variant="outline" size="sm" onClick={() => addRegion('exit_region_order')}><Plus size={14} /> 添加地区</Button>
+                  </div>
                 </div>
-                <p className="muted" style={{ marginTop: 8 }}>按住手柄拖拽调整顺序，也可使用上移、下移、移到顶部、移到底部按钮。已有节点的人工相对顺序会被保留。</p>
-                <div style={{ marginTop: 8 }}>
-                  {manualOrder.length === 0 ? (
-                    <p className="muted">尚未放置节点，点击“按规则生成手动顺序”开始。</p>
+                <div className="plan-ordering-group">{landingSwitch}</div>
+              </>
+            )}
+
+            {workingPolicy.mode === 'entry' && (
+              <>
+                <div className="plan-ordering-group">
+                  <h4>入口地区顺序</h4>
+                  <label className="plan-ordering-inline-switch">
+                    <Switch
+                      size="sm"
+                      checked={workingPolicy.entry_region_order_mode !== 'custom'}
+                      onChange={checked => setWorkingPolicy({ ...workingPolicy, entry_region_order_mode: checked ? 'inherit_exit' : 'custom' })}
+                      ariaLabel="入口地区顺序跟随出口地区顺序"
+                    />
+                    入口地区顺序跟随出口地区顺序
+                  </label>
+                  {workingPolicy.entry_region_order_mode === 'custom' && (
+                    <>
+                      <RegionOrderEditor list={workingPolicy.entry_region_order} onChange={list => setRegionList('entry_region_order', list)} />
+                      <div className="plan-ordering-add-region">
+                        <Input value={regionInput} onChange={e => setRegionInput(e.target.value)} placeholder="如 JP" onKeyDown={e => { if (e.key === 'Enter') addRegion('entry_region_order') }} />
+                        <Button variant="outline" size="sm" onClick={() => addRegion('entry_region_order')}><Plus size={14} /> 添加地区</Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="plan-ordering-group">
+                  <h4>同地区内入口顺序</h4>
+                  <p className="muted">拖拽调整每个入口组的顺序；入口不能跨越地区。</p>
+                  {entryKeys.length === 0 ? (
+                    <p className="muted">没有可排序的入口。</p>
                   ) : (
-                    <SortableList items={manualOrder} onReorder={setManualOrder} renderRow={(key, index) => {
-                      const node = (state.nodes || []).find(n => n.key === key)
-                      if (!node) return null
+                    <SortableList items={entryKeyList} onReorder={setEntryOrder} renderRow={(key, index) => {
+                      const entry = entryKeys.find(e => e.key === key)
                       return (
                         <>
-                          <span style={{ width: 28, fontSize: 12, color: 'var(--color-muted)' }}>{index + 1}</span>
-                          <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={node.name}>
-                            {node.name}
-                            {node.entry_region && <span className="muted"> · 入口 {node.entry_region}</span>}
-                            {node.exit_region && <span className="muted"> · 出口 {node.exit_region}</span>}
-                          </span>
-                          <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => moveManualToEdge(key, true)} aria-label="移到顶部"><MoveUp size={14} /></Button>
-                          <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => moveManual(key, -1)} aria-label="上移"><ArrowUp size={14} /></Button>
-                          <Button type="button" variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onPointerDown={isolateSortableAction} onClick={() => moveManual(key, 1)} aria-label="下移"><ArrowDown size={14} /></Button>
-                          <Button type="button" variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onPointerDown={isolateSortableAction} onClick={() => moveManualToEdge(key, false)} aria-label="移到底部"><MoveDown size={14} /></Button>
-                          <Button type="button" variant="ghost" size="icon" onPointerDown={isolateSortableAction} onClick={() => removeManual(key)} aria-label="移出顺序"><Trash2 size={14} /></Button>
+                          <span className="plan-ordering-index">{index + 1}</span>
+                          <span className="plan-ordering-row-name" title={entry?.label}>{entry?.label || key}</span>
+                          <span className="muted" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{entry?.count || 0} 个</span>
+                          <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => setEntryOrder(moveItem(entryKeyList, index, -1))} aria-label="上移"><ChevronUp size={14} /></Button>
+                          <Button type="button" variant="ghost" size="icon" disabled={index === entryKeyList.length - 1} onPointerDown={isolateSortableAction} onClick={() => setEntryOrder(moveItem(entryKeyList, index, 1))} aria-label="下移"><ChevronDown size={14} /></Button>
                         </>
                       )
                     }} />
                   )}
                 </div>
-                {unplacedNodes.length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <h4 style={{ margin: '6px 0' }}>待排节点（{unplacedNodes.length}）</h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {unplacedNodes.map(node => (
-                        <div key={node.key} className="sortable-row" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, padding: '6px 12px', minHeight: 38, borderRadius: 'var(--radius-md)', background: 'var(--surface-solid)', border: '1px solid var(--border)' }}>
-                          <span style={{ flex: 1, fontSize: 13 }}>{node.name} <Badge variant="outline">待排</Badge></span>
-                          <Button variant="outline" size="sm" onClick={() => appendUnplaced(node.key)}>追加到末尾</Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+              </>
+            )}
 
-          {workingPolicy.mode === 'manual' && (
-            <div className="manual-placement-settings">
-              <h3>新增节点处理</h3>
-              <div className="template-radio-list" role="radiogroup" aria-label="新增节点处理方式">
-                <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'by_template'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'by_template' })} /> 按当前规则自动插入</label>
-                <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'append'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'append' })} /> 追加到末尾</label>
-                <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'pending'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'pending' })} /> 进入待排区</label>
-              </div>
-              {workingPolicy.new_node_placement === 'by_template' && (
-                <label className="template-unmatched">无法识别的新节点
-                  <Select value={workingPolicy.unmatched_placement || 'append'} onChange={event => setWorkingPolicy({ ...workingPolicy, version: 2, unmatched_placement: event.target.value as 'append' | 'pending' })}>
-                    <option value="append">追加到已排序节点末尾</option>
-                    <option value="pending">进入待排区</option>
+            {workingPolicy.mode === 'manual' && (
+              <>
+                <div className="plan-ordering-group">
+                  <h4>基础规则</h4>
+                  <p className="muted">生成手动顺序和放置未排节点时使用。</p>
+                  <Select value={workingPolicy.manual_seed || 'exit_region'} onChange={e => setWorkingPolicy({ ...workingPolicy, manual_seed: e.target.value })}>
+                    <option value="exit_region">按出口地区</option>
+                    <option value="entry">按入口</option>
                   </Select>
-                </label>
+                  {(workingPolicy.manual_seed || 'exit_region') === 'exit_region' && landingSwitch}
+                  <div className="plan-ordering-add-region">
+                    <Button variant="outline" size="sm" busy={previewing} onClick={() => void generateManualSeed()}><Sparkles size={14} /> 按规则生成手动顺序</Button>
+                  </div>
+                </div>
+                <div className="plan-ordering-group manual-placement-settings">
+                  <h4>新增节点处理</h4>
+                  <div className="template-radio-list" role="radiogroup" aria-label="新增节点处理方式">
+                    <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'by_template'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'by_template' })} /> 按当前规则自动插入</label>
+                    <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'append'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'append' })} /> 追加到末尾</label>
+                    <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'pending'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'pending' })} /> 进入待排区</label>
+                  </div>
+                  {workingPolicy.new_node_placement === 'by_template' && (
+                    <label className="template-unmatched">无法识别的新节点
+                      <Select value={workingPolicy.unmatched_placement || 'append'} onChange={event => setWorkingPolicy({ ...workingPolicy, version: 2, unmatched_placement: event.target.value as 'append' | 'pending' })}>
+                        <option value="append">追加到已排序节点末尾</option>
+                        <option value="pending">进入待排区</option>
+                      </Select>
+                    </label>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+
+          <section className="plan-ordering-result" aria-label="排序结果">
+            <div className="plan-ordering-result-head">
+              <div>
+                <h4>{isManual ? '手动顺序' : '订阅中的顺序'}</h4>
+                <p className="muted">
+                  {isManual
+                    ? `按住手柄拖拽，或使用行内按钮移动${manualOrder.length ? ` · ${manualOrder.length} 个已排` : ''}`
+                    : previewing ? '正在按新规则重新排列…' : policyDirty ? '规则已修改，保存后按此顺序发布' : '当前保存版本的顺序'}
+                </p>
+              </div>
+              {isManual && unplacedNodes.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={appendAllUnplaced}><MoveDown size={14} /> 全部追加</Button>
               )}
             </div>
-          )}
 
-          <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <Button variant="outline" size="sm" busy={previewing} onClick={() => void runPreview()}><RefreshCw size={14} /> 预览排序</Button>
-            <Button size="sm" busy={busy} onClick={() => void saveOrdering()}><Save size={14} /> 保存为新版本</Button>
-            {applying && <span className="muted">正在同步，可继续保存</span>}
-          </div>
-        </>
-      )}
+            {isManual ? (
+              <>
+                {manualOrder.length === 0 ? (
+                  <p className="muted">尚未放置节点，点击“按规则生成手动顺序”开始。</p>
+                ) : (
+                  <SortableList items={manualOrder} onReorder={setManualOrder} renderRow={(key, index) => {
+                    const node = (state.nodes || []).find(n => n.key === key)
+                    if (!node) return null
+                    return (
+                      <>
+                        <span className="plan-ordering-index">{index + 1}</span>
+                        <span className="plan-ordering-row-name" title={node.name}>
+                          {node.name}
+                          <small className="muted">{[node.exit_region && `出口 ${node.exit_region}`, landingKey(node) && `落地 ${landingLabel(node)}`].filter(Boolean).join(' · ')}</small>
+                        </span>
+                        <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => moveManualToEdge(key, true)} aria-label="移到顶部"><MoveUp size={14} /></Button>
+                        <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => moveManual(key, -1)} aria-label="上移"><ArrowUp size={14} /></Button>
+                        <Button type="button" variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onPointerDown={isolateSortableAction} onClick={() => moveManual(key, 1)} aria-label="下移"><ArrowDown size={14} /></Button>
+                        <Button type="button" variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onPointerDown={isolateSortableAction} onClick={() => moveManualToEdge(key, false)} aria-label="移到底部"><MoveDown size={14} /></Button>
+                        <Button type="button" variant="ghost" size="icon" onPointerDown={isolateSortableAction} onClick={() => removeManual(key)} aria-label="移出顺序"><Trash2 size={14} /></Button>
+                      </>
+                    )
+                  }} />
+                )}
+                {unplacedNodes.length > 0 && (
+                  <div className="plan-ordering-unplaced">
+                    <h4>待排节点（{unplacedNodes.length}）</h4>
+                    {unplacedNodes.map(node => (
+                      <div key={node.key} className="plan-ordering-result-row">
+                        <span className="plan-ordering-row-name">{node.name} <Badge variant="outline">待排</Badge></span>
+                        <Button variant="outline" size="sm" onClick={() => appendUnplaced(node.key)}>追加到末尾</Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : resultNodes ? (
+              <OrderingResultList
+                nodes={resultNodes}
+                groupByRegion={workingPolicy.mode === 'exit_region'}
+                groupByLanding={workingPolicy.mode === 'exit_region' && Boolean(workingPolicy.group_by_landing)}
+                landingLabel={landingLabel}
+                entryLabel={node => node.entry_name || serverName(node.entry_server_id) || node.entry_key || '未解析入口'}
+              />
+            ) : (
+              <p className="muted">正在生成新顺序…</p>
+            )}
 
-      {state && workingPolicy && !loading && state.read_only && (
-        <p className="muted">当前查看的是历史版本，只读；编辑默认基于最新保存版本。</p>
-      )}
-
-      {previewWarnings.length > 0 && (
-        <div>
-          <h4 style={{ margin: '6px 0' }}>预览提示</h4>
-          {previewWarnings.map((w, i) => <p key={i} className="muted" style={{ margin: '2px 0' }}>{w}</p>)}
+            {previewWarnings.length > 0 && (
+              <div className="plan-ordering-warnings">
+                {previewWarnings.map((w, i) => <p key={i} className="muted">{w}</p>)}
+              </div>
+            )}
+          </section>
         </div>
       )}
 
-      {previewNodes && (
-        <div>
-          <h4 style={{ margin: '6px 0' }}>预览顺序（{previewNodes.length} 个节点{isManual && previewUnplaced > 0 ? `，${previewUnplaced} 个待排` : ''}）</h4>
-          <div className="card-custom" style={{ maxHeight: 320, overflow: 'auto' }}>
-            <table className="user-data-table">
-              <thead><tr><th>#</th><th>节点</th><th>分组</th><th>入口</th><th>出口</th><th>状态</th></tr></thead>
-              <tbody>
-                {previewNodes.map(node => (
-                  <tr key={node.key}>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{node.effective_position}</td>
-                    <td style={{ fontWeight: 600 }}>{node.name}</td>
-                    <td className="muted">{node.group}</td>
-                    <td className="muted">{node.entry_name || serverName(node.entry_server_id) || node.entry_key || '—'}</td>
-                    <td className="muted">{node.exit_region || '—'}</td>
-                    <td>
-                      {isManual && node.manual_position === undefined && <Badge variant="outline">待排</Badge>}
-                      {!node.renderable && <Badge variant="destructive">不可渲染</Badge>}
-                      {node.warning && <span className="muted"> {node.warning}</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {editable && (
+        <div className="plan-ordering-actions">
+          {applying && <span className="muted">正在同步，可继续保存</span>}
+          {isManual && <Button variant="outline" size="sm" busy={previewing} onClick={() => void runPreview()}><RefreshCw size={14} /> 预览最终顺序</Button>}
+          <Button size="sm" busy={busy} onClick={() => void saveOrdering()}><Save size={14} /> 保存为新版本</Button>
         </div>
+      )}
+
+      {isManual && previewNodes && (
+        <Dialog isOpen onClose={() => setPreviewNodes(null)} title={`最终顺序（${previewNodes.length} 个节点${previewUnplaced > 0 ? `，${previewUnplaced} 个待排` : ''}）`} size="lg">
+          <OrderingResultList nodes={previewNodes} groupByRegion={false} groupByLanding={false} landingLabel={landingLabel} entryLabel={node => node.entry_name || serverName(node.entry_server_id) || node.entry_key || '未解析入口'} showUnplaced />
+        </Dialog>
       )}
 
       <Dialog isOpen={copyOpen} onClose={() => { if (!busy) setCopyOpen(false) }} title="从其他方案复制排序" size="lg" className="signal-order-dialog">
@@ -670,6 +707,64 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved, onD
       </Dialog>
     </div>
   )
+}
+
+function OrderingResultList({ nodes, groupByRegion, groupByLanding, landingLabel, entryLabel, showUnplaced }: {
+  nodes: OrderingNode[]
+  groupByRegion: boolean
+  groupByLanding: boolean
+  landingLabel: (node: OrderingNode) => string
+  entryLabel: (node: OrderingNode) => string
+  showUnplaced?: boolean
+}) {
+  if (nodes.length === 0) return <p className="muted">方案中还没有节点。</p>
+  const landingCounts = new Map<string, number>()
+  for (const node of nodes) {
+    const key = `${node.exit_region || ''}|${landingKey(node)}`
+    if (landingKey(node)) landingCounts.set(key, (landingCounts.get(key) || 0) + 1)
+  }
+  const rows: React.ReactNode[] = []
+  let lastRegion: string | null = null
+  let lastLanding: string | null = null
+  nodes.forEach((node, index) => {
+    const region = node.exit_region || ''
+    if (groupByRegion && region !== lastRegion) {
+      const count = nodes.filter(n => (n.exit_region || '') === region).length
+      rows.push(
+        <div key={`region-${region}-${index}`} className="plan-ordering-region-head">
+          <span>{regionFlagEmoji(region)}</span>
+          <strong>{region || '未解析地区'}</strong>
+          <span className="muted">{count} 个</span>
+        </div>,
+      )
+      lastRegion = region
+      lastLanding = null
+    }
+    const landing = landingKey(node)
+    const landingGroupKey = `${region}|${landing}`
+    const multi = groupByLanding && landing !== '' && (landingCounts.get(landingGroupKey) || 0) > 1
+    if (multi && landingGroupKey !== lastLanding) {
+      rows.push(
+        <div key={`landing-${landingGroupKey}-${index}`} className="plan-ordering-landing-head">
+          落地 {landingLabel(node)} · {landingCounts.get(landingGroupKey)} 条路径
+        </div>,
+      )
+    }
+    lastLanding = multi ? landingGroupKey : null
+    rows.push(
+      <div key={node.key} className={`plan-ordering-result-row${multi ? ' is-landing-member' : ''}`}>
+        <span className="plan-ordering-index">{index + 1}</span>
+        <span className="plan-ordering-row-name" title={node.name}>
+          {node.name}
+          <small className="muted">{entryLabel(node)} → {landingKey(node) ? landingLabel(node) : node.exit_region || '未解析落地'}</small>
+        </span>
+        {showUnplaced && node.manual_position === undefined && <Badge variant="outline">待排</Badge>}
+        {!node.renderable && <Badge variant="destructive">不可渲染</Badge>}
+        {node.renderable && node.warning && <Badge variant="secondary">{node.warning}</Badge>}
+      </div>,
+    )
+  })
+  return <div className="plan-ordering-result-list">{rows}</div>
 }
 
 function regionFlagEmoji(code?: string) {

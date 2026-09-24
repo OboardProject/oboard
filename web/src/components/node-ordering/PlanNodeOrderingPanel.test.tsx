@@ -129,4 +129,55 @@ describe('PlanNodeOrderingPanel', () => {
       'proxy_path:4',
     ])
   })
+  it('previews the landing grouping live and saves it with the rule', async () => {
+    const node = (key: string, name: string, entry: string, exitServer: number, position: number) => ({
+      ...orderingNode(key, name, 'vless', 'JP', position),
+      entry_region: entry,
+      exit_server_id: exitServer,
+      exit_name: `落地 ${exitServer}`,
+      manual_position: undefined,
+    })
+    const nodes = [node('proxy_path:1', 'A', 'HK', 10, 0), node('proxy_path:2', 'B', 'HK', 11, 1), node('proxy_path:3', 'C', 'SG', 10, 2)]
+    const bodies: Record<string, any[]> = { preview: [], versions: [] }
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/subscription-plans/1/ordering') {
+        return {
+          plan_id: 1, lock_version: 1, base_revision_id: 1, revision_id: 1, version_created_at: '2026-08-29T00:00:00Z',
+          read_only: false, is_current: true, is_latest: true, pending_revision_id: 0,
+          policy: { version: 2, mode: 'exit_region', manual_seed: 'exit_region', exit_region_order: ['JP'], entry_region_order_mode: 'inherit_exit', entry_region_order: [], entry_order: [], new_node_placement: 'by_template', unmatched_placement: 'append' },
+          nodes, unplaced_count: 0, warnings: [],
+        }
+      }
+      if (path === '/subscription-plans/1/ordering/preview') {
+        bodies.preview.push(JSON.parse(String(init?.body || '{}')))
+        return { nodes: [nodes[0], nodes[2], nodes[1]].map((item, index) => ({ ...item, effective_position: index })), unplaced_count: 0, warnings: [] }
+      }
+      if (path === '/subscription-plans/1/ordering/versions') {
+        bodies.versions.push(JSON.parse(String(init?.body || '{}')))
+        return { revision: { created_at: '2026-08-29T00:00:01Z' }, effective_immediately: true }
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    await act(async () => {
+      root.render(<PlanNodeOrderingPanel plan={plan} data={{ subscription_plans: [plan] }} client={{ request }} />)
+    })
+    await flushEffects()
+
+    const toggle = container.querySelector('[aria-label="同一落地的路径排在一起"]') as HTMLElement | null
+    expect(toggle).toBeTruthy()
+    act(() => toggle?.click())
+    await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 450)) })
+
+    expect(bodies.preview).toHaveLength(1)
+    expect(bodies.preview[0].policy.group_by_landing).toBe(true)
+    const names = Array.from(container.querySelectorAll('.plan-ordering-result-row .plan-ordering-row-name')).map(el => el.firstChild?.textContent)
+    expect(names).toEqual(['A', 'C', 'B'])
+    expect(container.textContent).toContain('落地 落地 10 · 2 条路径')
+
+    const saveButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('保存为新版本'))
+    act(() => saveButton?.click())
+    await flushEffects()
+    expect(bodies.versions[0].policy.group_by_landing).toBe(true)
+  })
 })

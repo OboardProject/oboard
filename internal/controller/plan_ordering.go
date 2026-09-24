@@ -164,6 +164,8 @@ type orderingNodeView struct {
 	EntryServerID       int64                    `json:"entry_server_id,omitempty"`
 	EntryRegion         string                   `json:"entry_region,omitempty"`
 	ExitServerID        int64                    `json:"exit_server_id,omitempty"`
+	ExitExternalID      int64                    `json:"exit_external_outbound_id,omitempty"`
+	ExitName            string                   `json:"exit_name,omitempty"`
 	ExitRegion          string                   `json:"exit_region,omitempty"`
 	ManualPosition      *int                     `json:"manual_position,omitempty"`
 	EffectivePosition   int                      `json:"effective_position"`
@@ -176,6 +178,10 @@ func (s *Server) orderingNodeViews(ctx context.Context, config store.FullRouting
 	serverByID := map[int64]string{}
 	for _, server := range config.Servers {
 		serverByID[server.ID] = server.Name
+	}
+	externalByID := map[int64]string{}
+	for _, external := range config.ExternalOutbounds {
+		externalByID[external.ID] = external.Name
 	}
 	views := make([]orderingNodeView, 0, len(ordered))
 	unplaced := 0
@@ -195,9 +201,15 @@ func (s *Server) orderingNodeViews(ctx context.Context, config store.FullRouting
 			EntryServerID:       node.EntryServerID,
 			EntryRegion:         node.EntryRegion,
 			ExitServerID:        node.ExitServerID,
+			ExitExternalID:      node.ExitExternalOutboundID,
 			ExitRegion:          node.ExitRegion,
 			EffectivePosition:   position,
 			Renderable:          renderable[node.Key],
+		}
+		if node.ExitServerID > 0 {
+			view.ExitName = serverByID[node.ExitServerID]
+		} else if node.ExitExternalOutboundID > 0 {
+			view.ExitName = externalByID[node.ExitExternalOutboundID]
 		}
 		if node.Inbound.ID != 0 {
 			view.EntryName = node.Inbound.Name

@@ -274,6 +274,12 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [orderingDirty, setOrderingDirty] = React.useState(false)
   const [orderingBusy, setOrderingBusy] = React.useState(false)
   const [discardDetailOpen, setDiscardDetailOpen] = React.useState(false)
+  const [discardOrderingOpen, setDiscardOrderingOpen] = React.useState(false)
+  const closeOrdering = () => {
+    if (orderingBusy) return
+    if (orderingDirty) { setDiscardOrderingOpen(true); return }
+    setOrderingOpen(false)
+  }
   const [createBusy, setCreateBusy] = React.useState(false)
   const [historyOpen, setHistoryOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
@@ -1070,15 +1076,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {orderingPlan && (
-                      <Button
-                        variant={orderingOpen ? 'default' : 'outline'}
-                        size="sm"
-                        onClick={() => { if (!orderingDirty && !orderingBusy) setOrderingOpen(open => !open) }}
-                        aria-expanded={orderingOpen}
-                        disabled={orderingOpen && (orderingDirty || orderingBusy)}
-                        title={orderingDirty ? '请先保存排序更改，再收起' : undefined}
-                      >
-                        <SlidersHorizontal size={14} /> {orderingOpen ? '收起排序规则' : '排序规则'}
+                      <Button variant="outline" size="sm" onClick={() => setOrderingOpen(true)} aria-haspopup="dialog">
+                        <SlidersHorizontal size={14} /> 排序规则
                       </Button>
                     )}
                     <Button size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }}>
@@ -1086,13 +1085,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                     </Button>
                   </div>
                 </div>
-
-                {orderingDirty && <p className="muted" role="status">排序有未保存的更改，请保存后再收起。</p>}
-                {orderingPlan && orderingOpen && (
-                  <div className="signal-ordering-section">
-                    <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onDirtyChange={setOrderingDirty} onBusyChange={setOrderingBusy} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
-                  </div>
-                )}
 
                 <div className="card-custom plan-node-table-wrap" aria-busy={orderBusy}>
                   <table className="user-data-table plan-node-table" style={{ width: '100%' }}>
@@ -1245,6 +1237,22 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           )}
         </div>
       </PlanDetailShell>
+
+      <Dialog
+        isOpen={Boolean(orderingPlan) && orderingOpen}
+        onClose={closeOrdering}
+        title={plan ? `节点排序：${plan.name}` : '节点排序'}
+        placement="right"
+        drawerSize="wide"
+        className="signal-ordering-drawer"
+      >
+        {orderingPlan && <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onDirtyChange={setOrderingDirty} onBusyChange={setOrderingBusy} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />}
+      </Dialog>
+
+      <Dialog isOpen={discardOrderingOpen} onClose={() => setDiscardOrderingOpen(false)} title="放弃未保存的排序？" size="sm" footer={<>
+        <Button variant="outline" onClick={() => setDiscardOrderingOpen(false)}>继续编辑</Button>
+        <Button variant="destructive" onClick={() => { setDiscardOrderingOpen(false); setOrderingDirty(false); setOrderingOpen(false) }}>放弃更改</Button>
+      </>}><p>未保存的排序规则或手动顺序将丢失，已保存的版本不受影响。</p></Dialog>
 
       <Dialog isOpen={discardDetailOpen} onClose={() => setDiscardDetailOpen(false)} title="放弃未保存的更改？" size="sm" footer={<>
         <Button variant="outline" onClick={() => setDiscardDetailOpen(false)}>继续编辑</Button>

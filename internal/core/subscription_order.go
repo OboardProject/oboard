@@ -123,6 +123,7 @@ func ValidateNodeOrderTemplatePolicy(policy model.NodeOrderTemplatePolicy) (mode
 	out.EntryOrder = planPolicy.EntryOrder
 	out.NewNodePlacement = planPolicy.NewNodePlacement
 	out.UnmatchedPlacement = planPolicy.UnmatchedPlacement
+	out.GroupByLanding = planPolicy.GroupByLanding
 	return out, nil
 }
 
@@ -140,6 +141,7 @@ func SubscriptionPolicyFromTemplate(template model.NodeOrderTemplatePolicy, mode
 		EntryOrder:           append([]string(nil), template.EntryOrder...),
 		NewNodePlacement:     template.NewNodePlacement,
 		UnmatchedPlacement:   template.UnmatchedPlacement,
+		GroupByLanding:       template.GroupByLanding,
 	}
 }
 
@@ -173,6 +175,7 @@ type subscriptionOrderRank struct {
 	hasManual       bool
 	name            string
 	key             string
+	landingKey      string
 }
 
 // OrderSubscriptionNodes applies the revision ordering policy to the final
@@ -225,6 +228,7 @@ func OrderSubscriptionNodes(nodes []SubscriptionNode, policy model.SubscriptionN
 			manualPosition:  -1,
 			name:            node.Name,
 			key:             node.Key,
+			landingKey:      subscriptionNodeLandingKey(node),
 		}
 		if node.ManualPosition != nil {
 			rank.hasManual = true
@@ -277,6 +281,9 @@ func OrderSubscriptionNodes(nodes []SubscriptionNode, policy model.SubscriptionN
 			}
 			return a.key < b.key
 		})
+		if normalized.GroupByLanding {
+			ranked = groupRankedByLanding(ranked)
+		}
 	case model.SubscriptionNodeOrderEntry:
 		sort.Slice(ranked, func(i, j int) bool {
 			a, b := ranked[i].rank, ranked[j].rank
@@ -315,7 +322,7 @@ func OrderSubscriptionNodes(nodes []SubscriptionNode, policy model.SubscriptionN
 		if seedMode == "" {
 			seedMode = model.SubscriptionNodeOrderExitRegion
 		}
-		ranked = orderManualTail(ranked, seedMode)
+		ranked = orderManualTail(ranked, seedMode, normalized.GroupByLanding)
 	}
 	out := make([]SubscriptionNode, len(ranked))
 	for i := range ranked {
@@ -534,7 +541,7 @@ func insertStrings(input []string, at int, values []string) []string {
 	return out
 }
 
-func orderManualTail(ranked []rankedSubscriptionNode, seedMode model.SubscriptionNodeOrderMode) []rankedSubscriptionNode {
+func orderManualTail(ranked []rankedSubscriptionNode, seedMode model.SubscriptionNodeOrderMode, groupByLanding bool) []rankedSubscriptionNode {
 	placedCount := 0
 	for _, item := range ranked {
 		if item.rank.hasManual {
@@ -586,7 +593,59 @@ func orderManualTail(ranked []rankedSubscriptionNode, seedMode model.Subscriptio
 		}
 	}
 	sort.SliceStable(tail, func(i, j int) bool { return seed(tail[i].rank, tail[j].rank) })
+	if groupByLanding && seedMode != model.SubscriptionNodeOrderEntry {
+		tail = groupRankedByLanding(tail)
+	}
 	return append(head, tail...)
+}
+
+// subscriptionNodeLandingKey identifies the landing (final exit) of a node: a
+// controlled exit server or an imported external outbound. Nodes without a
+// resolved landing return "" and are never merged with each other.
+func subscriptionNodeLandingKey(node SubscriptionNode) string {
+	if node.ExitServerID > 0 {
+		return fmt.Sprintf("server:%d", node.ExitServerID)
+	}
+	if node.ExitExternalOutboundID > 0 {
+		return fmt.Sprintf("external:%d", node.ExitExternalOutboundID)
+	}
+	return ""
+}
+
+// groupRankedByLanding keeps the exit-region order and, inside each exit
+// region, pulls every path of the same landing next to that landing's first
+// (best ranked) node. Landing groups keep the order of their first member, and
+// nodes inside a group keep their relative order, so the result only
+// refines the region ordering and never moves a node across regions.
+func groupRankedByLanding(ranked []rankedSubscriptionNode) []rankedSubscriptionNode {
+	out := make([]rankedSubscriptionNode, 0, len(ranked))
+	for start := 0; start < len(ranked); {
+		end := start + 1
+		for end < len(ranked) && ranked[end].rank.exitRegionCode == ranked[start].rank.exitRegionCode {
+			end++
+		}
+		groups := map[string]int{}
+		buckets := [][]rankedSubscriptionNode{}
+		for _, item := range ranked[start:end] {
+			landing := item.rank.landingKey
+			if landing == "" {
+				buckets = append(buckets, []rankedSubscriptionNode{item})
+				continue
+			}
+			index, ok := groups[landing]
+			if !ok {
+				index = len(buckets)
+				groups[landing] = index
+				buckets = append(buckets, nil)
+			}
+			buckets[index] = append(buckets[index], item)
+		}
+		for _, bucket := range buckets {
+			out = append(out, bucket...)
+		}
+		start = end
+	}
+	return out
 }
 
 // buildRegionRank maps normalized region codes to their order index. Valid but

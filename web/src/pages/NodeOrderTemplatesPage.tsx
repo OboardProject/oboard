@@ -11,7 +11,7 @@ import { orderServerRegions } from '../region-order'
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 type Template = { id: number; name: string; description: string; enabled: boolean; revision: number; policy: TemplatePolicy; usage_count: number; updated_at: string; warnings?: string[] }
 
-const emptyPolicy = (): TemplatePolicy => ({ version: 1, base_mode: 'exit_region', exit_region_order: ['JP', 'HK', 'SG', 'TW', 'US'], entry_region_order_mode: 'inherit_exit', entry_region_order: [], entry_order: [], new_node_placement: 'by_template', unmatched_placement: 'append' })
+const emptyPolicy = (): TemplatePolicy => ({ version: 1, base_mode: 'exit_region', exit_region_order: ['JP', 'HK', 'SG', 'TW', 'US'], entry_region_order_mode: 'inherit_exit', entry_region_order: [], entry_order: [], new_node_placement: 'by_template', unmatched_placement: 'append', group_by_landing: true })
 
 export function NodeOrderTemplatesPage({ data, client, notify }: { data: any; client: AnyClient; notify?: (message: string, tone?: any) => void }) {
   const [templates, setTemplates] = React.useState<Template[]>([])

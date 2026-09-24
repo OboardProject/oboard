@@ -16,6 +16,7 @@ export type TemplatePolicy = {
   entry_order: string[]
   new_node_placement: 'by_template' | 'append' | 'pending'
   unmatched_placement: 'append' | 'pending'
+  group_by_landing?: boolean
 }
 
 export type EntryOption = { key: string; label: string; region: string }
@@ -90,6 +91,14 @@ export function NodeOrderTemplateEditor({ policy, onChange, regionCodes, entries
         <RuleList items={activeRegions} onChange={items => update(regionField, items as any)} />
         <div className="template-add-rule"><Input value={regionInput} onChange={event => setRegionInput(event.target.value)} placeholder="地区代码，如 JP" maxLength={2} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addRegion() } }} /><Button type="button" variant="outline" size="sm" onClick={addRegion}><Plus size={14} /> 添加</Button></div>
       </section>
+      {policy.base_mode === 'exit_region' && (
+        <section>
+          <div className="switch-setting-row" style={{ padding: '4px 0' }}>
+            <span className="switch-setting-label">同一落地的路径排在一起<small className="muted" style={{ display: 'block', fontWeight: 400 }}>同一出口地区内，到达同一落地的路径相邻排列</small></span>
+            <Switch checked={Boolean(policy.group_by_landing)} onChange={checked => update('group_by_landing', checked)} ariaLabel="同一落地的路径排在一起" />
+          </div>
+        </section>
+      )}
       {policy.base_mode === 'entry' && (
         <section>
           <h4>具体入口顺序</h4>

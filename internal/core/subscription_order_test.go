@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"math/rand"
 	"sort"
 	"testing"
@@ -450,4 +451,58 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestExitRegionGroupByLandingKeepsSameLandingAdjacent(t *testing.T) {
+	landing := func(node SubscriptionNode, exitServerID, externalID int64) SubscriptionNode {
+		node.ExitServerID = exitServerID
+		node.ExitExternalOutboundID = externalID
+		return node
+	}
+	nodes := []SubscriptionNode{
+		landing(orderTestNode("proxy_path:1", "a", "g", "inbound:1", 1, 1, "HK", "JP", nil), 10, 0),
+		landing(orderTestNode("proxy_path:2", "b", "g", "inbound:2", 2, 2, "HK", "JP", nil), 11, 0),
+		landing(orderTestNode("proxy_path:3", "c", "g", "inbound:3", 3, 3, "SG", "JP", nil), 10, 0),
+		landing(orderTestNode("proxy_path:4", "d", "g", "inbound:4", 4, 4, "SG", "JP", nil), 0, 7),
+		landing(orderTestNode("proxy_path:5", "e", "g", "inbound:5", 5, 5, "US", "JP", nil), 0, 7),
+		landing(orderTestNode("proxy_path:6", "f", "g", "inbound:1", 1, 1, "HK", "US", nil), 10, 0),
+	}
+	policy := model.NewSubscriptionNodeOrderPolicy()
+	policy.ExitRegionOrder = []string{"JP", "US"}
+	policy.EntryRegionOrderMode = model.SubscriptionNodeEntryRegionOrderCustom
+	policy.EntryRegionOrder = []string{"HK", "SG", "US"}
+
+	policy.GroupByLanding = false
+	plain := keysOf(OrderSubscriptionNodes(nodes, policy))
+	wantPlain := []string{"proxy_path:1", "proxy_path:2", "proxy_path:3", "proxy_path:4", "proxy_path:5", "proxy_path:6"}
+	if !equalStrings(plain, wantPlain) {
+		t.Fatalf("ungrouped order = %v, want %v", plain, wantPlain)
+	}
+
+	policy.GroupByLanding = true
+	grouped := keysOf(OrderSubscriptionNodes(nodes, policy))
+	wantGrouped := []string{"proxy_path:1", "proxy_path:3", "proxy_path:2", "proxy_path:4", "proxy_path:5", "proxy_path:6"}
+	if !equalStrings(grouped, wantGrouped) {
+		t.Fatalf("grouped order = %v, want %v", grouped, wantGrouped)
+	}
+
+	policy.Mode = model.SubscriptionNodeOrderManual
+	manual := keysOf(OrderSubscriptionNodes(nodes, policy))
+	if !equalStrings(manual, wantGrouped) {
+		t.Fatalf("manual seed tail = %v, want %v", manual, wantGrouped)
+	}
+}
+
+func TestStoredPolicyWithoutGroupByLandingKeepsOrder(t *testing.T) {
+	var policy model.SubscriptionNodeOrderPolicy
+	if err := json.Unmarshal([]byte(`{"version":2,"mode":"exit_region","exit_region_order":[],"entry_region_order_mode":"inherit_exit","entry_region_order":[],"entry_order":[]}`), &policy); err != nil {
+		t.Fatal(err)
+	}
+	if policy.GroupByLanding {
+		t.Fatal("stored policy must not enable landing grouping implicitly")
+	}
+	normalized, err := ValidateSubscriptionNodeOrderPolicy(policy)
+	if err != nil || normalized.GroupByLanding {
+		t.Fatalf("normalized = %+v, %v", normalized, err)
+	}
 }
