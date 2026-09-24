@@ -4,8 +4,7 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(new URL('../../style.css', import.meta.url), 'utf8')
 const html = readFileSync(new URL('../../../index.html', import.meta.url), 'utf8')
 const light = css.slice(css.indexOf(':root {'), css.indexOf(':root[data-theme="dark"]'))
-const dark = css.slice(css.indexOf(':root[data-theme="dark"]'), css.indexOf(':root[data-theme="glass"]'))
-const glass = css.slice(css.indexOf(':root[data-theme="glass"]'), css.indexOf('* { box-sizing'))
+const dark = css.slice(css.indexOf(':root[data-theme="dark"]'), css.indexOf('* { box-sizing'))
 
 function token(source: string, name: string): string {
   const value = new RegExp(`--${name}:\\s*([^;]+);`).exec(source)?.[1]
@@ -29,7 +28,7 @@ function contrast(a: number[], b: number[]): number {
 }
 
 describe('Calm Infrastructure shared design contract', () => {
-  for (const [name, palette] of [['light', light], ['dark', dark], ['glass', glass]]) {
+  for (const [name, palette] of [['light', light], ['dark', dark]]) {
     it(`${name} body, captions and semantic statuses meet normal-text contrast`, () => {
       for (const surface of ['bg-page', 'bg-card', 'bg-control']) {
         const background = rgb(token(palette, surface))

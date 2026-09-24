@@ -118,7 +118,6 @@ import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-bind
 import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
-import './styles/liquid-glass.css'
 import './components/proxy-path/ProxyCanvas.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
@@ -3917,7 +3916,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </SettingsGroup>
       </section>}
-      {activeSection === 'appearance' && <AppearanceSettingsPanel theme={theme} onThemeChange={onThemeChange} notify={notify} />}
+      {activeSection === 'appearance' && <AppearanceSettingsPanel notify={notify} />}
       {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={dialogs.confirm} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" className="settings-card">
