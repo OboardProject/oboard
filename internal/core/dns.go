@@ -278,6 +278,34 @@ func DNSBenchmarkPlanForPolicy(version int64, policy model.ServerDNSPolicy, encr
 	}, nil
 }
 
+// ServerDNSListNamePrefix is reserved for server-owned custom resolver lists;
+// shared lists may not use it.
+const ServerDNSListNamePrefix = "@server/"
+
+// ServerDNSListName is the stable name of a server's custom list of one kind.
+func ServerDNSListName(serverID int64, kind model.DNSListKind) string {
+	return fmt.Sprintf("%s%d/%s", ServerDNSListNamePrefix, serverID, kind)
+}
+
+// ServerDNSCustomList builds the server-owned list a custom policy group binds.
+func ServerDNSCustomList(serverID int64, kind model.DNSListKind, candidates []model.DNSCandidate) model.DNSList {
+	return model.DNSList{Name: ServerDNSListName(serverID, kind), Kind: kind, Candidates: candidates, Enabled: true, OwnerServerID: serverID}
+}
+
+// ServerDNSCustomCandidates copies custom resolvers and gives every untagged
+// candidate a stable positional tag, so a caller may submit bare addresses.
+func ServerDNSCustomCandidates(items []model.DNSCandidate) []model.DNSCandidate {
+	out := make([]model.DNSCandidate, len(items))
+	for i, item := range items {
+		item.Tag = strings.TrimSpace(item.Tag)
+		if item.Tag == "" {
+			item.Tag = fmt.Sprintf("custom-%d", i+1)
+		}
+		out[i] = item
+	}
+	return out
+}
+
 func ValidateDNSList(v model.DNSList) error {
 	if strings.TrimSpace(v.Name) == "" {
 		return errors.New("dns list name is required")
@@ -285,7 +313,19 @@ func ValidateDNSList(v model.DNSList) error {
 	if v.Kind != model.DNSListEncrypted && v.Kind != model.DNSListBootstrap {
 		return fmt.Errorf("unsupported dns list kind %q", v.Kind)
 	}
-	if len(v.Candidates) < 2 || len(v.Candidates) > 32 {
+	if v.OwnerServerID == 0 && strings.HasPrefix(strings.TrimSpace(v.Name), ServerDNSListNamePrefix) {
+		return fmt.Errorf("dns list name prefix %q is reserved for server custom resolvers", ServerDNSListNamePrefix)
+	}
+	// A server's custom resolvers may be a single resolver; a shared list
+	// keeps at least two so every server binding it has a failover candidate.
+	minimum := 2
+	if v.OwnerServerID != 0 {
+		minimum = 1
+	}
+	if len(v.Candidates) < minimum || len(v.Candidates) > 32 {
+		if minimum == 1 {
+			return errors.New("custom dns resolvers must contain between 1 and 32 candidates")
+		}
 		return errors.New("dns list must contain between 2 and 32 candidates")
 	}
 	seen := map[string]bool{}

@@ -3,10 +3,11 @@ import { Select } from '../../ui/select'
 import { Switch } from '../../ui/switch'
 import { FormField } from '../../ui/form-field'
 import { dnsPolicyErrorText } from '../../../dns-status'
+import { DNSResolverFields, dnsResolverDraft, dnsResolverPayload } from './DNSResolverFields'
 import type { Server } from '../../proxy-path/types'
 
-type DNSList = { id:number; name:string; kind:string; revision:number; candidates:any[]; enabled:boolean }
-type ServerDNSPolicy = { server_id:number; encrypted_list_id:number; bootstrap_list_id:number; revision:number; strategy:string; auto_test:string; test_interval_seconds:number; encrypted_selected:any[]|null; bootstrap_selected:any[]|null; last_success_at?:string; last_error:string }
+type DNSList = { id:number; name:string; kind:string; revision:number; candidates:any[]; enabled:boolean; protected?:boolean; owner_server_id?:number }
+type ServerDNSPolicy = { server_id:number; encrypted_list_id:number; bootstrap_list_id:number; encrypted_source?:string; bootstrap_source?:string; encrypted_candidates?:any[]|null; bootstrap_candidates?:any[]|null; revision:number; strategy:string; auto_test:string; test_interval_seconds:number; encrypted_selected:any[]|null; bootstrap_selected:any[]|null; last_success_at?:string; last_error:string }
 type DNSBenchmarkResult = { encrypted:any; bootstrap:any; status:string; error:string; created_at:string }
 
 function labelValue(v:any){ const m:Record<string,string>={ auto:'跟随服务器', prefer_ipv4:'优先 IPv4', prefer_ipv6:'优先 IPv6', ipv4_only:'仅 IPv4', ipv6_only:'仅 IPv6'}; return m[String(v)]||String(v) }
@@ -23,16 +24,7 @@ function isDNSPolicyStale(policy?: ServerDNSPolicy, lists: DNSList[]=[]){
   return Boolean(p.needs_benchmark)
 }
 function dnsPolicyDraft(policy?: ServerDNSPolicy, lists: DNSList[]=[]){
-  // pick first enabled lists as fallback
-  const encFallback = lists.find(l=> l.kind==='encrypted' && l.enabled)?.id || lists.find(l=> l.kind==='encrypted')?.id || 0
-  const bootFallback = lists.find(l=> l.kind==='bootstrap' && l.enabled)?.id || lists.find(l=> l.kind==='bootstrap')?.id || 0
-  return {
-    // 0 是「不使用加密解析」，不能回落到默认列表。
-    encryptedListID: policy ? policy.encrypted_list_id : encFallback,
-    bootstrapListID: policy?.bootstrap_list_id || bootFallback,
-    strategy: policy?.strategy || 'auto',
-    hourlyTest: policy?.auto_test==='periodic',
-  }
+  return dnsResolverDraft(policy, lists)
 }
 function DNSGroupStatus({ title, selected, group }: { title:string; selected:any[]|null; group?: any }){
   const best = group?.best_tags?.join(' · ') || '—'
@@ -84,13 +76,7 @@ function NetworkDNSSession({ server, policy, lists, benchmarks, client, notify, 
   }
 
   const save = async()=>{
-    const response = await client.request(`/servers/${server.id}/dns-policy`, { method:'PUT', body: JSON.stringify({
-      encrypted_list_id: draft.encryptedListID,
-      bootstrap_list_id: draft.bootstrapListID,
-      strategy: draft.strategy,
-      auto_test: draft.hourlyTest ? 'periodic':'first_apply',
-      test_interval_seconds: 3600,
-    })})
+    const response = await client.request(`/servers/${server.id}/dns-policy`, { method:'PUT', body: JSON.stringify(dnsResolverPayload(draft))})
     return response.dns_policy as ServerDNSPolicy
   }
   const run = async(action:'save'|'test'|'test_and_apply')=>{
@@ -130,22 +116,11 @@ function NetworkDNSSession({ server, policy, lists, benchmarks, client, notify, 
         <span className={policy?.last_error ? 'has-error':''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status==='stale' ? '测试结果已过期':'无异常'}</strong><small>{dnsPolicyErrorText(policy?.last_error, policy) || dnsPolicyErrorText(latest?.error, policy) || '—'}</small></span>
       </div>
       {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新测试</strong><span>旧的测试结果已停止使用。</span></div>}
-      <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected||[]} group={latest?.encrypted} /> : <div className="dns-group-status"><strong>加密解析</strong><span>未启用</span><span>仅使用普通解析</span></div>}<DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected||[]} group={latest?.bootstrap} /></div>
+      <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title={policy.encrypted_source==='custom' ? '加密解析（自定义）' : '加密解析'} selected={policy?.encrypted_selected||[]} group={latest?.encrypted} /> : <div className="dns-group-status"><strong>加密解析</strong><span>未启用</span><span>仅使用普通解析</span></div>}<DNSGroupStatus title={policy?.bootstrap_source==='custom' ? '基础解析（自定义）' : '基础解析'} selected={policy?.bootstrap_selected||[]} group={latest?.bootstrap} /></div>
       {conflict && <div role="status" className="access-note warning"><strong>DNS 策略已在其他位置更新</strong><span>您的输入已保留。请先查看最新配置，再重新编辑，避免覆盖他人的修改。</span><button type="button" className="ghost" disabled={Boolean(working)} onClick={useLatest}>放弃当前草稿，载入最新配置</button></div>}
       {error && <p role="alert" className="danger-text">{error}</p>}
       <div className="form dns-settings-form labeled-form">
-        <FormField label="加密解析服务列表" full>
-          <Select value={draft.encryptedListID} onChange={e=> setDraft({...draft, encryptedListID:Number(e.target.value)})} disabled={disabled}>
-            <option value={0}>不使用加密解析（仅普通解析）</option>
-            {lists.filter(l=> l.kind==='encrypted' && (l.enabled || l.id===policy?.encrypted_list_id)).map(l=> <option key={l.id} value={l.id}>{l.name} · {l.candidates.length} 项</option>)}
-          </Select>
-          {draft.encryptedListID===0 && <small className="muted">服务器将只用普通解析查询域名，查询内容在链路上不加密。</small>}
-        </FormField>
-        <FormField label="基础解析服务列表" full>
-          <Select value={draft.bootstrapListID} onChange={e=> setDraft({...draft, bootstrapListID:Number(e.target.value)})} disabled={disabled}>
-            {lists.filter(l=> l.kind==='bootstrap' && (l.enabled || l.id===policy?.bootstrap_list_id)).map(l=> <option key={l.id} value={l.id}>{l.name} · {l.candidates.length} 项</option>)}
-          </Select>
-        </FormField>
+        <DNSResolverFields draft={draft} setDraft={setDraft} lists={lists} policy={policy} disabled={disabled} />
         <FormField label="IP 类型">
           <Select value={draft.strategy} onChange={e=> setDraft({...draft, strategy: e.target.value})} disabled={disabled}>
             <option value="auto">跟随服务器</option>

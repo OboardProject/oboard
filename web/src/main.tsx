@@ -244,6 +244,8 @@ import {
 } from './controller-update-diagnostics'
 import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
+import { dnsCandidateInput, parseDNSCandidate } from './dns-candidate'
+import { DNSResolverFields, dnsResolverDraft, dnsResolverPayload, isSharedDNSList } from './components/server/network/DNSResolverFields'
 import { latencyChartRequestPath, type LatencyChartResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
@@ -442,10 +444,10 @@ type AuthenticationStatus = { totp_enabled: boolean; recovery_codes_remaining: n
 type DNSTransport = 'udp' | 'tcp' | 'dot' | 'doh' | 'doq'
 type DNSListKind = 'encrypted' | 'bootstrap'
 type DNSCandidate = { tag: string; transport: DNSTransport; server: string; port: number; path?: string; tls_name?: string }
-type DNSList = { id: number; name: string; kind: DNSListKind; revision: number; candidates: DNSCandidate[]; enabled: boolean; protected: boolean; usage_count: number; created_at?: string; updated_at?: string }
+type DNSList = { id: number; name: string; kind: DNSListKind; revision: number; candidates: DNSCandidate[]; enabled: boolean; protected: boolean; usage_count: number; owner_server_id?: number; created_at?: string; updated_at?: string }
 type DNSCandidateDraft = { id: number; name: string; address: string }
 type DNSListDraft = { name: string; kind: DNSListKind; enabled: boolean; candidates: DNSCandidateDraft[] }
-type ServerDNSPolicy = { server_id: number; encrypted_list_id: number; bootstrap_list_id: number; revision: number; strategy: string; auto_test: 'never' | 'first_apply' | 'periodic'; test_interval_seconds: number; encrypted_selected: DNSCandidate[] | null; bootstrap_selected: DNSCandidate[] | null; encrypted_selection_revision: number; bootstrap_selection_revision: number; last_attempt_at?: string; last_success_at?: string; last_error: string; needs_benchmark: boolean; updated_at?: string }
+type ServerDNSPolicy = { server_id: number; encrypted_list_id: number; bootstrap_list_id: number; encrypted_source?: 'none' | 'shared' | 'custom'; bootstrap_source?: 'shared' | 'custom'; encrypted_candidates?: DNSCandidate[] | null; bootstrap_candidates?: DNSCandidate[] | null; revision: number; strategy: string; auto_test: 'never' | 'first_apply' | 'periodic'; test_interval_seconds: number; encrypted_selected: DNSCandidate[] | null; bootstrap_selected: DNSCandidate[] | null; encrypted_selection_revision: number; bootstrap_selection_revision: number; last_attempt_at?: string; last_success_at?: string; last_error: string; needs_benchmark: boolean; updated_at?: string }
 type DNSBenchmarkItem = { tag: string; latency_ms: number; error?: string }
 type DNSBenchmarkGroup = { items: DNSBenchmarkItem[] | null; best_tags: string[] | null }
 type DNSBenchmarkResult = { id: number; report_id: string; request_id?: string; server_id: number; policy_revision: number; encrypted_list_id: number; encrypted_list_revision: number; bootstrap_list_id: number; bootstrap_list_revision: number; encrypted: DNSBenchmarkGroup; bootstrap: DNSBenchmarkGroup; status: string; error: string; created_at: string }
@@ -18360,40 +18362,6 @@ function dnsTransportLabel(value: DNSTransport) {
   return ({ udp: 'UDP', tcp: 'TCP', dot: 'DoT', doh: 'DoH', doq: 'DoQ' } as Record<DNSTransport, string>)[value]
 }
 
-function dnsDefaultPort(transport: DNSTransport) {
-  if (transport === 'doh') return 443
-  if (transport === 'dot' || transport === 'doq') return 853
-  return 53
-}
-
-function dnsCandidateInput(candidate?: DNSCandidate) {
-  if (!candidate?.server) return ''
-  const scheme = ({ udp: 'udp', tcp: 'tcp', dot: 'tls', doh: 'https', doq: 'quic' } as Record<DNSTransport, string>)[candidate.transport]
-  const defaultPort = dnsDefaultPort(candidate.transport)
-  const port = candidate.port && candidate.port !== defaultPort ? `:${candidate.port}` : ''
-  const host = candidate.server.includes(':') && !candidate.server.startsWith('[') ? `[${candidate.server}]` : candidate.server
-  return `${scheme}://${host}${port}${candidate.transport === 'doh' ? candidate.path || '/dns-query' : ''}`
-}
-
-function parseDNSCandidate(value: string, fallback: DNSTransport, tag: string): DNSCandidate | null {
-  const raw = value.trim()
-  if (!raw) return null
-  const withScheme = /^[a-z]+:\/\//i.test(raw) ? raw : `${fallback === 'dot' ? 'tls' : fallback === 'doh' ? 'https' : fallback === 'doq' ? 'quic' : fallback}://${raw}`
-  let parsed: URL
-  try { parsed = new URL(withScheme) } catch { throw new Error(`DNS 地址无效：${raw}`) }
-  const transport = ({ udp: 'udp', tcp: 'tcp', tls: 'dot', dot: 'dot', https: 'doh', doh: 'doh', quic: 'doq', doq: 'doq' } as Record<string, DNSTransport>)[parsed.protocol.replace(':', '')]
-  if (!transport || !parsed.hostname) throw new Error(`DNS 地址无效：${raw}`)
-  const server = parsed.hostname.replace(/^\[|\]$/g, '')
-  return {
-    tag,
-    transport,
-    server,
-    port: parsed.port ? Number(parsed.port) : dnsDefaultPort(transport),
-    ...(transport === 'doh' ? { path: parsed.pathname || '/dns-query' } : {}),
-    ...(['dot', 'doh', 'doq'].includes(transport) ? { tls_name: server } : {}),
-  }
-}
-
 let dnsCandidateDraftSequence = 0
 
 function dnsCandidateDraft(name = '', address = ''): DNSCandidateDraft {
@@ -18570,7 +18538,7 @@ function DNSListSettings({ data, client, load, notify }: any) {
       ],
     },
   ]
-  const visible = lists.filter(list => list.kind === filter)
+  const visible = lists.filter(list => list.kind === filter && isSharedDNSList(list))
   return <section className="settings-card dns-lists-card">
     <div className="settings-card-head"><div><h3>解析服务</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务；标记为默认的列表会被新建服务器直接使用。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建解析列表</button></div>
     <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select></div>
@@ -18586,14 +18554,7 @@ function DNSListSettings({ data, client, load, notify }: any) {
 }
 
 function dnsPolicyDraft(policy: ServerDNSPolicy | undefined, lists: DNSList[]) {
-  const fallbackListID = (kind: DNSListKind) => lists.find(list => list.kind === kind && list.enabled && list.protected)?.id || lists.find(list => list.kind === kind && list.enabled)?.id || 0
-  return {
-    // 0 是「不使用加密解析」，已保存的策略不能回落到默认列表。
-    encryptedListID: policy ? Number(policy.encrypted_list_id) : Number(fallbackListID('encrypted')),
-    bootstrapListID: Number(policy?.bootstrap_list_id || fallbackListID('bootstrap')),
-    strategy: policy?.strategy || 'auto',
-    hourlyTest: policy?.auto_test === 'periodic',
-  }
+  return dnsResolverDraft(policy, lists)
 }
 
 function DNSGroupStatus({ title, selected, group }: { title: string; selected: DNSCandidate[]; group?: DNSBenchmarkGroup }) {
@@ -18616,13 +18577,7 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
   const stale = status === 'stale'
   useEffect(() => setDraft(dnsPolicyDraft(policy, lists)), [policy?.revision, lists.length])
   const save = async () => {
-    const response = await client.request(`/servers/${server.id}/dns-policy`, { method: 'PUT', body: JSON.stringify({
-      encrypted_list_id: draft.encryptedListID,
-      bootstrap_list_id: draft.bootstrapListID,
-      strategy: draft.strategy,
-      auto_test: draft.hourlyTest ? 'periodic' : 'first_apply',
-      test_interval_seconds: 3600,
-    }) })
+    const response = await client.request(`/servers/${server.id}/dns-policy`, { method: 'PUT', body: JSON.stringify(dnsResolverPayload(draft)) })
     await onChanged()
     return response.dns_policy as ServerDNSPolicy
   }
@@ -18649,10 +18604,9 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
     <div className="dialog-body dns-settings-body">
       <div className="dns-status-strip"><span><strong>{dnsPolicyStatusLabel(status)}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span><span><strong>{draft.hourlyTest ? '每小时自动测试' : '关闭自动测试'}</strong><small>自动测试只更新测试结果，不会修改服务器配置</small></span><span className={policy?.last_error ? 'has-error' : ''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status === 'stale' ? '测试结果已过期' : '无异常'}</strong><small>{dnsPolicyErrorText(policy?.last_error, policy) || dnsPolicyErrorText(latest?.error, policy) || (policy?.last_attempt_at ? `最后尝试 ${formatTableTime(policy.last_attempt_at)}` : '—')}</small></span></div>
       {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新测试</strong><span>旧的测试结果已停止使用。</span></div>}
-      <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected || []} group={latest?.encrypted} /> : <div className="dns-group-status"><header><strong>加密解析</strong><span>未启用</span></header><div><small>说明</small><strong>仅普通解析</strong><span /></div></div>}<DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected || []} group={latest?.bootstrap} /></div>
+      <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title={policy.encrypted_source === 'custom' ? '加密解析（自定义）' : '加密解析'} selected={policy?.encrypted_selected || []} group={latest?.encrypted} /> : <div className="dns-group-status"><header><strong>加密解析</strong><span>未启用</span></header><div><small>说明</small><strong>仅普通解析</strong><span /></div></div>}<DNSGroupStatus title={policy?.bootstrap_source === 'custom' ? '基础解析（自定义）' : '基础解析'} selected={policy?.bootstrap_selected || []} group={latest?.bootstrap} /></div>
       <div className="form dns-settings-form labeled-form">
-        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => setDraft({ ...draft, encryptedListID: Number(event.target.value) })}><option value={0}>不使用加密解析（仅普通解析）</option>{lists.filter(list => list.kind === 'encrypted' && (list.enabled || list.id === policy?.encrypted_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select>{draft.encryptedListID === 0 && <small className="muted">服务器将只用普通解析查询域名，查询内容在链路上不加密。</small>}</FormField>
-        <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => setDraft({ ...draft, bootstrapListID: Number(event.target.value) })}>{lists.filter(list => list.kind === 'bootstrap' && (list.enabled || list.id === policy?.bootstrap_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
+        <DNSResolverFields draft={draft} setDraft={setDraft} lists={lists} policy={policy} />
         <FormField label="IP 类型"><Select value={draft.strategy} onChange={event => setDraft({ ...draft, strategy: event.target.value })}><option value="auto">跟随服务器</option><option value="prefer_ipv4">优先 IPv4</option><option value="prefer_ipv6">优先 IPv6</option><option value="ipv4_only">仅 IPv4</option><option value="ipv6_only">仅 IPv6</option></Select></FormField>
         <FormField label="每小时自动测试">
           <Switch checked={draft.hourlyTest} onChange={checked => setDraft({ ...draft, hourlyTest: checked })} ariaLabel="启用每小时自动测试" />
@@ -18778,8 +18732,8 @@ function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSe
         <ul>{skipped.map(result => <li key={result.serverID}><span>{serverNames.get(result.serverID) || `服务器 #${result.serverID}`}</span><small>{result.message}</small></li>)}</ul>
       </div>}
       <div className="form dns-settings-form dns-bulk-settings-form labeled-form">
-        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => updateDraft({ encryptedListID: event.target.value })}><option value="">保持各服务器当前设置</option><option value="0">不使用加密解析（仅普通解析）</option>{lists.filter(list => list.kind === 'encrypted' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
-        <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => updateDraft({ bootstrapListID: event.target.value })}><option value="">保持各服务器当前设置</option>{lists.filter(list => list.kind === 'bootstrap' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
+        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => updateDraft({ encryptedListID: event.target.value })}><option value="">保持各服务器当前设置</option><option value="0">不使用加密解析（仅普通解析）</option>{lists.filter(list => list.kind === 'encrypted' && list.enabled && isSharedDNSList(list)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
+        <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => updateDraft({ bootstrapListID: event.target.value })}><option value="">保持各服务器当前设置</option>{lists.filter(list => list.kind === 'bootstrap' && list.enabled && isSharedDNSList(list)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
         <FormField label="IP 类型"><Select value={draft.strategy} onChange={event => updateDraft({ strategy: event.target.value })}><option value="">保持各服务器当前设置</option><option value="auto">跟随服务器</option><option value="prefer_ipv4">优先 IPv4</option><option value="prefer_ipv6">优先 IPv6</option><option value="ipv4_only">仅 IPv4</option><option value="ipv6_only">仅 IPv6</option></Select></FormField>
         <FormField label="自动测试"><Select value={draft.autoTest} onChange={event => updateDraft({ autoTest: event.target.value })}><option value="">保持各服务器当前设置</option><option value="periodic">每小时自动测试</option><option value="first_apply">关闭自动测试</option></Select></FormField>
       </div>
@@ -18890,8 +18844,8 @@ function buildDNSPolicyRows(policies: ServerDNSPolicy[], servers: Server[], list
       status: dnsPolicyStatus(policy, lists),
       encryptedListID: Number(policy.encrypted_list_id || 0),
       bootstrapListID: Number(policy.bootstrap_list_id || 0),
-      encryptedListName: listByID.get(Number(policy.encrypted_list_id))?.name || '不使用加密解析',
-      bootstrapListName: listByID.get(Number(policy.bootstrap_list_id))?.name || '未选择',
+      encryptedListName: policy.encrypted_source === 'custom' ? '自定义加密解析' : listByID.get(Number(policy.encrypted_list_id))?.name || '不使用加密解析',
+      bootstrapListName: policy.bootstrap_source === 'custom' ? '自定义基础解析' : listByID.get(Number(policy.bootstrap_list_id))?.name || '未选择',
     }
   }).sort((a, b) => compareDNSPolicyStatus(a.status, b.status) || a.serverName.localeCompare(b.serverName, 'zh-Hans-CN'))
 }

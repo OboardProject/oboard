@@ -66,3 +66,53 @@ it('disables periodic testing in read-only mode', () => {
   expect(toggle.disabled).toBe(true)
   expect(button('仅保存').disabled).toBe(true)
 })
+
+it('saves server-only custom resolvers and reloads them from the policy', async () => {
+  const client = { request: vi.fn(async (_path: string, init: RequestInit) => ({ dns_policy: { ...policy, ...JSON.parse(String(init.body)), revision: 2 } })) }
+  act(() => root.render(<NetworkDNSTab server={server} policy={policy} lists={lists} benchmarks={[]} client={client} />))
+  const bootstrap = host.querySelectorAll('select')[1]
+  act(() => {
+    bootstrap.value = '-1'
+    bootstrap.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const textarea = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="自定义基础解析服务"]')!
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '223.5.5.5\ntcp://8.8.8.8:5353')
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => button('仅保存').click())
+  const body = JSON.parse(String(client.request.mock.calls[0][1].body))
+  expect(body.encrypted_list_id).toBe(0)
+  expect(body.bootstrap_list_id).toBe(0)
+  expect(body.encrypted_candidates).toBeUndefined()
+  expect(body.bootstrap_candidates).toEqual([
+    { tag: 'custom-1', transport: 'udp', server: '223.5.5.5', port: 53 },
+    { tag: 'custom-2', transport: 'tcp', server: '8.8.8.8', port: 5353 },
+  ])
+
+  act(() => root.unmount())
+  root = createRoot(host)
+  const saved = { ...policy, revision: 3, bootstrap_list_id: 9, bootstrap_source: 'custom', bootstrap_candidates: body.bootstrap_candidates }
+  act(() => root.render(<NetworkDNSTab server={server} policy={saved} lists={[...lists, { id: 9, name: '@server/1/bootstrap', kind: 'bootstrap', revision: 1, candidates: body.bootstrap_candidates, enabled: true, owner_server_id: 1 }]} benchmarks={[]} client={client} />))
+  expect(host.querySelectorAll('select')[1].value).toBe('-1')
+  expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="自定义基础解析服务"]')!.value).toBe('udp://223.5.5.5\ntcp://8.8.8.8:5353')
+  expect(host.textContent).not.toContain('@server/1/bootstrap')
+})
+
+it('rejects a custom encrypted resolver that is not encrypted', async () => {
+  const client = { request: vi.fn() }
+  act(() => root.render(<NetworkDNSTab server={server} policy={policy} lists={lists} benchmarks={[]} client={client} />))
+  const encrypted = host.querySelectorAll('select')[0]
+  act(() => {
+    encrypted.value = '-1'
+    encrypted.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const textarea = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="自定义加密解析服务"]')!
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'udp://1.1.1.1')
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => button('仅保存').click())
+  expect(client.request).not.toHaveBeenCalled()
+  expect(host.textContent).toContain('加密解析服务只支持 DoH、DoT 或 DoQ')
+})

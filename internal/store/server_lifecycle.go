@@ -51,6 +51,10 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 		{`delete from node_publication_isolations where server_id=? or incident_id in (select id from node_incidents where server_id=?)`, []any{serverID, serverID}},
 		{`delete from node_incidents where server_id=?`, []any{serverID}},
 		{`delete from inbounds where server_id=?`, []any{serverID}},
+		// The policy binds the server's custom resolver lists with
+		// `on delete restrict`, so it goes before them.
+		{`delete from server_dns_policies where server_id=?`, []any{serverID}},
+		{`delete from dns_lists where owner_server_id=?`, []any{serverID}},
 		{`delete from servers where id=?`, []any{serverID}},
 	} {
 		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {

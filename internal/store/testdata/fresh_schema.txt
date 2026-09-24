@@ -50,6 +50,7 @@ index idx_dns_bench_server on dns_benchmark_results
 index idx_dns_credential_zones_credential on dns_credential_zones
 index idx_dns_credential_zones_server on dns_credential_zones
 index idx_dns_lists_kind_enabled on dns_lists
+index idx_dns_lists_owner_kind on dns_lists
 index idx_dns_runs_server_created on dns_benchmark_runs
 index idx_event_outbox_pending on event_outbox
 index idx_family_split_templates_name on family_split_templates
@@ -1036,6 +1037,7 @@ table dns_lists
     candidates_json TEXT notnull=1 default=- pk=0
     enabled INTEGER notnull=1 default=1 pk=0
     protected INTEGER notnull=1 default=0 pk=0
+    owner_server_id INTEGER notnull=0 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
 table dns_record_metadata
@@ -2147,6 +2149,7 @@ table servers
     mtu_probe_port INTEGER notnull=1 default=443 pk=0
     mtu_overhead_bytes INTEGER notnull=1 default=0 pk=0
     bbr_enabled INTEGER notnull=1 default=0 pk=0
+    tcp_tuning_enabled INTEGER notnull=1 default=0 pk=0
     stealth_enabled INTEGER notnull=1 default=0 pk=0
     port_range_start INTEGER notnull=1 default=10000 pk=0
     port_range_end INTEGER notnull=1 default=20000 pk=0

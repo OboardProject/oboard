@@ -6130,9 +6130,10 @@ func (s *Server) serverDNSPolicy(w http.ResponseWriter, r *http.Request, id int6
 			return
 		}
 		policy.ServerID = id
-		// encrypted_list_id 0 means the server uses plain DNS only.
-		if policy.EncryptedListID < 0 || policy.BootstrapListID == 0 {
-			fail(w, errors.New("bootstrap_list_id is required and encrypted_list_id must not be negative"), 400)
+		// encrypted_list_id 0 means the server uses plain DNS only; a custom
+		// group carries its resolvers instead of a list id.
+		if err := validateDNSPolicySources(policy); err != nil {
+			fail(w, err, 400)
 			return
 		}
 		if policy.Strategy == "" {
@@ -6162,6 +6163,20 @@ func (s *Server) serverDNSPolicy(w http.ResponseWriter, r *http.Request, id int6
 	default:
 		method(w)
 	}
+}
+
+// validateDNSPolicySources checks the shape of a policy write. Each resolver
+// group binds a list id or carries custom candidates; encrypted_list_id 0
+// without candidates means plain DNS only. The *_source fields are derived on
+// read and ignored on write.
+func validateDNSPolicySources(policy model.ServerDNSPolicy) error {
+	if policy.EncryptedListID < 0 || policy.BootstrapListID < 0 {
+		return errors.New("dns list ids must not be negative")
+	}
+	if policy.BootstrapListID == 0 && len(policy.BootstrapCandidates) == 0 {
+		return errors.New("bootstrap_list_id or bootstrap_candidates are required")
+	}
+	return nil
 }
 
 func validDNSStrategy(strategy string) bool {
@@ -11966,6 +11981,10 @@ func (s *Server) dnsLists(w http.ResponseWriter, r *http.Request) {
 					fail(w, err, 404)
 					return
 				}
+				if errors.Is(err, store.ErrServerOwnedDNSList) {
+					fail(w, err, 409)
+					return
+				}
 				if strings.Contains(err.Error(), "cannot be set as default") {
 					fail(w, err, 400)
 					return
@@ -12004,6 +12023,7 @@ func (s *Server) dnsLists(w http.ResponseWriter, r *http.Request) {
 		v.Revision = 1
 		v.Protected = false
 		v.Enabled = true
+		v.OwnerServerID = 0
 		if err := core.ValidateDNSList(v); err != nil {
 			fail(w, err, 400)
 			return
@@ -12028,9 +12048,14 @@ func (s *Server) dnsLists(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &v) {
 			return
 		}
+		if current.OwnerServerID != 0 {
+			fail(w, store.ErrServerOwnedDNSList, 409)
+			return
+		}
 		v.ID = id
 		v.Kind = current.Kind
 		v.Protected = current.Protected
+		v.OwnerServerID = 0
 		if current.Protected {
 			v.Enabled = true
 		}

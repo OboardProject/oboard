@@ -577,7 +577,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, pool text not null default 'public', listen_ip text not null default '', network text not null default 'tcp_udp', generation integer not null default 1, ordinal integer not null default 0, port integer not null, state text not null default 'active', policy_revision integer not null default 0, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id,generation,ordinal))`,
 		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null unique references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', underlay_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
+		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, owner_server_id integer, created_at text not null, updated_at text not null)`,
 		`create table if not exists snell_listener_runtime(inbound_id integer primary key references inbounds(id) on delete cascade, server_id integer not null, listener_mode text not null, port integer not null, protocol_version integer not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists snell_runtime_confirmations (server_id integer primary key references servers(id) on delete cascade, config_version integer not null, digest text not null)`,
 
@@ -838,6 +838,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureOptionalEncryptedDNSList(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureServerDNSListOwner(ctx); err != nil {
 		return err
 	}
 	for _, stmt := range []string{
@@ -5338,7 +5341,7 @@ func (s *Store) CreateDNSList(ctx context.Context, v *model.DNSList) error {
 	if v.Revision <= 0 {
 		v.Revision = 1
 	}
-	res, err := s.db.ExecContext(ctx, `insert into dns_lists(name,kind,revision,candidates_json,enabled,protected,created_at,updated_at) values(?,?,?,?,?,?,?,?)`, strings.TrimSpace(v.Name), v.Kind, v.Revision, string(encoded), boolInt(v.Enabled), boolInt(v.Protected), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into dns_lists(name,kind,revision,candidates_json,enabled,protected,owner_server_id,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, strings.TrimSpace(v.Name), v.Kind, v.Revision, string(encoded), boolInt(v.Enabled), boolInt(v.Protected), zeroToNull(v.OwnerServerID), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -5358,8 +5361,12 @@ func (s *Store) UpdateDNSList(ctx context.Context, v *model.DNSList) (bool, erro
 	var oldCandidates string
 	var oldRevision int64
 	var oldKind model.DNSListKind
-	if err := tx.QueryRowContext(ctx, `select protected,candidates_json,revision,kind from dns_lists where id=?`, v.ID).Scan(&protected, &oldCandidates, &oldRevision, &oldKind); err != nil {
+	var owner int64
+	if err := tx.QueryRowContext(ctx, `select protected,candidates_json,revision,kind,coalesce(owner_server_id,0) from dns_lists where id=?`, v.ID).Scan(&protected, &oldCandidates, &oldRevision, &oldKind, &owner); err != nil {
 		return false, err
+	}
+	if owner != 0 {
+		return false, ErrServerOwnedDNSList
 	}
 	if v.Kind != oldKind {
 		return false, errors.New("dns list kind cannot be changed")
@@ -5401,7 +5408,7 @@ func (s *Store) UpdateDNSList(ctx context.Context, v *model.DNSList) (bool, erro
 }
 
 func (s *Store) ListDNSLists(ctx context.Context, enabledOnly bool) ([]model.DNSList, error) {
-	query := `select l.id,l.name,l.kind,l.revision,l.candidates_json,l.enabled,l.protected,l.created_at,l.updated_at,
+	query := `select l.id,l.name,l.kind,l.revision,l.candidates_json,l.enabled,l.protected,coalesce(l.owner_server_id,0),l.created_at,l.updated_at,
 		(select count(*) from server_dns_policies p where p.encrypted_list_id=l.id or p.bootstrap_list_id=l.id)
 		from dns_lists l`
 	if enabledOnly {
@@ -5418,7 +5425,7 @@ func (s *Store) ListDNSLists(ctx context.Context, enabledOnly bool) ([]model.DNS
 		var item model.DNSList
 		var candidates, created, updated string
 		var enabled, protected int
-		if err := rows.Scan(&item.ID, &item.Name, &item.Kind, &item.Revision, &candidates, &enabled, &protected, &created, &updated, &item.UsageCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Kind, &item.Revision, &candidates, &enabled, &protected, &item.OwnerServerID, &created, &updated, &item.UsageCount); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(candidates), &item.Candidates); err != nil {
@@ -5448,8 +5455,12 @@ func (s *Store) GetDNSList(ctx context.Context, id int64) (*model.DNSList, error
 
 func (s *Store) DeleteDNSList(ctx context.Context, id int64) error {
 	var protected, usage int
-	if err := s.db.QueryRowContext(ctx, `select protected,(select count(*) from server_dns_policies where encrypted_list_id=? or bootstrap_list_id=?) from dns_lists where id=?`, id, id, id).Scan(&protected, &usage); err != nil {
+	var owner int64
+	if err := s.db.QueryRowContext(ctx, `select protected,coalesce(owner_server_id,0),(select count(*) from server_dns_policies where encrypted_list_id=? or bootstrap_list_id=?) from dns_lists where id=?`, id, id, id).Scan(&protected, &owner, &usage); err != nil {
 		return err
+	}
+	if owner != 0 {
+		return ErrServerOwnedDNSList
 	}
 	if protected == 1 {
 		return errors.New("protected dns list cannot be deleted")
@@ -5472,8 +5483,12 @@ func (s *Store) SetDefaultDNSList(ctx context.Context, id int64) (*model.DNSList
 	defer tx.Rollback()
 	var kind model.DNSListKind
 	var enabled int
-	if err := tx.QueryRowContext(ctx, `select kind,enabled from dns_lists where id=?`, id).Scan(&kind, &enabled); err != nil {
+	var owner int64
+	if err := tx.QueryRowContext(ctx, `select kind,enabled,coalesce(owner_server_id,0) from dns_lists where id=?`, id).Scan(&kind, &enabled, &owner); err != nil {
 		return nil, err
+	}
+	if owner != 0 {
+		return nil, ErrServerOwnedDNSList
 	}
 	if enabled == 0 {
 		return nil, errors.New("disabled dns list cannot be set as default")
@@ -5521,15 +5536,36 @@ func ensureServerDNSPolicy(ctx context.Context, db serverLifecycleDB, serverID i
 	return scanDNSPolicy(db.QueryRowContext(ctx, dnsPolicySelectSQL+` where server_id=?`, serverID))
 }
 
-const dnsPolicySelectSQL = `select server_id,coalesce(encrypted_list_id,0),bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,encrypted_selected_json,bootstrap_selected_json,encrypted_selection_revision,bootstrap_selection_revision,last_attempt_at,last_success_at,last_error,needs_benchmark,created_at,updated_at from server_dns_policies`
+// dnsPolicySelectSQL also returns the candidates of each bound list the server
+// owns (NULL for a shared list), from which the group source is derived.
+const dnsPolicySelectSQL = `select server_id,coalesce(encrypted_list_id,0),bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,encrypted_selected_json,bootstrap_selected_json,encrypted_selection_revision,bootstrap_selection_revision,last_attempt_at,last_success_at,last_error,needs_benchmark,created_at,updated_at,
+	(select l.candidates_json from dns_lists l where l.id=server_dns_policies.encrypted_list_id and l.owner_server_id=server_dns_policies.server_id),
+	(select l.candidates_json from dns_lists l where l.id=server_dns_policies.bootstrap_list_id and l.owner_server_id=server_dns_policies.server_id)
+	from server_dns_policies`
 
 func scanDNSPolicy(scanner interface{ Scan(...any) error }) (*model.ServerDNSPolicy, error) {
 	var item model.ServerDNSPolicy
 	var encrypted, bootstrap, created, updated string
-	var attempted, succeeded sql.NullString
+	var attempted, succeeded, encryptedCustom, bootstrapCustom sql.NullString
 	var needsBenchmark int
-	if err := scanner.Scan(&item.ServerID, &item.EncryptedListID, &item.BootstrapListID, &item.Revision, &item.Strategy, &item.AutoTest, &item.TestIntervalSeconds, &encrypted, &bootstrap, &item.EncryptedSelectionRevision, &item.BootstrapSelectionRevision, &attempted, &succeeded, &item.LastError, &needsBenchmark, &created, &updated); err != nil {
+	if err := scanner.Scan(&item.ServerID, &item.EncryptedListID, &item.BootstrapListID, &item.Revision, &item.Strategy, &item.AutoTest, &item.TestIntervalSeconds, &encrypted, &bootstrap, &item.EncryptedSelectionRevision, &item.BootstrapSelectionRevision, &attempted, &succeeded, &item.LastError, &needsBenchmark, &created, &updated, &encryptedCustom, &bootstrapCustom); err != nil {
 		return nil, err
+	}
+	item.EncryptedSource, item.BootstrapSource = model.DNSSourceShared, model.DNSSourceShared
+	if item.EncryptedListID == 0 {
+		item.EncryptedSource = model.DNSSourceNone
+	}
+	if encryptedCustom.Valid {
+		item.EncryptedSource = model.DNSSourceCustom
+		if err := json.Unmarshal([]byte(encryptedCustom.String), &item.EncryptedCandidates); err != nil {
+			return nil, err
+		}
+	}
+	if bootstrapCustom.Valid {
+		item.BootstrapSource = model.DNSSourceCustom
+		if err := json.Unmarshal([]byte(bootstrapCustom.String), &item.BootstrapCandidates); err != nil {
+			return nil, err
+		}
 	}
 	if err := json.Unmarshal([]byte(encrypted), &item.EncryptedSelected); err != nil {
 		return nil, err
@@ -5570,82 +5606,6 @@ func (s *Store) ListServerDNSPolicies(ctx context.Context) ([]model.ServerDNSPol
 		out = append(out, *item)
 	}
 	return out, rows.Err()
-}
-
-func (s *Store) UpdateServerDNSPolicy(ctx context.Context, v *model.ServerDNSPolicy) error {
-	current, err := s.EnsureServerDNSPolicy(ctx, v.ServerID)
-	if err != nil {
-		return err
-	}
-	// EncryptedListID 0 is the plain-DNS-only policy: the server resolves
-	// through the bootstrap resolvers alone and binds no encrypted list.
-	if v.EncryptedListID != 0 {
-		encrypted, err := s.GetDNSList(ctx, v.EncryptedListID)
-		if err != nil {
-			return err
-		}
-		if encrypted.Kind != model.DNSListEncrypted {
-			return errors.New("dns policy list kinds do not match")
-		}
-		if !encrypted.Enabled {
-			return errors.New("dns policy cannot select a disabled list")
-		}
-	}
-	bootstrap, err := s.GetDNSList(ctx, v.BootstrapListID)
-	if err != nil {
-		return err
-	}
-	if bootstrap.Kind != model.DNSListBootstrap {
-		return errors.New("dns policy list kinds do not match")
-	}
-	if !bootstrap.Enabled {
-		return errors.New("dns policy cannot select a disabled list")
-	}
-	if strings.TrimSpace(v.Strategy) == "" {
-		v.Strategy = "auto"
-	}
-	if v.AutoTest == "" {
-		v.AutoTest = model.DNSAutoTestFirstApply
-	}
-	if v.TestIntervalSeconds == 0 {
-		v.TestIntervalSeconds = 3600
-	}
-	if v.AutoTest == model.DNSAutoTestPeriodic && v.TestIntervalSeconds < 300 {
-		return errors.New("periodic dns test interval must be at least 300 seconds")
-	}
-	listChanged := current.EncryptedListID != v.EncryptedListID || current.BootstrapListID != v.BootstrapListID
-	changed := listChanged || current.Strategy != v.Strategy || current.AutoTest != v.AutoTest || current.TestIntervalSeconds != v.TestIntervalSeconds
-	if !changed {
-		*v = *current
-		return nil
-	}
-	v.Revision = current.Revision + 1
-	v.EncryptedSelected = current.EncryptedSelected
-	v.BootstrapSelected = current.BootstrapSelected
-	v.EncryptedSelectionRevision = current.EncryptedSelectionRevision
-	v.BootstrapSelectionRevision = current.BootstrapSelectionRevision
-	if current.EncryptedListID != v.EncryptedListID {
-		v.EncryptedSelected = []model.DNSCandidate{}
-		v.EncryptedSelectionRevision = 0
-	}
-	if current.BootstrapListID != v.BootstrapListID {
-		v.BootstrapSelected = []model.DNSCandidate{}
-		v.BootstrapSelectionRevision = 0
-	}
-	v.LastAttemptAt = current.LastAttemptAt
-	v.LastSuccessAt = current.LastSuccessAt
-	v.LastError = current.LastError
-	if listChanged {
-		v.LastError = ""
-	}
-	v.NeedsBenchmark = current.NeedsBenchmark || listChanged
-	encJSON, _ := json.Marshal(v.EncryptedSelected)
-	bootstrapJSON, _ := json.Marshal(v.BootstrapSelected)
-	ts := now()
-	_, err = s.db.ExecContext(ctx, `update server_dns_policies set encrypted_list_id=?,bootstrap_list_id=?,revision=?,strategy=?,auto_test=?,test_interval_seconds=?,encrypted_selected_json=?,bootstrap_selected_json=?,encrypted_selection_revision=?,bootstrap_selection_revision=?,last_error=?,needs_benchmark=?,updated_at=? where server_id=?`, zeroToNull(v.EncryptedListID), v.BootstrapListID, v.Revision, v.Strategy, v.AutoTest, v.TestIntervalSeconds, string(encJSON), string(bootstrapJSON), v.EncryptedSelectionRevision, v.BootstrapSelectionRevision, v.LastError, boolInt(v.NeedsBenchmark), ts, v.ServerID)
-	v.CreatedAt = current.CreatedAt
-	v.UpdatedAt = parseTime(ts)
-	return err
 }
 
 func (s *Store) CreateDNSBenchmarkRun(ctx context.Context, v *model.DNSBenchmarkRun) error {

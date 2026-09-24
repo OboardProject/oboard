@@ -20,7 +20,8 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"id": positiveID, "revision": stringValue, "name": stringValue, "kind": stringValue,
 		"revision_number": map[string]any{"type": "integer"}, "candidates": arrayOf(dnsCandidate),
 		"enabled": boolValue, "protected": boolValue, "usage_count": map[string]any{"type": "integer"},
-		"created_at": stringValue, "updated_at": stringValue,
+		"owner_server_id": map[string]any{"type": "integer", "minimum": 0, "description": "非 0 表示该服务器的自定义解析列表，只能通过服务器 DNS 策略修改"},
+		"created_at":      stringValue, "updated_at": stringValue,
 	})
 	dnsListFields := closedObject(map[string]any{
 		"name":       map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
@@ -56,9 +57,14 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 	// encrypted_list_id 0 binds no encrypted list: the server resolves through
 	// the plain bootstrap resolvers only.
 	optionalEncryptedListID := map[string]any{"type": "integer", "minimum": 0, "description": "加密解析列表 ID；0 表示不使用加密解析，仅使用普通解析"}
+	encryptedSource := map[string]any{"type": "string", "enum": []string{"none", "shared", "custom"}, "description": "只读，由绑定推导：none 不使用加密解析（仅普通解析），shared 共享列表，custom 该服务器自定义的 DoH/DoT/DoQ 服务"}
+	bootstrapSource := map[string]any{"type": "string", "enum": []string{"shared", "custom"}, "description": "只读，由绑定推导：shared 共享列表，custom 该服务器自定义的公网 IP UDP/TCP 服务"}
+	customCandidates := map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": dnsCandidate, "description": "该服务器自定义解析服务（1-32 项），与同组 *_list_id 共享列表二选一；只传 candidates 即切换为自定义，只传 *_list_id 即放弃自定义；tag 可省略，按顺序生成 custom-N"}
 	dnsPolicy := closedObject(map[string]any{
 		"server_id": positiveID, "revision": map[string]any{"type": "integer"},
 		"encrypted_list_id": optionalEncryptedListID, "bootstrap_list_id": positiveID,
+		"encrypted_source": encryptedSource, "bootstrap_source": bootstrapSource,
+		"encrypted_candidates": arrayOf(dnsCandidate), "bootstrap_candidates": arrayOf(dnsCandidate),
 		"strategy": stringValue, "auto_test": stringValue, "test_interval_seconds": map[string]any{"type": "integer"},
 		"last_attempt_at": nullableString(), "last_success_at": nullableString(), "last_error": stringValue,
 		"needs_benchmark": boolValue, "updated_at": stringValue,
@@ -66,10 +72,12 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 	dnsPolicyFields := closedObject(map[string]any{
 		"encrypted_list_id":     optionalEncryptedListID,
 		"bootstrap_list_id":     positiveID,
+		"encrypted_candidates":  customCandidates,
+		"bootstrap_candidates":  customCandidates,
 		"strategy":              map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "prefer_ipv4", "prefer_ipv6"}},
 		"auto_test":             map[string]any{"type": "string", "enum": []string{"never", "first_apply", "periodic"}},
 		"test_interval_seconds": map[string]any{"type": "integer", "minimum": 60},
-	}, "encrypted_list_id", "bootstrap_list_id")
+	})
 	snellProfile := closedObject(map[string]any{
 		"id": positiveID, "name": stringValue, "version": map[string]any{"type": "integer", "enum": []int{4, 6}},
 		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http"}},

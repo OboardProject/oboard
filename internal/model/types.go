@@ -119,6 +119,17 @@ const (
 	DNSListBootstrap DNSListKind = "bootstrap"
 )
 
+// DNSSource says where one resolver group of a server DNS policy comes from:
+// no resolver (encrypted group only), a shared global list, or a list owned by
+// that one server and edited only through its policy.
+type DNSSource string
+
+const (
+	DNSSourceNone   DNSSource = "none"
+	DNSSourceShared DNSSource = "shared"
+	DNSSourceCustom DNSSource = "custom"
+)
+
 type DNSAutoTestMode string
 
 const (
@@ -235,18 +246,18 @@ type User struct {
 }
 
 type ProxyCredential struct {
-	DeviceTransitionAllowed bool `json:"-"`
-	ID              string   `json:"id"`
-	UserID          int64    `json:"user_id"`
-	InboundID       int64    `json:"inbound_id"`
-	PathID          int64    `json:"path_id"`
-	DeviceIDHash    string   `json:"device_id_hash,omitempty"`
-	CredentialEpoch int64    `json:"credential_epoch"`
-	Protocol        Protocol `json:"protocol"`
-	Status          string   `json:"status"`
-	Username        string   `json:"-"`
-	Password        string   `json:"-"`
-	UUID            string   `json:"-"`
+	DeviceTransitionAllowed bool     `json:"-"`
+	ID                      string   `json:"id"`
+	UserID                  int64    `json:"user_id"`
+	InboundID               int64    `json:"inbound_id"`
+	PathID                  int64    `json:"path_id"`
+	DeviceIDHash            string   `json:"device_id_hash,omitempty"`
+	CredentialEpoch         int64    `json:"credential_epoch"`
+	Protocol                Protocol `json:"protocol"`
+	Status                  string   `json:"status"`
+	Username                string   `json:"-"`
+	Password                string   `json:"-"`
+	UUID                    string   `json:"-"`
 }
 
 type UserDevice struct {
@@ -1771,14 +1782,25 @@ type DNSList struct {
 	Enabled    bool           `json:"enabled"`
 	Protected  bool           `json:"protected"`
 	UsageCount int            `json:"usage_count"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	// OwnerServerID is non-zero for a server's custom resolver list. Such a
+	// list is bound only by that server's policy and managed through it.
+	OwnerServerID int64     `json:"owner_server_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type ServerDNSPolicy struct {
-	ServerID                   int64           `json:"server_id"`
-	EncryptedListID            int64           `json:"encrypted_list_id"`
-	BootstrapListID            int64           `json:"bootstrap_list_id"`
+	ServerID        int64 `json:"server_id"`
+	EncryptedListID int64 `json:"encrypted_list_id"`
+	BootstrapListID int64 `json:"bootstrap_list_id"`
+	// EncryptedSource/BootstrapSource are derived from the bound lists. For a
+	// custom group the candidates of the server-owned list are returned in
+	// EncryptedCandidates/BootstrapCandidates, and a write with source custom
+	// replaces them.
+	EncryptedSource            DNSSource       `json:"encrypted_source"`
+	BootstrapSource            DNSSource       `json:"bootstrap_source"`
+	EncryptedCandidates        []DNSCandidate  `json:"encrypted_candidates,omitempty"`
+	BootstrapCandidates        []DNSCandidate  `json:"bootstrap_candidates,omitempty"`
 	Revision                   int64           `json:"revision"`
 	Strategy                   string          `json:"strategy"`
 	AutoTest                   DNSAutoTestMode `json:"auto_test"`

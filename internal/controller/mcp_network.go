@@ -13,6 +13,7 @@ import (
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 // registerNetworkAutomationOperations wires the DNS list, DNS policy, DNS
@@ -83,7 +84,7 @@ func (s *Server) dnsListAutomationValidate(ctx context.Context, principal applic
 		if err := json.Unmarshal(request.DNSList, &list); err != nil {
 			return nil, err
 		}
-		list.ID, list.Revision, list.Protected, list.UsageCount = 0, 1, false, 0
+		list.ID, list.Revision, list.Protected, list.UsageCount, list.OwnerServerID = 0, 1, false, 0, 0
 		list.Enabled = true
 		if err := core.ValidateDNSList(list); err != nil {
 			return nil, err
@@ -104,6 +105,9 @@ func (s *Server) dnsListAutomationValidate(ctx context.Context, principal applic
 		if err != nil {
 			return nil, err
 		}
+		if current.OwnerServerID != 0 {
+			return nil, store.ErrServerOwnedDNSList
+		}
 		var patch model.DNSList
 		if err := json.Unmarshal(request.Changes, &patch); err != nil {
 			return nil, err
@@ -123,16 +127,20 @@ func (s *Server) dnsListAutomationValidate(ctx context.Context, principal applic
 		if request.DNSListID <= 0 || !request.Confirm {
 			return nil, errors.New("dns_list_id and confirm=true are required")
 		}
-		if _, err := s.store.GetDNSList(ctx, request.DNSListID); err != nil {
+		if current, err := s.store.GetDNSList(ctx, request.DNSListID); err != nil {
 			return nil, err
+		} else if current.OwnerServerID != 0 {
+			return nil, store.ErrServerOwnedDNSList
 		}
 		return map[string]any{"dns_list_id": request.DNSListID}, nil
 	case "dns_lists.set_default":
 		if request.DNSListID <= 0 {
 			return nil, errors.New("dns_list_id is required")
 		}
-		if _, err := s.store.GetDNSList(ctx, request.DNSListID); err != nil {
+		if current, err := s.store.GetDNSList(ctx, request.DNSListID); err != nil {
 			return nil, err
+		} else if current.OwnerServerID != 0 {
+			return nil, store.ErrServerOwnedDNSList
 		}
 		return map[string]any{"dns_list_id": request.DNSListID}, nil
 	default:
@@ -188,7 +196,7 @@ func (s *Server) applyDNSListOperation(ctx context.Context, principal applicatio
 		if err := json.Unmarshal(request.DNSList, &list); err != nil {
 			return nil, err
 		}
-		list.ID, list.Revision, list.Protected, list.UsageCount = 0, 1, false, 0
+		list.ID, list.Revision, list.Protected, list.UsageCount, list.OwnerServerID = 0, 1, false, 0, 0
 		list.Enabled = true
 		if err := core.ValidateDNSList(list); err != nil {
 			return nil, err
@@ -249,8 +257,16 @@ func automationDNSListView(list model.DNSList) map[string]any {
 		"id": list.ID, "revision": list.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		"name": list.Name, "kind": list.Kind, "revision_number": list.Revision,
 		"candidates": list.Candidates, "enabled": list.Enabled, "protected": list.Protected,
-		"usage_count": list.UsageCount, "created_at": list.CreatedAt, "updated_at": list.UpdatedAt,
+		"usage_count": list.UsageCount, "owner_server_id": list.OwnerServerID,
+		"created_at": list.CreatedAt, "updated_at": list.UpdatedAt,
 	}
+}
+
+func dnsCandidatesView(items []model.DNSCandidate) []model.DNSCandidate {
+	if items == nil {
+		return []model.DNSCandidate{}
+	}
+	return items
 }
 
 func automationChangedFields(fields map[string]json.RawMessage) []string {
@@ -266,6 +282,7 @@ func automationChangedFields(fields map[string]json.RawMessage) []string {
 var dnsPolicyAutomationFields = map[string]bool{
 	"encrypted_list_id": true, "bootstrap_list_id": true, "strategy": true,
 	"auto_test": true, "test_interval_seconds": true,
+	"encrypted_candidates": true, "bootstrap_candidates": true,
 }
 
 func (s *Server) registerDNSPolicyOperations() {
@@ -309,17 +326,16 @@ func (s *Server) dnsPolicyAutomationCandidate(ctx context.Context, principal app
 		return nil, err
 	}
 	merged := mergeDNSPolicyPatch(*current, patch, fields)
-	if merged.EncryptedListID < 0 {
-		return nil, errors.New("encrypted_list_id must not be negative")
+	if err := validateDNSPolicySources(merged); err != nil {
+		return nil, err
 	}
-	// 0 keeps the server on plain DNS only and binds no encrypted list.
-	if merged.EncryptedListID != 0 {
-		if _, err := s.store.GetDNSList(ctx, merged.EncryptedListID); err != nil {
-			return nil, fmt.Errorf("encrypted_list_id: %w", err)
-		}
+	// encrypted_list_id 0 keeps the server on plain DNS only; custom groups
+	// are validated as the server-owned list they become.
+	if err := s.validateDNSPolicyGroup(ctx, request.ServerID, model.DNSListEncrypted, merged.EncryptedListID, merged.EncryptedCandidates); err != nil {
+		return nil, err
 	}
-	if _, err := s.store.GetDNSList(ctx, merged.BootstrapListID); err != nil {
-		return nil, fmt.Errorf("bootstrap_list_id: %w", err)
+	if err := s.validateDNSPolicyGroup(ctx, request.ServerID, model.DNSListBootstrap, merged.BootstrapListID, merged.BootstrapCandidates); err != nil {
+		return nil, err
 	}
 	if !validDNSStrategy(merged.Strategy) {
 		return nil, errors.New("unsupported dns strategy")
@@ -333,14 +349,53 @@ func (s *Server) dnsPolicyAutomationCandidate(ctx context.Context, principal app
 	return map[string]any{"dns_policy": automationDNSPolicyView(merged), "changed_fields": automationChangedFields(fields)}, nil
 }
 
+func (s *Server) validateDNSPolicyGroup(ctx context.Context, serverID int64, kind model.DNSListKind, listID int64, candidates []model.DNSCandidate) error {
+	field := string(kind)
+	var list *model.DNSList
+	if listID > 0 {
+		item, err := s.store.GetDNSList(ctx, listID)
+		if err != nil {
+			return fmt.Errorf("%s_list_id: %w", field, err)
+		}
+		if item.Kind != kind {
+			return fmt.Errorf("%s_list_id: dns policy list kinds do not match", field)
+		}
+		if item.OwnerServerID != 0 && item.OwnerServerID != serverID {
+			return fmt.Errorf("%s_list_id: a shared dns list is required", field)
+		}
+		list = item
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	if list != nil && list.OwnerServerID == 0 {
+		return fmt.Errorf("%s: choose either %s_list_id or %s_candidates, not both", field, field, field)
+	}
+	if err := core.ValidateDNSList(core.ServerDNSCustomList(serverID, kind, core.ServerDNSCustomCandidates(candidates))); err != nil {
+		return fmt.Errorf("%s_candidates: %w", field, err)
+	}
+	return nil
+}
+
+// mergeDNSPolicyPatch applies the changed fields over the current policy. A
+// patch naming only a group's list id drops that group's custom resolvers; a
+// patch supplying only its candidates makes it custom.
 func mergeDNSPolicyPatch(current model.ServerDNSPolicy, patch model.ServerDNSPolicy, fields map[string]json.RawMessage) model.ServerDNSPolicy {
 	merged := current
-	if _, ok := fields["encrypted_list_id"]; ok {
-		merged.EncryptedListID = patch.EncryptedListID
+	mergeGroup := func(prefix string, listID *int64, candidates *[]model.DNSCandidate, patchListID int64, patchCandidates []model.DNSCandidate) {
+		_, hasList := fields[prefix+"_list_id"]
+		_, hasCandidates := fields[prefix+"_candidates"]
+		switch {
+		case hasList && hasCandidates:
+			*listID, *candidates = patchListID, patchCandidates
+		case hasList:
+			*listID, *candidates = patchListID, nil
+		case hasCandidates:
+			*listID, *candidates = 0, patchCandidates
+		}
 	}
-	if _, ok := fields["bootstrap_list_id"]; ok {
-		merged.BootstrapListID = patch.BootstrapListID
-	}
+	mergeGroup("encrypted", &merged.EncryptedListID, &merged.EncryptedCandidates, patch.EncryptedListID, patch.EncryptedCandidates)
+	mergeGroup("bootstrap", &merged.BootstrapListID, &merged.BootstrapCandidates, patch.BootstrapListID, patch.BootstrapCandidates)
 	if _, ok := fields["strategy"]; ok {
 		merged.Strategy = patch.Strategy
 	}
@@ -402,6 +457,8 @@ func automationDNSPolicyView(policy model.ServerDNSPolicy) map[string]any {
 	return map[string]any{
 		"server_id": policy.ServerID, "revision": policy.Revision,
 		"encrypted_list_id": policy.EncryptedListID, "bootstrap_list_id": policy.BootstrapListID,
+		"encrypted_source": policy.EncryptedSource, "bootstrap_source": policy.BootstrapSource,
+		"encrypted_candidates": dnsCandidatesView(policy.EncryptedCandidates), "bootstrap_candidates": dnsCandidatesView(policy.BootstrapCandidates),
 		"strategy": policy.Strategy, "auto_test": policy.AutoTest, "test_interval_seconds": policy.TestIntervalSeconds,
 		"last_attempt_at": policy.LastAttemptAt, "last_success_at": policy.LastSuccessAt,
 		"last_error": policy.LastError, "needs_benchmark": policy.NeedsBenchmark,
