@@ -2802,6 +2802,25 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   flex: 0 1 auto;
 }
 
+.server-address-entry-inline {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.server-address-block:has(.server-address-line:focus-visible),
+.server-address-block[data-entry-only] { flex-wrap: wrap; }
+
+.server-address-block:has(.server-address-line:focus-visible) .server-address-entry-inline,
+.server-address-block[data-entry-only] .server-address-entry-inline { display: inline-flex; }
+
+@media (hover: none), (pointer: coarse) {
+  .server-address-block.has-entry { flex-wrap: wrap; }
+  .server-address-entry-inline { display: inline-flex; }
+}
+
 .server-address-empty {
   color: var(--muted);
   font-size: 10px;

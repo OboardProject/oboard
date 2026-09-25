@@ -6334,7 +6334,7 @@ function ServerAddressLine({ family, value, copied, onCopy }: { family: 'v4' | '
   )
 }
 
-function ServerAddressBadge({ server }: { server: Server }) {
+export function ServerAddressBadge({ server }: { server: Server }) {
   const v4 = String(server.public_ipv4 || '').trim()
   const v6 = String(server.public_ipv6 || '').trim()
   const entry = serverCustomEntry(server)
@@ -6355,7 +6355,7 @@ function ServerAddressBadge({ server }: { server: Server }) {
   }
 
   const showTip = () => {
-    if (!entry || !blockRef.current) return
+    if (!entry || (!v4 && !v6) || !blockRef.current || !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return
     const rect = blockRef.current.getBoundingClientRect()
     window.clearTimeout(hideTimer.current)
     setTipPos({
@@ -6389,10 +6389,12 @@ function ServerAddressBadge({ server }: { server: Server }) {
   return (
     <div
       ref={blockRef}
+      data-entry-only={entry && !v4 && !v6 ? '' : undefined}
       className={`server-address-block${entry ? ' has-entry' : ''}`}
       aria-describedby={entry && tipOpen ? tipID : undefined}
       onMouseEnter={entry ? showTip : undefined}
       onMouseLeave={entry ? scheduleHideTip : undefined}
+      onClick={event => event.stopPropagation()}
     >
       <span className="server-address-kicker">出口</span>
       <div className="server-address-stack">
@@ -6400,6 +6402,17 @@ function ServerAddressBadge({ server }: { server: Server }) {
         {v6 ? <ServerAddressLine family="v6" value={v6} copied={copied === 'v6'} onCopy={() => void copy('v6', v6)} /> : null}
         {!v4 && !v6 ? <span className="server-address-empty">待检测</span> : null}
       </div>
+      {entry ? <div className="server-address-entry-inline">
+        <span className="server-address-kicker">入口</span>
+        <button
+          type="button"
+          className={'server-address-line' + (copied === 'entry' ? ' copied' : '')}
+          aria-label={'复制入口 ' + entry}
+          onClick={() => void copy('entry', entry)}
+        >
+          <span className="server-address-value">{entry}</span>
+        </button>
+      </div> : null}
       {entry && tipOpen ? createPopoverPortal(
         <div
           id={tipID}
