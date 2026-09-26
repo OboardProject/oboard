@@ -4,6 +4,7 @@ import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities'
 import { ChevronDown, ChevronUp, GripVertical, Plus, RotateCcw } from 'lucide-react'
 import { Button } from '../ui/button'
+import { FieldHelp } from '../ui/form-field'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 
@@ -94,8 +95,8 @@ export function NodeOrderTemplateEditor({ policy, onChange, regionCodes, entries
       {policy.base_mode === 'exit_region' && (
         <section>
           <div className="switch-setting-row" style={{ padding: '4px 0' }}>
-            <span className="switch-setting-label">同一落地的路径排在一起<small className="muted" style={{ display: 'block', fontWeight: 400 }}>同一出口地区内，到达同一落地的路径相邻排列</small></span>
-            <Switch checked={Boolean(policy.group_by_landing)} onChange={checked => update('group_by_landing', checked)} ariaLabel="同一落地的路径排在一起" />
+            <span className="switch-setting-label">按落地节点分组<FieldHelp label="按落地节点分组" hint="同一出口地区内，到达同一落地的路径相邻排列。" /></span>
+            <Switch checked={Boolean(policy.group_by_landing)} onChange={checked => update('group_by_landing', checked)} ariaLabel="按落地节点分组" />
           </div>
         </section>
       )}

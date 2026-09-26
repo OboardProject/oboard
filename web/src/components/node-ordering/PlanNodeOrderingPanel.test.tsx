@@ -164,7 +164,7 @@ describe('PlanNodeOrderingPanel', () => {
     })
     await flushEffects()
 
-    const toggle = container.querySelector('[aria-label="同一落地的路径排在一起"]') as HTMLElement | null
+    const toggle = container.querySelector('[aria-label="按落地节点分组"]') as HTMLElement | null
     expect(toggle).toBeTruthy()
     act(() => toggle?.click())
     await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 450)) })

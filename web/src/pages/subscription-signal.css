@@ -36,10 +36,9 @@
 .signal-ordering-drawer .plan-ordering-add-region { display: flex; gap: 6px; }
 .signal-ordering-drawer .plan-ordering-add-region input { width: 120px; }
 .signal-ordering-drawer .plan-ordering-inline-switch { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
-.signal-ordering-drawer .plan-ordering-switch { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); cursor: pointer; }
-.signal-ordering-drawer .plan-ordering-switch > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.signal-ordering-drawer .plan-ordering-switch strong { font-size: 13px; }
-.signal-ordering-drawer .plan-ordering-switch small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.signal-ordering-drawer .plan-ordering-switch { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
+.signal-ordering-drawer .plan-ordering-switch-label { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 13px; font-weight: 600; }
+.signal-ordering-drawer .plan-ordering-switch-label label { cursor: pointer; }
 .signal-ordering-drawer .plan-ordering-result { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-left: 20px; border-left: 1px solid var(--border); }
 .signal-ordering-drawer .plan-ordering-result-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .signal-ordering-drawer .plan-ordering-result-head h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-strong); }

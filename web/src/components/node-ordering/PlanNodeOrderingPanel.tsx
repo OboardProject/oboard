@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
+import { FieldHelp } from '../ui/form-field'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import { Switch } from '../ui/switch'
@@ -161,6 +162,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved, onD
   onDirtyChange?: (dirty: boolean) => void
   onBusyChange?: (busy: boolean) => void
 }) {
+  const landingSwitchID = React.useId()
   const [state, setState] = React.useState<OrderingState | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
@@ -446,13 +448,13 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved, onD
   const landingLabel = (node: OrderingNode) => node.exit_name || (node.exit_server_id ? serverName(node.exit_server_id) : '') || '未解析落地'
 
   const landingSwitch = (
-    <label className="plan-ordering-switch">
-      <Switch size="sm" checked={Boolean(workingPolicy?.group_by_landing)} onChange={setGroupByLanding} ariaLabel="同一落地的路径排在一起" />
-      <span>
-        <strong>同一落地的路径排在一起</strong>
-        <small>同一出口地区内，经不同入口到达同一台落地服务器或导入节点的路径会相邻排列，不改变地区顺序。</small>
+    <div className="plan-ordering-switch">
+      <Switch id={landingSwitchID} size="sm" checked={Boolean(workingPolicy?.group_by_landing)} onChange={setGroupByLanding} ariaLabel="按落地节点分组" />
+      <span className="plan-ordering-switch-label">
+        <label htmlFor={landingSwitchID}>按落地节点分组</label>
+        <FieldHelp label="按落地节点分组" hint="同一出口地区内，经不同入口到达同一台落地服务器或导入节点的路径会相邻排列，不改变地区顺序。" />
       </span>
-    </label>
+    </div>
   )
 
   return (
