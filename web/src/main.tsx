@@ -8084,7 +8084,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
   const cancel = () => { if (!saving) onCancel() }
   return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel="服务器设置">
       <header className="dialog-head">
-        <div><h2 id="server-edit-title">服务器设置</h2><p className="muted">按顶部标签设置 {server.name}。</p></div>
+        <div><h2 id="server-edit-title">服务器设置</h2></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="server-dialog-tabs" role="tablist" aria-label="服务器设置分类">
