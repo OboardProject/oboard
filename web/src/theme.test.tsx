@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemeSelector } from './components/ui/ThemeSelector'
-import { applyThemeToDocument, getThemePreference, resolveTheme, saveThemePreference, watchSystemTheme, type ThemePreference } from './theme'
+import { applyAccentColorToDocument, applyThemeToDocument, getThemePreference, resolveTheme, saveThemePreference, watchSystemTheme, type ThemePreference } from './theme'
 
 beforeEach(() => {
   localStorage.clear()
@@ -62,6 +62,15 @@ describe('theme preference', () => {
     expect(resolveTheme(getThemePreference())).toBe('dark')
     expect(() => saveThemePreference('light')).not.toThrow()
   })
+})
+
+it('updates primary text contrast when the accent color changes', () => {
+  applyThemeToDocument('dark')
+  applyAccentColorToDocument('#7c3aed')
+  expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#ffffff')
+
+  applyAccentColorToDocument('#fbbf24')
+  expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#111827')
 })
 
 it('cycles dark, light and automatic modes', async () => {

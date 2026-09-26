@@ -39,17 +39,17 @@ describe('AppearanceSettingsPanel', () => {
 
     expect(defaultBlueBtn).not.toBeNull()
     expect(purpleBtn).not.toBeNull()
-    expect(defaultBlueBtn.getAttribute('aria-checked')).toBe('true')
-    expect(purpleBtn.getAttribute('aria-checked')).toBe('false')
+    expect(defaultBlueBtn.getAttribute('aria-pressed')).toBe('true')
+    expect(purpleBtn.getAttribute('aria-pressed')).toBe('false')
 
     await act(async () => {
       purpleBtn.click()
     })
 
-    expect(onAccentColorChange).toHaveBeenCalledWith('#8b5cf6')
+    expect(onAccentColorChange).toHaveBeenCalledWith('#7c3aed')
     expect(notify).toHaveBeenCalledWith('已应用强调色', 'success')
-    expect(purpleBtn.getAttribute('aria-checked')).toBe('true')
-    expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('#8b5cf6')
+    expect(purpleBtn.getAttribute('aria-pressed')).toBe('true')
+    expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('#7c3aed')
 
     // Test reset button
     const resetBtn = host.querySelector('button.accent-reset-btn') as HTMLButtonElement
@@ -60,8 +60,7 @@ describe('AppearanceSettingsPanel', () => {
     })
 
     expect(onAccentColorChange).toHaveBeenCalledWith('#007aff')
-    expect(defaultBlueBtn.getAttribute('aria-checked')).toBe('true')
+    expect(defaultBlueBtn.getAttribute('aria-pressed')).toBe('true')
     expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('#007aff')
   })
 })
-

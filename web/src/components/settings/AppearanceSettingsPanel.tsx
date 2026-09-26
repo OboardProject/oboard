@@ -4,6 +4,7 @@ import { SettingsGroup } from './SettingsLayout'
 import {
   ACCENT_COLOR_PRESETS,
   DEFAULT_ACCENT_COLOR,
+  accentContrastColor,
   applyAccentColorToDocument,
   getAccentColor,
   saveAccentColor,
@@ -35,7 +36,7 @@ export function AppearanceSettingsPanel({
     <section id="settings-panel-appearance" className="settings-card">
       <SettingsGroup title="强调色" description="自定义全局主按钮、激活指示器与交互高亮的主题颜色。">
         <div className="accent-color-picker-wrap">
-          <div className="accent-color-presets" role="radiogroup" aria-label="强调色预设">
+          <div className="accent-color-presets" role="group" aria-label="强调色预设">
             {ACCENT_COLOR_PRESETS.map(preset => {
               const isSelected = currentAccent.toLowerCase() === preset.color.toLowerCase()
               return (
@@ -43,14 +44,13 @@ export function AppearanceSettingsPanel({
                   key={preset.color}
                   type="button"
                   className={`accent-color-circle${isSelected ? ' active' : ''}`}
-                  role="radio"
-                  aria-checked={isSelected}
+                  aria-pressed={isSelected}
                   aria-label={preset.name}
                   title={`${preset.name} (${preset.color})`}
-                  style={{ backgroundColor: preset.color }}
+                  style={{ backgroundColor: preset.color, color: accentContrastColor(preset.color) }}
                   onClick={() => handleAccentChange(preset.color)}
                 >
-                  {isSelected && <Check size={14} className="accent-check-icon" />}
+                  {isSelected && <Check size={16} className="accent-check-icon" aria-hidden="true" />}
                 </button>
               )
             })}
