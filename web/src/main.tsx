@@ -6648,9 +6648,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [dragOverServerID, setDragOverServerID] = useState<number | null>(null)
   const [servers, setServers] = useState<Server[]>(data.servers || [])
   const [serverMetrics, setServerMetrics] = useState<ServerMetricSample[]>(data.server_metrics || [])
-  const [serverRefreshing, setServerRefreshing] = useState(false)
-  const [serverRefreshFailed, setServerRefreshFailed] = useState(false)
-  const [serverRefreshedAt, setServerRefreshedAt] = useState<Date | null>(null)
   const serverRequestInFlightRef = useRef(false)
   const serversMountedRef = useRef(false)
   const pendingDeleteServerIDsRef = useRef(new Set<number>())
@@ -6731,7 +6728,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       return result
     })
   }, [data.server_metrics])
-  useEffect(() => { if (realtimeStatus === 'open') setServerRefreshFailed(false) }, [realtimeStatus])
   // sync URL when workspace panels open/close
   useEffect(()=>{ if(aboutServer) syncURLPanel(aboutServer.id,'about',null) }, [aboutServer?.id])
   useEffect(()=>{ if(basicServer) syncURLPanel(basicServer.id,'basic',null) }, [basicServer?.id])
@@ -6756,21 +6752,16 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const refreshServers = React.useCallback(async () => {
     if (serverRequestInFlightRef.current) return
     serverRequestInFlightRef.current = true
-    setServerRefreshing(true)
     try {
       const res = await client.request('/servers')
       if (!serversMountedRef.current) return
       const nextServers: Server[] = (res.servers || []).filter((server: Server) => !pendingDeleteServerIDsRef.current.has(server.id))
       setServers(nextServers)
       setServerMetrics(current => appendLiveServerMetrics(current, nextServers))
-      setServerRefreshedAt(new Date())
-      setServerRefreshFailed(false)
     } catch (error) {
-      if (serversMountedRef.current) setServerRefreshFailed(true)
       console.warn('Server refresh failed:', error)
     } finally {
       serverRequestInFlightRef.current = false
-      if (serversMountedRef.current) setServerRefreshing(false)
     }
   }, [client])
 
@@ -6808,7 +6799,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   // issue a duplicate full page-data request.
   const revalidateServers = () => undefined
 
-  const serverRefreshedTime = serverRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   const metricsByServer = useMemo(() => {
     const grouped = new Map<number, ServerMetricSample[]>()
     for (const sample of serverMetrics) {
@@ -6839,6 +6829,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const serverPageCount = Math.max(1, Math.ceil(visibleServers.length / serverPageSize))
   const currentServerPage = Math.min(Math.max(0, serverPage), Math.max(0, serverPageCount - 1))
   const serverOffset = currentServerPage * serverPageSize
+  const serverResultCount = visibleServers.length < servers.length
+    ? (serverPageCount > 1
+        ? `${serverOffset + 1}–${Math.min(serverOffset + serverPageSize, visibleServers.length)} / ${visibleServers.length} (共 ${servers.length})`
+        : `${visibleServers.length} / ${servers.length}`)
+    : (serverPageCount > 1
+        ? `${serverOffset + 1}–${Math.min(serverOffset + serverPageSize, visibleServers.length)} / ${visibleServers.length} 台`
+        : `${visibleServers.length} 台`)
   const serverFilterKey = JSON.stringify([serverQuery, serverStatusFilter, serverRegionFilter, listPreferences.sortMode])
   const [prevServerFilterKey, setPrevServerFilterKey] = useState(serverFilterKey)
   if (prevServerFilterKey !== serverFilterKey) {
@@ -7269,18 +7266,34 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   return <section className="panel server-management-panel">
     <div className="panel-body">
-    <div className="section-toolbar">
-      <div>
-        <div className={`live-refresh-status ${serverRefreshFailed ? 'is-error' : 'is-active'}`} title={realtimeStatus === 'open' ? '服务器状态和资源数据实时更新' : '实时连接不可用，服务器数据每 5 秒更新'}>
-          <span className="live-refresh-dot" aria-hidden="true" />
-          <span>{serverRefreshFailed ? '自动刷新暂时失败' : serverRefreshing ? '正在更新服务器' : realtimeStatus === 'open' ? '服务器数据实时更新' : realtimeStatus === 'connecting' ? '正在连接实时更新' : '服务器数据自动刷新'}</span>
-          {serverRefreshedTime ? <time dateTime={serverRefreshedAt?.toISOString()}>更新于 {serverRefreshedTime}</time> : null}
+    <div className="section-toolbar server-management-toolbar">
+      {servers.length > 0 && <div className="server-list-toolbar">
+        <div className="server-list-search">
+          <Search size={15} aria-hidden="true" />
+          <input type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
+          {serverQuery && <button type="button" className="ghost icon-button" onClick={() => setServerQuery('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button>}
         </div>
-      </div>
+        {serverRegions.length > 0 && (
+          <div className="server-region-inline" role="group" aria-label="按地区筛选">
+            <ServerRegionFilterDropdown value={serverRegionFilter} onChange={setServerRegionFilter} regions={serverRegions} total={servers.length} />
+            {serverRegionFilter !== 'all' && (
+              <button type="button" className="ghost icon-button server-region-clear" onClick={() => setServerRegionFilter('all')} aria-label="清除地区筛选" title="清除地区筛选">
+                <Eraser size={14} />
+              </button>
+            )}
+          </div>
+        )}
+        <ServerFilterDropdown
+          statusFilter={serverStatusFilter}
+          onStatusFilterChange={setServerStatusFilter}
+          sortMode={listPreferences.sortMode}
+          onSortModeChange={mode => setListPreferences(current => ({ ...current, sortMode: mode }))}
+        />
+        {serverPageCount === 1 && <span className="server-list-result-count">{serverResultCount}</span>}
+      </div>}
       <div className="section-actions server-toolbar-actions">
-        <div className="server-toolbar-tools" role="group" aria-label="服务器工具">
-        <button type="button" className="ghost server-toolbar-tool" onClick={() => goTab('return-latency')}><Gauge size={15} aria-hidden="true" /><span className="server-toolbar-tool-label">网络探测</span></button>
-        {hasManagementAccess(role) && (() => {
+        {hasManagementAccess(role) && <div className="server-toolbar-tools" role="group" aria-label="服务器工具">
+        {(() => {
           const connectableCount = servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online').length
           return (
             <button
@@ -7296,7 +7309,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
             </button>
           )
         })()}
-        {hasManagementAccess(role) && (() => {
+        {(() => {
           const hasExpected = Boolean(expectedBuildForBadge && expectedBuildForBadge.toLowerCase() !== 'dev')
           const badgeCount = hasExpected ? outdatedCount : enrolledCount
           const buttonDisabled = hasExpected ? outdatedCount === 0 : enrolledCount === 0
@@ -7335,7 +7348,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
             </button>
           )
         })()}
-        </div>
+        </div>}
         <div className="view-mode-toggle" role="radiogroup" aria-label="显示方式">
           <button type="button" role="radio" aria-checked={view === 'grid'} className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')} aria-label="平铺模式" title="平铺模式"><GridViewIcon /></button>
           <button type="button" role="radio" aria-checked={view === 'list'} className={view === 'list' ? 'active' : ''} onClick={() => setView('list')} aria-label="列表模式" title="列表模式"><ListViewIcon /></button>
@@ -7354,40 +7367,10 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         </div>
       </div>
     </div>
-    {servers.length > 0 && <div className="server-list-toolbar">
-      <div className="server-list-search">
-        <Search size={15} aria-hidden="true" />
-        <input type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
-        {serverQuery && <button type="button" className="ghost icon-button" onClick={() => setServerQuery('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button>}
-      </div>
-      {serverRegions.length > 0 && (
-        <div className="server-region-inline" role="group" aria-label="按地区筛选">
-          <ServerRegionFilterDropdown value={serverRegionFilter} onChange={setServerRegionFilter} regions={serverRegions} total={servers.length} />
-          {serverRegionFilter !== 'all' && (
-            <button type="button" className="ghost icon-button server-region-clear" onClick={() => setServerRegionFilter('all')} aria-label="清除地区筛选" title="清除地区筛选">
-              <Eraser size={14} />
-            </button>
-          )}
-        </div>
-      )}
-      <ServerFilterDropdown
-        statusFilter={serverStatusFilter}
-        onStatusFilterChange={setServerStatusFilter}
-        sortMode={listPreferences.sortMode}
-        onSortModeChange={mode => setListPreferences(current => ({ ...current, sortMode: mode }))}
-      />
+    {servers.length > 0 && serverPageCount > 1 && <div className="server-list-navigation">
       <div className="server-list-toolbar-right">
-        <span className="server-list-result-count">
-          {visibleServers.length < servers.length
-            ? (serverPageCount > 1
-                ? `${serverOffset + 1}–${Math.min(serverOffset + serverPageSize, visibleServers.length)} / ${visibleServers.length} (共 ${servers.length})`
-                : `${visibleServers.length} / ${servers.length}`)
-            : (serverPageCount > 1
-                ? `${serverOffset + 1}–${Math.min(serverOffset + serverPageSize, visibleServers.length)} / ${visibleServers.length} 台`
-                : `${visibleServers.length} 台`)}
-        </span>
-        {serverPageCount > 1 && (
-          <div className="server-list-pagination-controls">
+        <span className="server-list-result-count">{serverResultCount}</span>
+        <div className="server-list-pagination-controls">
             <button
               type="button"
               className="ghost"
@@ -7424,8 +7407,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
             >
               下一页
             </button>
-          </div>
-        )}
+        </div>
       </div>
     </div>}
     {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">

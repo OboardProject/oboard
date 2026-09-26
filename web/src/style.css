@@ -1353,6 +1353,30 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   margin: -2px 0 14px;
 }
 
+.server-management-toolbar {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 8px;
+}
+
+.server-management-toolbar .server-list-toolbar {
+  flex: 1 1 520px;
+  min-width: 0;
+  margin: 0;
+}
+
+.server-management-toolbar .server-toolbar-actions {
+  margin-left: auto;
+}
+
+.server-list-navigation {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 20px;
+  margin-bottom: 12px;
+}
+
 .server-list-search {
   width: 260px;
   max-width: 100%;
@@ -1515,10 +1539,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   background: color-mix(in srgb, var(--primary-2) 80%, black 10%);
 }
 
-/* Servers toolbar: one secondary tool cluster, then the view toggle, then the primary action. */
-
 .server-toolbar-actions {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
 }
 
@@ -11957,12 +11979,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     width: 100%;
     min-width: 0;
   }
-  .server-management-panel .live-refresh-status {
-    max-width: 100%;
-    flex-wrap: wrap;
-    row-gap: 2px;
-    white-space: normal;
-  }
+  .server-management-panel .server-list-search { min-width: 180px; }
   .server-management-panel .section-actions {
     display: flex;
     align-items: center;
