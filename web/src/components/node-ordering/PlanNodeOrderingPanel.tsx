@@ -752,14 +752,14 @@ function OrderingResultList({ nodes, groupByRegion, groupByLanding, landingLabel
     }
     lastLanding = multi ? landingGroupKey : null
     rows.push(
-      <div key={node.key} className={`plan-ordering-result-row${multi ? ' is-landing-member' : ''}`}>
+      <div key={node.key} className={`plan-ordering-result-row${multi ? ' is-landing-member' : ''}${!node.renderable ? ' is-unassigned' : ''}`}>
         <span className="plan-ordering-index">{index + 1}</span>
         <span className="plan-ordering-row-name" title={node.name}>
           {node.name}
           <small className="muted">{entryLabel(node)} → {landingKey(node) ? landingLabel(node) : node.exit_region || '未解析落地'}</small>
         </span>
         {showUnplaced && node.manual_position === undefined && <Badge variant="outline">待排</Badge>}
-        {!node.renderable && <Badge variant="destructive">不可渲染</Badge>}
+        {!node.renderable && <Badge variant="secondary">未分配</Badge>}
         {node.renderable && node.warning && <Badge variant="secondary">{node.warning}</Badge>}
       </div>,
     )
