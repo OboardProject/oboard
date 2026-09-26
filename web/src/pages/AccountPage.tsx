@@ -4,7 +4,6 @@ import { AccountSummaryCard } from '../components/account/AccountSummaryCard'
 import { ProfileSettingsCard } from '../components/account/ProfileSettingsCard'
 import { SecuritySettingsCard, PasskeyCredential } from '../components/account/SecuritySettingsCard'
 import { AdvancedSettingsCard, SSHAccess } from '../components/account/AdvancedSettingsCard'
-import './AccountPage.css'
 
 export interface User {
   id: number
@@ -52,6 +51,7 @@ export function AccountPage({
   copyText,
   formatDate,
   localizeErrorMessage,
+  Panel,
   TOTPSetupDialog,
   RecoveryCodesDialog,
 }: AccountPageProps) {
@@ -101,15 +101,30 @@ export function AccountPage({
     Boolean(user?.subscription_age_public_key) &&
     (ageRequired || Boolean(user?.subscription_age_enabled))
 
+  // Scroll to section when status chip is clicked
   const handleNavigateToSection = (section: 'totp' | 'passkeys' | 'age') => {
-    if (section === 'age') {
+    let elementId = ''
+    if (section === 'totp') {
+      elementId = 'setting-row-totp'
+    } else if (section === 'passkeys') {
+      elementId = 'setting-row-passkeys'
+      setExpandedSecurityPanel('passkeys')
+    } else if (section === 'age') {
+      elementId = 'setting-row-age'
       setExpandedAdvancedPanel('age')
-      return
     }
-    if (section === 'passkeys') setExpandedSecurityPanel('passkeys')
-    const el = document.getElementById(`setting-row-${section}`)
-    el?.scrollIntoView({ behavior: 'instant', block: 'center' })
-    el?.focus({ preventScroll: true })
+
+    if (elementId) {
+      setTimeout(() => {
+        const el = document.getElementById(elementId)
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          el.focus({ preventScroll: true })
+          el.classList.add('row-highlight')
+          setTimeout(() => el.classList.remove('row-highlight'), 1600)
+        }
+      }, 50)
+    }
   }
 
   // Profile save
@@ -342,11 +357,11 @@ export function AccountPage({
   const handleSaveAge = async (enabled: boolean, publicKey: string) => {
     if ((enabled || ageRequired) && !publicKey.trim()) {
       notify?.('请填写 Age 公钥；私钥只保留在客户端', 'warning')
-      return false
+      return
     }
     if ((enabled || ageRequired) && publicKey.trim() && !publicKey.trim().startsWith('age1')) {
       notify?.('Age 公钥必须以 age1 开头', 'warning')
-      return false
+      return
     }
     try {
       await client.request('/me/subscription-age', {
@@ -355,10 +370,8 @@ export function AccountPage({
       })
       await load()
       notify?.('订阅加密设置已保存', 'success')
-      return true
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
-      return false
     }
   }
 
@@ -380,7 +393,9 @@ export function AccountPage({
 
   return (
     <>
-      <div className="signal-account" aria-label="我的账户">
+      <Panel title="我的账户" className="account-panel">
+        <div className="account-layout">
+          {/* Top Hero: User Overview */}
           <AccountSummaryCard
             user={user}
             auth={{
@@ -392,7 +407,8 @@ export function AccountPage({
             onNavigateToSection={handleNavigateToSection}
           />
 
-
+          {/* First Layer Grid: Profile (5 cols) & Login Security (7 cols) */}
+          <div className="account-settings-grid">
             <ProfileSettingsCard
               username={user?.username}
               initialNickname={user?.nickname}
@@ -416,7 +432,9 @@ export function AccountPage({
               onChangePassword={handleChangePassword}
               formatDate={formatDate}
             />
+          </div>
 
+          {/* Second Layer: Advanced Settings */}
           <AdvancedSettingsCard
             initialAgeEnabled={Boolean(user?.subscription_age_enabled)}
             initialAgePublicKey={user?.subscription_age_public_key || ''}
@@ -428,7 +446,8 @@ export function AccountPage({
             onSaveAge={handleSaveAge}
             onCopySSH={handleCopySSH}
           />
-      </div>
+        </div>
+      </Panel>
 
       <AnimatePresence>
         {totpSetup && (
