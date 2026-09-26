@@ -272,9 +272,15 @@ type telegramMessage struct {
 	Text string `json:"text"`
 }
 
+// telegramLongPollHold is how long Telegram may hold getUpdates open. The whole
+// request, including the public-address check, dial, and TLS handshake, must
+// finish inside telegramBotHTTP's 30-second budget; a 25-second hold left too
+// little room and surfaced ordinary handshake latency as deadline errors.
+const telegramLongPollHold = 20 * time.Second
+
 func (s *Server) telegramBotGetUpdates(ctx context.Context, token string, offset int64) ([]telegramUpdate, error) {
 	query := url.Values{}
-	query.Set("timeout", "25")
+	query.Set("timeout", strconv.Itoa(int(telegramLongPollHold/time.Second)))
 	query.Set("allowed_updates", `["message","callback_query"]`)
 	if offset > 0 {
 		query.Set("offset", strconv.FormatInt(offset, 10))

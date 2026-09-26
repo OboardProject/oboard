@@ -58,6 +58,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	// routing configuration was re-read from SQLite.
 	routing, err := s.routingSnapshot(r.Context())
 	if err != nil {
+		log.Printf("agent traffic sync failed stage=routing_snapshot server_id=%d agent=%q reports=%d streams=%d error=%v", server.ID, server.AgentID, len(req.Reports), len(req.Streams), err)
 		fail(w, err, 500)
 		return
 	}
@@ -223,6 +224,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	}
 	authorizationEnvelope, err := s.authorizationEnvelopeFor(*server, authorization, "")
 	if err != nil {
+		log.Printf("agent traffic sync failed stage=authorization_envelope server_id=%d agent=%q reports=%d streams=%d error=%v", server.ID, server.AgentID, len(req.Reports), len(req.Streams), err)
 		fail(w, err, 500)
 		return
 	}
