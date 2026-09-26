@@ -17858,7 +17858,7 @@ export function UserManagement({ data, client, load, notify }: any) {
                   <div><span className={`user-state-pill ${account.tone}`}>{account.label}</span>{usr.protected && <span className="badge neutral">受保护</span>}</div>
                 </div>
               </td>
-              <td className="user-col-plan" data-label="套餐与有效期">
+              <td className="user-col-plan" data-label="套餐">
                 <div className="user-plan-summary">
                   <strong>{plan?.name || (binding ? '套餐不可用' : '未分配套餐')}</strong>
                   {binding && <><span className={`user-state-pill ${validity.tone}`}>{validity.label}</span><span className={validity.expiring ? 'user-expiry-warning' : 'muted'}>{validity.expiry}</span>
@@ -17871,13 +17871,15 @@ export function UserManagement({ data, client, load, notify }: any) {
                 <div className="user-table-traffic">
                   <div className="user-table-traffic-copy"><strong>{formatBytes(usage.bytes)}</strong><span>{usage.bounded ? `/ ${formatBytes(limits.traffic)}` : '不限量'}</span></div>
                   {usage.bounded && <><div className="user-table-traffic-bar" role="progressbar" aria-label={`${usr.username} 本期流量使用率`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage.progress)} aria-valuetext={`已用 ${usage.percent.toFixed(1)}%，剩余 ${formatBytes(usage.remaining || 0)}`}><div className={usage.tone === 'danger' ? 'is-danger' : usage.tone === 'warning' ? 'is-warning' : ''} style={{ width: `${usage.progress}%` }} /></div><span className={`user-usage-caption ${usage.tone}`}>{usage.percent.toFixed(1)}% · 剩余 {formatBytes(usage.remaining || 0)}</span></>}
-                  <span className="muted">{limits.speed > 0 ? `限速 ${limits.speed} Mbps` : '不限速'}</span>
-                  {usr.traffic_period_end && <time dateTime={usr.traffic_period_end}>流量重置 {formatTableTime(usr.traffic_period_end)}</time>}
-                  <button type="button" className="user-table-compact-button" onClick={() => setLedgerUser(usr)} aria-label={`查看 ${usr.username} 的流量明细`}>流量明细</button>
+                  <div className="user-table-traffic-meta">
+                    <span>{limits.speed > 0 ? `限速 ${limits.speed} Mbps` : '不限速'}</span>
+                    {usr.traffic_period_end && <time dateTime={usr.traffic_period_end}>流量重置 {formatTableTime(usr.traffic_period_end)}</time>}
+                    <button type="button" className="user-table-compact-button" onClick={() => setLedgerUser(usr)} aria-label={`查看 ${usr.username} 的流量明细`}>流量明细</button>
+                  </div>
                 </div>
               </td>
               {showGroupsColumn && <td className="user-col-groups" data-label="用户组"><div className="user-group-tags">{groupList.length ? groupList.map(group => <button key={group.id} type="button" className="ghost user-group-link" onClick={() => { setSelectedScope(group.id); setFilter('all'); setQuery('') }}>{group.name}{group.enabled === false ? ' · 已停用' : ''}</button>) : <span className="muted">未分组</span>}</div></td>}
-              <td className="user-col-subscription" data-label="订阅链接"><div className="user-subscription-status"><span className={`sub-pill ${subscriptionStatus.tone}`}>{subscriptionStatus.label === '长期有效' ? '可重复使用' : subscriptionStatus.label}</span></div></td>
+              <td className="user-col-subscription" data-label="订阅"><div className="user-subscription-status"><span className={`sub-pill ${subscriptionStatus.tone}`}>{subscriptionStatus.label === '长期有效' ? '可重复使用' : subscriptionStatus.label}</span></div></td>
               <td className="user-col-actions" data-label="操作">
                 {canManageUser ? <div className="user-row-actions">
                   <button type="button" className="ghost user-row-text-button" onClick={() => openEditUser(usr)} aria-label={`编辑 ${usr.username}`}><Edit3 size={14} />编辑</button>
