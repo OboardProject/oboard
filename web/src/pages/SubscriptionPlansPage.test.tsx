@@ -86,6 +86,61 @@ describe('SubscriptionPlansPage', () => {
     expect(document.body.textContent).toContain('alice')
   })
 
+  it('keeps rule-added nodes before turning off old automatic membership', async () => {
+    let lockVersion = 1
+    let rules = [{ rule_id: 1, kind: 'exit_region', scope_key: 'JP' }]
+    const mutations: { path: string; body: any }[] = []
+    const nodes = [
+      { node_type: 'inbound', node_id: 1, source_type: 'explicit', display_group: '', name: 'A', key: 'inbound:1' },
+      { node_type: 'inbound', node_id: 2, source_type: 'rule', source_rule_id: 1, display_group: '', name: 'B', key: 'inbound:2' },
+    ]
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/subscription-plans') return { subscription_plans: [plan] }
+      if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path === '/subscription-plans/1') return {
+        subscription_plan: { ...plan, lock_version: lockVersion, latest_revision_id: lockVersion },
+        latest_nodes: nodes,
+        enriched_latest_nodes: nodes,
+        revisions: [{ id: lockVersion, created_at: '2026-08-11T00:00:00Z' }],
+        member_count: 1,
+      }
+      if (path === '/subscription-plans/1/ordering') return { nodes, policy: { mode: 'exit_region' } }
+      if (path === '/subscription-plans/1/membership-rules' && !init) return { rules, exclusions: [], base_revision_id: lockVersion, lock_version: lockVersion }
+      if (path === '/subscription-plans/1/nodes/apply') {
+        const body = JSON.parse(String(init?.body || '{}'))
+        mutations.push({ path, body })
+        lockVersion++
+        return { subscription_plan: { ...plan, lock_version: lockVersion, latest_revision_id: lockVersion } }
+      }
+      if (path === '/subscription-plans/1/membership-rules/versions') {
+        const body = JSON.parse(String(init?.body || '{}'))
+        mutations.push({ path, body })
+        rules = []
+        lockVersion++
+        return { revision: { id: lockVersion } }
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    await act(async () => root.render(<SubscriptionPlansPage data={{ subscription_plans: [plan] }} client={{ request }} load={vi.fn()} />))
+    await flushEffects()
+    act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent === '编辑')?.click())
+    await flushEffects()
+
+    expect(document.body.textContent).not.toContain('多条规则取并集')
+    expect(document.body.querySelectorAll('.signal-plan-title')).toHaveLength(1)
+    expect(document.body.querySelector('.signal-plan-overview-counts')?.textContent).toContain('2个节点')
+    act(() => Array.from(document.body.querySelectorAll('button')).find(button => button.textContent === '保留当前节点并停用')?.click())
+    await flushEffects()
+    act(() => Array.from(document.body.querySelectorAll('button')).find(button => button.textContent === '保留节点并停用规则')?.click())
+    await flushEffects()
+
+    expect(mutations.map(item => item.path)).toEqual(['/subscription-plans/1/nodes/apply', '/subscription-plans/1/membership-rules/versions'])
+    expect(mutations[0].body.nodes).toEqual([{ node_type: 'inbound', node_id: 2, display_group: '' }])
+    expect(mutations[1].body).toMatchObject({ base_revision_id: 2, expected_lock_version: 2, rules: [], exclusions: [] })
+    expect(document.body.textContent).not.toContain('旧自动规则')
+  })
+
   it('deletes a plan after confirming that bound users only lose the plan', async () => {
     const boundPlan = { ...plan, member_count: 2 }
     const request = vi.fn(async (path: string, init?: RequestInit) => {

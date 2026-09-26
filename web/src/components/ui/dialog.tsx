@@ -8,7 +8,7 @@ export interface DialogProps {
   isOpen: boolean
   onClose: () => void
   children: React.ReactNode
-  title?: string
+  title?: React.ReactNode
   className?: string
   size?: "default" | "sm" | "lg" | "xl"
   footer?: React.ReactNode

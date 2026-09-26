@@ -15,7 +15,6 @@ import { Switch } from '../components/ui/switch'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { Skeleton } from '../components/ui/skeleton'
 import { PlanNodeNameDialog, type PlanNameNode } from '../components/node-assignment/PlanNodeNameDialog'
-import { PlanMembershipRulesPanel } from '../components/node-assignment/PlanMembershipRulesPanel'
 import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
 import { formatPlanVersion } from '../lib/plan-version'
 import { useRegisterPageRefresh } from '../page-refresh-context'
@@ -118,7 +117,7 @@ type OrderingState = {
   base_revision_id: number
   lock_version: number
   policy: Record<string, any>
-  nodes?: { key: string }[]
+  nodes?: { key: string; manual_position?: number }[]
 }
 
 const changeTypeLabels: Record<string, string> = {
@@ -257,9 +256,9 @@ function regionFlagEmoji(code?: string) {
   return String.fromCodePoint(...value.split('').map(char => char.charCodeAt(0) + offset))
 }
 
-function PlanDetailShell({ inline, open, onClose, title, children }: { inline?: boolean; open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+function PlanDetailShell({ inline, open, onClose, title, status, children }: { inline?: boolean; open: boolean; onClose: () => void; title: string; status?: React.ReactNode; children: React.ReactNode }) {
   if (inline) return open ? <section className="plan-detail-inline" aria-label={title}>{children}</section> : null
-  return <Dialog isOpen={open} onClose={onClose} title={title} placement="right" drawerSize="wide" className="signal-plan-detail">{children}</Dialog>
+  return <Dialog isOpen={open} onClose={onClose} title={<span className="signal-plan-title">{title}{status}</span>} placement="right" drawerSize="wide" className="signal-plan-detail">{children}</Dialog>
 }
 
 export function SubscriptionPlansPage({ data, client, load, notify, embedded = false, selectedPlanID = 0 }: { data: any; client: AnyClient; load: () => Promise<void>; notify?: (message: string, tone?: any) => void; embedded?: boolean; selectedPlanID?: number }) {
@@ -297,6 +296,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [nodeNames, setNodeNames] = React.useState<Record<string, string>>({})
   const [nodeApplyBusy, setNodeApplyBusy] = React.useState(false)
   const [orderBusy, setOrderBusy] = React.useState(false)
+  const [autoRuleCount, setAutoRuleCount] = React.useState<number | null>(null)
+  const [convertRulesOpen, setConvertRulesOpen] = React.useState(false)
+  const [convertRulesBusy, setConvertRulesBusy] = React.useState(false)
   const [saveBusy, setSaveBusy] = React.useState(false)
   const planMutationQueueRef = React.useRef(Promise.resolve())
   const nodeSaveGenerationRef = React.useRef(new Map<number, number>())
@@ -360,9 +362,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setDetailError('')
     setDetailLoading(true)
     try {
-      const [res, ordering] = await Promise.all([
+      const [res, ordering, membership] = await Promise.all([
         client.request<any>(`/subscription-plans/${id}`),
         client.request<OrderingState>(`/subscription-plans/${id}/ordering`).catch(() => null),
+        client.request<{ rules?: unknown[] }>(`/subscription-plans/${id}/membership-rules`).catch(() => null),
       ])
       if (!isCurrent()) return
       const knownVersion = planVersionsRef.current.get(id)?.lock_version || 0
@@ -381,6 +384,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       setNodeNames(names)
       planVersionsRef.current.set(id, res.subscription_plan)
       setDetail(res)
+      setAutoRuleCount(membership?.rules?.length ?? null)
       setWorkingSettings(res.subscription_plan)
       const nextNodes = (sourceNodes || []).flatMap((n: any) => {
         const key = n.key || `${n.node_type}:${n.node_id}`
@@ -447,6 +451,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setNodeSaveStatus('idle')
     setSelectedID(selectedPlanID)
     setDetail(null)
+    setAutoRuleCount(null)
     setMessage('')
     setDetailOpen(true)
   }, [embedded, selectedPlanID, selectedID])
@@ -489,6 +494,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setNodeSaveStatus('idle')
     setSelectedID(id)
     setDetail(null)
+    setAutoRuleCount(null)
     setMessage('')
     setDetailOpen(true)
   }
@@ -505,6 +511,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setNodeSaveStatus('idle')
     setSelectedID(0)
     setDetail(null)
+    setAutoRuleCount(null)
+    setConvertRulesOpen(false)
     setMessage('')
   }
 
@@ -727,13 +735,15 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     try {
       const ordering = await client.request<OrderingState>(`/subscription-plans/${selectedID}/ordering`)
       const currentMode = ordering.policy.mode === 'entry' ? 'entry' : 'exit_region'
+      const previousManualLength = (ordering.nodes || []).reduce((length, node) => Math.max(length, (node.manual_position ?? -1) + 1), 0)
+      const manualLength = Math.max(oldIndex + 1, newIndex + 1, previousManualLength)
       await client.request(`/subscription-plans/${selectedID}/ordering/versions`, {
         method: 'POST',
         body: JSON.stringify({
           base_revision_id: ordering.base_revision_id,
           expected_lock_version: ordering.lock_version,
           policy: { ...ordering.policy, version: 2, mode: 'manual', manual_seed: ordering.policy.manual_seed || currentMode },
-          manual_node_order: next.map(nodeKey),
+          manual_node_order: next.slice(0, manualLength).map(nodeKey),
         }),
       })
       notify?.('节点顺序已保存', 'success')
@@ -765,6 +775,59 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     } catch (reason: any) {
       const text = reason?.message || String(reason)
       setMessage(text.includes('409') ? '保存失败：方案已发生变化，请重新加载后重试' : `保存失败：${text}`)
+    }
+  }
+
+  const convertAutoRules = async () => {
+    if (!plan || convertRulesBusy || nodeSaveStatus === 'saving' || nodeSaveStatus === 'error' || orderBusy) return
+    const planID = plan.id
+    let nodesPinned = false
+    setConvertRulesBusy(true)
+    setMessage('')
+    try {
+      await planMutationQueueRef.current
+      const policy = await client.request<any>(`/subscription-plans/${planID}/membership-rules`)
+      if ((policy.rules || []).length === 0) {
+        setAutoRuleCount(0)
+        setConvertRulesOpen(false)
+        return
+      }
+      const ruleNodes = workingNodesRef.current.filter(node => node.source_type === 'rule')
+      if (ruleNodes.length > 0) {
+        await client.request(`/subscription-plans/${planID}/nodes/apply`, {
+          method: 'POST',
+          body: JSON.stringify({
+            op: 'add',
+            nodes: ruleNodes.map(node => ({ node_type: node.node_type, node_id: node.node_id, display_group: node.display_group || '' })),
+            base_revision_id: policy.base_revision_id,
+            expected_lock_version: policy.lock_version,
+            change_summary: '保留自动加入的节点',
+          }),
+        })
+        nodesPinned = true
+      }
+      const current = nodesPinned ? await client.request<any>(`/subscription-plans/${planID}/membership-rules`) : policy
+      await client.request(`/subscription-plans/${planID}/membership-rules/versions`, {
+        method: 'POST',
+        body: JSON.stringify({
+          base_revision_id: current.base_revision_id,
+          expected_lock_version: current.lock_version,
+          rules: [],
+          exclusions: [],
+          change_summary: '停用自动节点规则',
+        }),
+      })
+      setAutoRuleCount(0)
+      setConvertRulesOpen(false)
+      notify?.('已保留当前节点并停用自动加入', 'success')
+      await loadDetail(planID)
+      await refreshPlans()
+    } catch (reason: any) {
+      setConvertRulesOpen(false)
+      setMessage(`${nodesPinned ? '当前节点已保留，但自动加入尚未停用；请重试。' : '停用自动加入失败。'}${reason?.message ? ` ${reason.message}` : ''}`)
+      await loadDetail(planID)
+    } finally {
+      setConvertRulesBusy(false)
     }
   }
 
@@ -988,61 +1051,49 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
         if (nodeSaveStatus === 'saving' || orderBusy || orderingBusy) return
         if (membershipChanged || nodeSaveStatus === 'error' || orderingDirty) { setDiscardDetailOpen(true); return }
         closeDetail()
-      }} title={plan ? `方案详情：${plan.name}` : '方案详情'}>
+      }} title={plan ? `方案详情：${plan.name}` : '方案详情'} status={plan && <><Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>{failedPendingChange ? <Badge variant="destructive">应用失败</Badge> : applying ? <Badge variant="warning">正在应用</Badge> : null}</>}>
         <div className="signal-plan-detail-body">
           {detailError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{detailError}</p>}
           {message && <p role="status" style={{ color: 'var(--text-strong)', margin: 0 }}>{message}</p>}
 
           {detailLoading && !detail && (
             <div className="animate-page-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
-                <div>
-                  <Skeleton className="skeleton-line" style={{ width: 140, height: 24, marginBottom: 6 }} />
-                  <Skeleton className="skeleton-line" style={{ width: 260, height: 16 }} />
+              <div className="signal-plan-overview">
+                <div className="signal-plan-overview-main">
+                  <Skeleton className="skeleton-line" style={{ width: 180, height: 28 }} />
+                  <Skeleton className="skeleton-line" style={{ width: 150, height: 20 }} />
                 </div>
-                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-                  <Skeleton className="skeleton-line" style={{ width: 88, height: 32 }} />
-                  <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
-                  <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
-                </div>
+                <Skeleton className="skeleton-line" style={{ width: 220, height: 16 }} />
               </div>
-              <div className="section-toolbar" style={{ gap: 4, marginTop: 4 }}>
-                <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
-                <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
-                <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
-                <Skeleton className="skeleton-line" style={{ width: 80, height: 28 }} />
-              </div>
-              <div className="plan-info-grid" style={{ marginTop: 10 }}>
-                {[1, 2, 3, 4, 5, 6].map(i => (
-                  <div key={i} className="plan-info-item">
-                    <Skeleton className="skeleton-line" style={{ width: '40%', height: 14 }} />
-                    <Skeleton className="skeleton-line" style={{ width: '75%', height: 20 }} />
-                  </div>
-                ))}
+              <div className="section-toolbar" style={{ gap: 8 }}>
+                {[1, 2, 3].map(i => <Skeleton key={i} className="skeleton-line" style={{ width: 100, height: 32 }} />)}
               </div>
             </div>
           )}
 
           {plan && detail && (
             <div className="signal-plan-content">
-              <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <h3 style={{ margin: 0 }}>{plan.name}</h3>
-                    <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
-                    {failedPendingChange ? <Badge variant="destructive">应用失败</Badge> : applying ? <Badge variant="warning">正在应用</Badge> : null}
+              <div className="signal-plan-overview">
+                {embedded && <div className="signal-plan-inline-title"><h3>{plan.name}</h3><Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>{failedPendingChange ? <Badge variant="destructive">应用失败</Badge> : applying ? <Badge variant="warning">正在应用</Badge> : null}</div>}
+                <div className="signal-plan-overview-main">
+                  <div className="signal-plan-overview-counts">
+                    <div><strong>{detail.member_count ?? '—'}</strong><span>位用户</span></div>
+                    <div><strong>{workingNodes.length}</strong><span>个节点</span></div>
                   </div>
-                  <dl className="signal-plan-facts">
-                    <div><dt>绑定用户</dt><dd>{detail.member_count ?? '—'}</dd></div>
-                    <div><dt>节点</dt><dd>{workingNodes.length}</dd></div>
-                    <div><dt>速度上限</dt><dd>{plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</dd></div>
-                    <div><dt>流量额度</dt><dd>{fmtBytes(plan.traffic_limit_bytes)}</dd></div>
-                    <div><dt>重置周期</dt><dd>{resetModeLabel(plan.traffic_reset_mode, plan.traffic_reset_day)}</dd></div>
-                    <div><dt>最新保存</dt><dd>{formatPlanVersion(latestVersionCreatedAt)}</dd></div>
-                    <div><dt>当前生效版本</dt><dd>{formatPlanVersion((detail.revisions || []).find((r: Revision) => r.id === plan.current_revision_id)?.created_at)}</dd></div>
-                  </dl>
+                  <div className="signal-plan-overview-limits">
+                    <strong>套餐限制</strong>
+                    <span>{plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'} · {plan.traffic_limit_bytes > 0 ? fmtBytes(plan.traffic_limit_bytes) : '不限量'}</span>
+                    {plan.traffic_limit_bytes > 0 && <small>流量重置：{resetModeLabel(plan.traffic_reset_mode, plan.traffic_reset_day)}</small>}
+                  </div>
                 </div>
-                <div className="plan-detail-actions" style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
+                <div className="signal-plan-overview-version">
+                  <span>{plan.current_revision_id === plan.latest_revision_id ? '当前已生效' : applying ? '正在应用最新保存版本' : '最新保存版本尚未生效'}</span>
+                  <time dateTime={latestVersionCreatedAt}>{formatPlanVersion(latestVersionCreatedAt)}</time>
+                  {plan.current_revision_id !== plan.latest_revision_id && <small>当前生效：{formatPlanVersion((detail.revisions || []).find((r: Revision) => r.id === plan.current_revision_id)?.created_at)}</small>}
+                </div>
+              </div>
+              <div className="section-toolbar signal-plan-actions-toolbar">
+                <div className="plan-detail-actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {embedded && <Button size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button>}
                   <Button variant="outline" size="sm" busy={userLoadBusy} onClick={() => void openUserAssignment()}><Users size={14} /> 分配用户</Button>
                   <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
@@ -1068,16 +1119,22 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                     </div>
                   </div>
                 ) : null}
-                <PlanMembershipRulesPanel plan={plan} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
+                {autoRuleCount === null && <div className="signal-plan-rule-notice" role="status">无法确认旧自动规则状态。<Button variant="outline" size="sm" onClick={() => void loadDetail(plan.id)}>重试</Button></div>}
+                {autoRuleCount !== null && autoRuleCount > 0 && (
+                  <div className="signal-plan-rule-notice">
+                    <span>此方案仍有 {autoRuleCount} 条旧自动规则，会继续自动加入节点。</span>
+                    <Button variant="outline" size="sm" disabled={nodeSaveStatus === 'saving' || nodeSaveStatus === 'error' || orderBusy} onClick={() => setConvertRulesOpen(true)}>保留当前节点并停用</Button>
+                  </div>
+                )}
                 <div className="section-toolbar">
                   <div>
-                    <h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3>
-                    <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>基于最新保存版本编辑，保存不代表节点已生效。</p>
+                    <h3 style={{ margin: 0 }}>节点顺序（{workingNodes.length}）</h3>
+                    <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>按排序规则排列；拖拽可调整部分节点的顺序。</p>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {orderingPlan && (
                       <Button variant="outline" size="sm" onClick={() => setOrderingOpen(true)} aria-haspopup="dialog">
-                        <SlidersHorizontal size={14} /> 排序规则
+                        <SlidersHorizontal size={14} /> 设置排序规则
                       </Button>
                     )}
                     <Button size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }}>
@@ -1119,11 +1176,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                     方案自定义
                                   </Badge>
                                 )}
-                                {n.source_type === 'rule' && (
-                                  <Badge variant="outline" style={{ fontSize: 10, padding: '1px 6px' }}>
-                                    规则 #{n.source_rule_id || ''}
-                                  </Badge>
-                                )}
+                                {n.source_type === 'rule' && <Badge variant="outline" style={{ fontSize: 10, padding: '1px 6px' }}>自动加入</Badge>}
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
                                 <span style={{ fontFamily: 'var(--font-mono)' }}>{key}</span>
@@ -1237,6 +1290,13 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           )}
         </div>
       </PlanDetailShell>
+
+      <Dialog isOpen={convertRulesOpen} onClose={() => { if (!convertRulesBusy) setConvertRulesOpen(false) }} title="改为手动管理节点？" size="sm" footer={<>
+        <Button variant="outline" disabled={convertRulesBusy} onClick={() => setConvertRulesOpen(false)}>取消</Button>
+        <Button busy={convertRulesBusy} onClick={() => void convertAutoRules()}>保留节点并停用规则</Button>
+      </>}>
+        <p>当前列表中的节点会保留。停用后，新节点需要手动添加；排序规则仍会决定它们的排列位置。</p>
+      </Dialog>
 
       <Dialog
         isOpen={Boolean(orderingPlan) && orderingOpen}

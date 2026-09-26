@@ -113,6 +113,35 @@ func TestPlanMembershipRulesAndOrderingCopyAPI(t *testing.T) {
 	if !foundP2 {
 		t.Fatalf("rule preview = %#v", rulePreview)
 	}
+	ruleValues := []map[string]any{{"rule_id": 1, "kind": "exit_region", "scope_key": "SG"}}
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules/versions", token, map[string]any{
+		"base_revision_id": int64(policy["base_revision_id"].(float64)), "expected_lock_version": int64(policy["lock_version"].(float64)),
+		"rules": ruleValues, "exclusions": []any{},
+	}, http.StatusOK)
+	withRule := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/nodes/apply", token, map[string]any{
+		"base_revision_id": int64(withRule["base_revision_id"].(float64)), "expected_lock_version": int64(withRule["lock_version"].(float64)),
+		"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p2"]}},
+	}, http.StatusOK)
+	pinned := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules/versions", token, map[string]any{
+		"base_revision_id": int64(pinned["base_revision_id"].(float64)), "expected_lock_version": int64(pinned["lock_version"].(float64)),
+		"rules": []any{}, "exclusions": []any{},
+	}, http.StatusOK)
+	final := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules", token, nil, http.StatusOK)
+	if len(final["rules"].([]any)) != 0 {
+		t.Fatalf("rules remained after conversion: %#v", final["rules"])
+	}
+	foundPinned := false
+	for _, item := range final["nodes"].([]any) {
+		node := item.(map[string]any)
+		if node["node_type"] == "proxy_path" && node["node_id"] == float64(ids["p2"]) {
+			foundPinned = node["source_type"] == "explicit"
+		}
+	}
+	if !foundPinned {
+		t.Fatalf("rule node was not retained as explicit: %#v", final["nodes"])
+	}
 }
 
 func TestPlanOrderingManualOrderPlacesStandaloneSSH(t *testing.T) {
