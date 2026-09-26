@@ -5293,7 +5293,7 @@ button.server-address-line.copied:hover {
 }
 
 .graph-tool:active { cursor: grabbing; }
-.graph-tool:hover { border-color: color-mix(in srgb, var(--primary) 38%, var(--border)); background: var(--primary-softer); transform: translateY(-1px); }
+.graph-tool:hover { border-color: color-mix(in srgb, var(--primary) 38%, var(--border)); background: var(--primary-softer); }
 .graph-tool:disabled { cursor: not-allowed; opacity: 0.48; transform: none; }
 .graph-tool strong { min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .graph-tool strong { color: var(--text-strong); font-size: 11.5px; }
@@ -5411,7 +5411,6 @@ button.server-address-line.copied:hover {
   border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
   background: var(--primary-softer);
   box-shadow: none;
-  transform: translateY(-1px);
 }
 
 .graph-server-tile .graph-palette-copy small {
@@ -20651,7 +20650,6 @@ button[aria-busy="true"] {
 .dash-welcome-actions button:hover,
 .dash-welcome-actions .dash-manage-btn:hover {
   background: var(--primary-2);
-  transform: translateY(-1px);
 }
 .dash-welcome-actions button svg,
 .dash-welcome-actions .dash-manage-btn svg {
@@ -20848,7 +20846,6 @@ button[aria-busy="true"] {
 .quick-card:hover {
   border-color: var(--border-strong);
   background: var(--bg-card-hover);
-  transform: translateY(-2px);
   box-shadow: var(--shadow-sm);
 }
 .quick-card:active { transform: translateY(0); }
@@ -22198,7 +22195,6 @@ select:-webkit-autofill {
 
 .account-profile-badges .sub-pill:hover {
   opacity: 0.85;
-  transform: translateY(-1px);
 }
 
 .account-profile-badges .sub-pill:active {
@@ -29922,7 +29918,6 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
     0 0 0 1px rgba(255, 255, 255, 0.45),
     0 10px 28px -2px color-mix(in srgb, var(--color-primary, #007aff) 65%, transparent),
     0 4px 12px color-mix(in srgb, var(--color-primary, #007aff) 40%, transparent) !important;
-  transform: translateY(-1.5px) scale(1.025) !important;
 }
 
 :is(
@@ -29983,7 +29978,6 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 }
 
 .accent-color-circle:hover {
-  transform: translateY(-2px) scale(1.12) !important;
   box-shadow: inset 0 1.5px 2px rgba(255, 255, 255, 0.8), 0 6px 16px rgba(0, 0, 0, 0.35) !important;
 }
 
