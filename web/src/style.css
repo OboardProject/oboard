@@ -18711,7 +18711,60 @@ button.user-table-compact-button:hover {
 .audit-recent-list time { color: var(--muted); text-align: right; }
 .subscription-audit-recent > div { grid-template-columns: minmax(115px, .8fr) minmax(100px, .8fr) minmax(120px, 1fr) minmax(90px, .7fr) minmax(85px, .7fr) 130px; }
 
-.audit-policy-settings { display: grid; gap: 18px; }
+.audit-settings-body {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+.audit-settings-body > .settings-card { min-width: 0; }
+.audit-policy-settings fieldset {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  margin: 0 20px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.audit-policy-settings fieldset legend { padding: 0 6px; font-weight: 600; }
+.audit-policy-settings fieldset > .audit-console-toolbar {
+  grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(120px, 1fr));
+  gap: 12px;
+  min-width: 0;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.audit-policy-settings fieldset > .audit-console-toolbar strong { align-self: center; }
+.audit-policy-settings fieldset > .audit-console-toolbar label,
+.audit-collection-settings .audit-console-toolbar label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+.audit-policy-settings fieldset > .audit-console-toolbar input,
+.audit-collection-settings .audit-console-toolbar :is(input, select) { width: 100%; min-width: 0; }
+.audit-policy-settings fieldset > label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.audit-policy-settings fieldset > label input { width: 100%; min-width: 0; }
+.audit-collection-settings .audit-console-toolbar {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  padding: 0;
+}
+@media (max-width: 640px) {
+  .audit-policy-settings fieldset > .audit-console-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .audit-policy-settings fieldset > .audit-console-toolbar strong { grid-column: 1 / -1; }
+  .audit-policy-settings fieldset > label { grid-template-columns: minmax(0, 1fr); }
+  .audit-collection-settings .audit-console-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .audit-collection-settings .audit-console-toolbar button { grid-column: 1 / -1; }
+}
 
 .audit-log-intro {
   display: flex;

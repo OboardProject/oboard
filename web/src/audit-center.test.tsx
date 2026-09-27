@@ -34,6 +34,7 @@ it('loads event summaries by default, never the legacy risk overview', () => {
 })
 it('settings cancels reads and does not request risk overview or accounts', async () => {
   await click('审计配置')
+  expect(container.querySelector('[role="dialog"] .audit-settings-body')?.textContent).toContain('设置内容')
   expect(pending[0].signal.aborted).toBe(true)
   expect(pending).toHaveLength(1)
   await act(async () => pending[0].resolve({ items: [{ username: 'obsolete' }] }))

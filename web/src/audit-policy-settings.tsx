@@ -46,7 +46,7 @@ export function AuditPolicySettings({ client }: { client: AuditClient }) {
     try { await applyAuditChange(client, prepared.id, prepared.reason); refresh(n => n + 1) }
     catch (e) { setError(e instanceof Error ? e.message : '保存失败，请重新读取并校验') } finally { setBusy(false) }
   }
-  return <section className="settings-card"><h3>账号判定规则</h3>
+  return <section className="settings-card audit-policy-settings"><h3>账号判定规则</h3>
     <p className="muted">与采集档位独立管理。阈值只用于观察与提醒，不自动封禁，不修改配额。修改后产生新策略版本，已保存的历史判断不被改写。</p>
     {error && <p role="alert" className="form-error">{error}</p>}
     {!config ? <p role="status">正在读取判定规则…</p> : <>

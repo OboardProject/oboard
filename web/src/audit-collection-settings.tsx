@@ -33,7 +33,7 @@ export function AuditCollectionSettings({ client }: { client: AuditClient }) {
     try { await applyAuditChange(client, prepared.id, prepared.reason); refresh(n => n + 1) }
     catch (e) { setError(e instanceof Error ? e.message : '保存失败') } finally { setBusy(false) }
   }
-  return <section className="settings-card"><h3>采集档位</h3>
+  return <section className="settings-card audit-collection-settings"><h3>采集档位</h3>
     <p className="muted">采集内容与判定敏感度分别管理。未采集的历史明细无法事后补回。</p>
     {error && <p role="alert" className="form-error">{error}</p>}
     {!config ? <p role="status">正在读取采集配置…</p> : <>
