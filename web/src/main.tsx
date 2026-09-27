@@ -260,7 +260,6 @@ import {
   dnsPolicyStatusTone,
   dnsRelativeTime,
   filterDNSPolicyRows,
-  latestDNSSuccessAt,
   summarizeDNSPolicyStatuses,
   type DNSPolicyStatus,
   type DNSPolicyStatusFilter,
@@ -19267,7 +19266,6 @@ function DNS({ data, client, load, notify, patchPageData }: any) {
   const attention = rows.filter(row => row.status !== 'ok')
   const defaultEncrypted = lists.find(list => list.kind === 'encrypted' && list.protected)
   const defaultBootstrap = lists.find(list => list.kind === 'bootstrap' && list.protected)
-  const lastSuccess = dnsRelativeTime(latestDNSSuccessAt(policies))
   const detailRow = rows.find(row => row.serverID === detailServerID)
 
   const test = async (row: DNSPolicyRow) => {
@@ -19315,8 +19313,7 @@ function DNS({ data, client, load, notify, patchPageData }: any) {
         <strong>基础解析 · {defaultBootstrap?.name || '未设置'}</strong>
       </div>
       {!rows.length ? <div className="dns-overview-empty">还没有服务器配置 DNS 策略。新建服务器会自动使用默认解析列表。</div>
-        : !attention.length ? <div className="dns-overview-healthy"><Check size={16} aria-hidden="true" /><span>所有 {summary.total} 台服务器 DNS 解析状态正常{lastSuccess ? `，最近一次成功测试 ${lastSuccess}` : ''}。</span></div>
-        : <section className="dns-attention" aria-label="需要处理的服务器">
+        : attention.length > 0 ? <section className="dns-attention" aria-label="需要处理的服务器">
           <div className="dns-attention-head">
             <h4>需要处理</h4>
             {attention.length > dnsAttentionPreviewLimit && <button type="button" className="ghost" onClick={() => setManagerStatus('attention')}>查看全部 {attention.length} 台<ArrowRight size={14} /></button>}
@@ -19330,7 +19327,7 @@ function DNS({ data, client, load, notify, patchPageData }: any) {
               onOpen={() => setDetailServerID(row.serverID)}
             />)}
           </div>
-        </section>}
+        </section> : null}
     </Panel>
     <AnimatePresence>{historyOpen && <DNSBenchmarkHistoryDialog servers={servers} client={client} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
     <AnimatePresence>{managerStatus && <DNSPolicyManagerDialog

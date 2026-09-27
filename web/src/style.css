@@ -24291,8 +24291,7 @@ select:-webkit-autofill {
 }
 .dns-overview-defaults > span { color: var(--muted); }
 .dns-overview-defaults > strong { color: var(--text-strong); font-weight: 600; }
-.dns-overview-empty,
-.dns-overview-healthy {
+.dns-overview-empty {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -24304,12 +24303,6 @@ select:-webkit-autofill {
   color: var(--text-secondary);
   font-size: 13px;
 }
-.dns-overview-healthy {
-  border-color: color-mix(in srgb, var(--success) 26%, var(--border));
-  background: color-mix(in srgb, var(--success-soft) 55%, var(--surface-solid));
-  color: var(--success);
-}
-.dns-overview-healthy svg { flex: 0 0 auto; }
 .dns-attention { margin-top: 18px; }
 .dns-attention-head {
   display: flex;
