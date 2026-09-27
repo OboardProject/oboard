@@ -1,4 +1,5 @@
 import './styles/management-lists.css'
+import { SegmentedProgress } from './components/ui/segmented-progress'
 import './styles/resource-forms.css'
 import './styles/dashboard.css'
 import { ControllerBackupPanel } from './features/backups/Backups'
@@ -4701,26 +4702,17 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
 }
 
 function AgentFleetProgress({ status }: { status: AgentFleetUpdateStatus }) {
-  const segments = [
-    { key: 'current', label: '已完成', value: status.current },
-    { key: 'running', label: '更新中', value: status.running },
-    { key: 'pending', label: '待更新', value: status.pending },
-    { key: 'offline', label: '离线', value: status.offline },
-  ]
-  const total = segments.reduce((sum, item) => sum + Math.max(0, item.value || 0), 0)
-  const percent = total > 0 ? Math.round((status.current / total) * 100) : 0
-  return <div className="agent-fleet-progress">
-    <div className="agent-fleet-progress-head">
-      <span>目标构建 <strong title={status.target_build}>{status.target_build || '—'}</strong></span>
-      <span><strong>{status.current}</strong> / {total}（{percent}%）</span>
-    </div>
-    <div className="agent-fleet-progress-bar" role="progressbar" aria-label="Agent 版本同步进度" aria-valuemin={0} aria-valuemax={total} aria-valuenow={status.current}>
-      {total > 0 && segments.filter(item => item.value > 0).map(item => <span key={item.key} className={`is-${item.key}`} style={{ flexGrow: item.value }} title={`${item.label} ${item.value}`} />)}
-    </div>
-    <div className="agent-fleet-progress-legend">
-      {segments.map(item => <span key={item.key} className={`is-${item.key}`}><i />{item.label}<strong>{item.value}</strong></span>)}
-    </div>
-  </div>
+  return <SegmentedProgress
+    label="Agent 版本同步进度"
+    done={status.current}
+    caption={<>目标构建 <strong title={status.target_build}>{status.target_build || '—'}</strong></>}
+    segments={[
+      { key: 'current', label: '已完成', value: status.current, tone: 'success' },
+      { key: 'running', label: '更新中', value: status.running, tone: 'info' },
+      { key: 'pending', label: '待更新', value: status.pending, tone: 'warning' },
+      { key: 'offline', label: '离线', value: status.offline, tone: 'muted' },
+    ]}
+  />
 }
 
 function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdateSetting, working, realtimeStatus, realtimeRevision, realtimeResources }: any) {
@@ -9849,7 +9841,7 @@ function graphPointerIsCoarse(event: { pointerType?: string; nativeEvent?: Event
   return window.matchMedia('(pointer: coarse)').matches
 }
 
-function graphEntityRemoveLabel(entity: GraphEntity, verbose = false) {
+function graphEntityRemoveLabel(entity: GraphEntity) {
   const fromCanvas = Boolean(
     entity.node_id?.startsWith('canvas-server-')
     || entity.node_id?.startsWith('direct-exit-canvas-')
@@ -9857,17 +9849,17 @@ function graphEntityRemoveLabel(entity: GraphEntity, verbose = false) {
     || entity.node_id?.startsWith('routing-canvas-')
     || entity.type === 'detached-step',
   )
-  if (fromCanvas) return verbose ? '从画布移除' : '移出画布'
-  if (entity.type === 'proxy-path-step') return verbose ? '取消此处及后续节点' : '取消后续'
+  if (fromCanvas) return '移出画布'
+  if (entity.type === 'proxy-path-step') return '移除后续'
   return '删除'
 }
 
 function graphEntityPrimaryActionLabel(entity: GraphEntity, step?: ProxyPathStep) {
-  if (entity.type === 'proxy-path-step') return step?.node_type === 'warp' ? '' : '更改传递方式'
-  if (entity.type === 'entry') return '编辑入口'
-  if (entity.type === 'imported') return '节点设置'
-  if (entity.type === 'server') return '链路详情'
-  if (entity.type === 'routing') return '配置分流'
+  if (entity.type === 'proxy-path-step') return step?.node_type === 'warp' ? '' : '传递方式'
+  if (entity.type === 'entry') return '编辑'
+  if (entity.type === 'imported') return '编辑'
+  if (entity.type === 'server') return '详情'
+  if (entity.type === 'routing') return '编辑'
   return ''
 }
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
@@ -12505,7 +12497,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               onPointerDown={e => e.stopPropagation()}
             >
               {canvasMenu.sheet && <div className="graph-context-menu-handle" aria-hidden="true" />}
-              <div className="graph-context-menu-title">在此处新建</div>
+              <div className="graph-context-menu-title">新建</div>
               {proxyTools.filter(tool => tool.id !== 'transport' && tool.id !== 'family_split_template').map(tool => <button
                 key={tool.id}
                 type="button"
@@ -12513,7 +12505,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
                 disabled={tool.id !== 'server' && tool.id !== 'imported' && !selected?.id}
                 onClick={() => runCanvasMenuTool(tool.id)}
               ><ProxyToolIcon kind={tool.id} />{tool.label}</button>)}
-              <button type="button" role="menuitem" onClick={() => openNodePickerAt(canvasMenuPosition(canvasMenu.position, 280, 140))}><ServerIcon size={14} />其他服务器 / 已有节点</button>
+              <button type="button" role="menuitem" onClick={() => openNodePickerAt(canvasMenuPosition(canvasMenu.position, 280, 140))}><ServerIcon size={14} />其他服务器</button>
               <div className="graph-context-menu-separator" role="separator" />
               <button type="button" role="menuitem" onClick={() => runCanvasMenuTool('transport')}><ProxyToolIcon kind="transport" />流量转发</button>
               <button type="button" role="menuitem" onClick={() => runCanvasMenuTool('family_split_template')}><ProxyToolIcon kind="family_split_template" />双栈模板</button>
@@ -12540,14 +12532,14 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               {graphMenu.sheet && <div className="graph-context-menu-handle" aria-hidden="true" />}
               <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
               {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button type="button" role="menuitem" onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
-              {graphMenu.source === 'edge' && graphMenu.entity.type === 'proxy-path-step' && <button type="button" role="menuitem" onClick={() => void disconnectGraphMenuEdge()}><Unlink size={14} />断开连接</button>}
+              {graphMenu.source === 'edge' && graphMenu.entity.type === 'proxy-path-step' && <button type="button" role="menuitem" onClick={() => void disconnectGraphMenuEdge()}><Unlink size={14} />断开</button>}
               {graphMenu.source === 'node' && relationTargetForEntity(graphMenu.entity, graphMenu.pathIDs) && <button type="button" role="menuitem" onClick={() => openRelatedPaths(graphMenu.entity, graphMenu.pathIDs)}><Workflow size={14} aria-hidden="true" />相关链路</button>}
               {graphMenuPrimaryLabel && <button type="button" role="menuitem" onClick={() => void openGraphMenuEntity()}>{graphMenu.entity.type === 'proxy-path-step' ? <ArrowLeftRight size={14} /> : <Edit3 size={14} />}{graphMenuPrimaryLabel}</button>}
-              {graphMenu.entity.type === 'direct' && <button type="button" role="menuitem" onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
-              {graphMenu.source === 'node' && graphMenuServerID(graphMenu.entity) > 0 && <button type="button" role="menuitem" onClick={createEntryFromGraphMenu}><ProxyToolIcon kind="entry" />{graphMenu.entity.type === 'entry' ? '同服务器新建入口' : '在此服务器创建入口'}</button>}
-              {graphMenu.source === 'node' && graphMenu.entity.type === 'entry' && <button type="button" role="menuitem" onClick={addRoutingFromGraphMenu}><ProxyToolIcon kind="routing" />添加分流规则</button>}
+              {graphMenu.entity.type === 'direct' && <button type="button" role="menuitem" onClick={copyGraphMenuDirectExit}><Copy size={14} />复制</button>}
+              {graphMenu.source === 'node' && graphMenuServerID(graphMenu.entity) > 0 && <button type="button" role="menuitem" onClick={createEntryFromGraphMenu}><ProxyToolIcon kind="entry" />创建入口</button>}
+              {graphMenu.source === 'node' && graphMenu.entity.type === 'entry' && <button type="button" role="menuitem" onClick={addRoutingFromGraphMenu}><ProxyToolIcon kind="routing" />添加分流</button>}
               {graphMenu.source === 'node' && graphMenu.entity.type === 'server' && <button type="button" role="menuitem" onClick={() => { setGraphMenu(null); openTrafficForwarding() }}><ProxyToolIcon kind="transport" />流量转发</button>}
-              <button type="button" role="menuitem" className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphEntityRemoveLabel(graphMenu.entity, true)}</button>
+              <button type="button" role="menuitem" className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphEntityRemoveLabel(graphMenu.entity)}</button>
               {graphMenu.sheet && <button type="button" role="menuitem" className="graph-context-menu-cancel" onClick={dismissGraphMenu}>取消</button>}
             </div>
           </>,

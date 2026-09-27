@@ -112,12 +112,12 @@ describe('ProxyOverview canvas behavior', () => {
     expect(document.querySelector('[aria-label="画布操作"]')).toBeNull()
     expect(nodes().length).toBe(before + 1)
     await act(async () => flow.props.onPaneContextMenu!(contextMenu()))
-    await act(async () => menuItem('其他服务器 / 已有节点').click())
+    await act(async () => menuItem('其他服务器').click())
     await act(async () => button('将 Server 3 放入画布').click())
     expect(staged()).toHaveLength(1)
     const server = nodes().find(node => node.id === 'server-1')!
     await act(async () => flow.props.onNodeContextMenu!(contextMenu(), server))
-    expect(button('在此服务器创建入口')).toBeTruthy()
+    expect(button('创建入口')).toBeTruthy()
     expect(request).not.toHaveBeenCalled()
   })
 

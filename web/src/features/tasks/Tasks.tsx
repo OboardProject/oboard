@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react'
 import { TableSkeleton } from '../../components/ui/skeleton'
 import { MotionList, MotionCard } from '../../components/ui/motion'
 import { Panel } from '../../shared/Panel'
+import { SegmentedProgress } from '../../components/ui/segmented-progress'
 import { cell, formatTableTime, labelValue } from '../../shared/presentation'
 import { parseJSONLoose } from '../../shared/parse-json'
 import type { APIClient } from '../../shared/api-client'
@@ -91,13 +92,29 @@ function DeploymentTaskOverview({ rows, data }: { rows: Task[]; data: TaskData }
   const tasks = latestDeploymentTasks(rows)
   const serverIDs = Array.from(new Set(tasks.map(task => Number(task.server_id || 0)))).filter(Boolean)
   if (!serverIDs.length) return null
+  const servers = serverIDs.map(id => {
+    const current = tasks.filter(task => Number(task.server_id) === id)
+    return { id, version: current[0]?.config_version, status: deploymentStatusFromSummary(taskStatusSummary(current)) }
+  })
+  const count = (...states: string[]) => servers.filter(item => states.includes(item.status)).length
+  const succeeded = count('succeeded')
+  const attention = servers.filter(item => item.status !== 'succeeded')
   return <section className="task-deployment-overview" aria-label="最新部署状态">
     <div><h3>最新部署状态</h3><p className="muted">按当前已加载记录中，各服务器最新配置版本汇总；执行成功不代表实时在线。</p></div>
-    <div className="task-deployment-servers">{serverIDs.map(id => {
-      const current = tasks.filter(task => Number(task.server_id) === id)
-      const status = deploymentStatusFromSummary(taskStatusSummary(current))
-      return <div className="task-deployment-server" key={id}><strong>{taskServerLabel(data, id)}</strong><span className="muted">版本 {current[0]?.config_version || '未标记'}</span>{cell(status, 'status')}</div>
-    })}</div>
+    <SegmentedProgress
+      label="最新部署进度"
+      done={succeeded}
+      caption="部署成功"
+      segments={[
+        { key: 'succeeded', label: '成功', value: succeeded, tone: 'success' },
+        { key: 'running', label: '执行中', value: count('running'), tone: 'info' },
+        { key: 'pending', label: '排队中', value: count('pending'), tone: 'warning' },
+        { key: 'failed', label: '失败', value: count('failed', 'partial_failed'), tone: 'danger' },
+      ]}
+    />
+    {attention.length > 0 && <div className="task-deployment-servers">{attention.map(item => (
+      <div className="task-deployment-server" key={item.id}><strong>{taskServerLabel(data, item.id)}</strong><span className="muted">版本 {item.version || '未标记'}</span>{cell(item.status, 'status')}</div>
+    ))}</div>}
   </section>
 }
 
