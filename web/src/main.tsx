@@ -4802,7 +4802,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const diagnosticsSection = diagnosticsReason && diagnostics && diagnostics.status !== 'idle'
     ? <ControllerUpdateDiagnosticsSection reason={diagnosticsReason} diagnostics={diagnostics} onRetry={onRetryDiagnostics || (() => {})} />
     : null
-  return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog">
+  return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog" surfaceMotion={phase === 'confirm' ? 'compact' : 'form'}>
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
       {phase === 'confirm' && <>

@@ -9477,6 +9477,7 @@ body:has(.dialog-layer) .main {
 
 .controller-update-install-body {
   display: grid;
+  align-content: start;
   gap: 12px;
   padding: 14px 18px;
 }
@@ -9763,18 +9764,9 @@ body:has(.dialog-layer) .main {
   .dialog.controller-update-install-dialog .controller-update-install-body {
     gap: 8px;
     padding: 8px 12px 10px;
-    overflow: hidden !important;
   }
-  .dialog.controller-update-install-dialog .controller-update-install-notice.compact,
-  .dialog.controller-update-install-dialog .controller-update-install-advice {
+  .dialog.controller-update-install-dialog .controller-update-install-notice.compact {
     display: none;
-  }
-  .dialog.controller-update-install-dialog .controller-update-install-lead p,
-  .dialog.controller-update-install-dialog .controller-update-install-notice span {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
   }
   .controller-update-stages {
     grid-template-columns: 1fr 1fr;
