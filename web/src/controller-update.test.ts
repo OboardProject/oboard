@@ -6,7 +6,9 @@ import {
   CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
   controllerUpdateDisplayPhase,
   controllerUpdateFlowPercent,
+  controllerUpdateAnimationMode,
   controllerUpdatePendingToast,
+  controllerUpdateStatusLine,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
   isControllerUpdateForceFinishConfirmation,
@@ -15,6 +17,7 @@ import {
   monotonicPercent,
   shouldDeferControllerUpdateTerminalStatus,
 } from './controller-update'
+import { lightfieldRamp } from './controller-update-lightfield'
 
 describe('controller update pending toast', () => {
 
@@ -167,3 +170,34 @@ describe('controller update transfer detail layout', () => {
   })
 })
 
+
+describe('controller update animation status line', () => {
+  it('keeps each phase to one line with real progress', () => {
+    expect(controllerUpdateStatusLine({ phase: 'downloading', downloadPercent: 42.345 })).toBe('正在下载更新 · 42.3%')
+    expect(controllerUpdateStatusLine({ phase: 'downloading' })).toBe('正在下载更新')
+    expect(controllerUpdateStatusLine({ phase: 'backing_up', backupPercent: 35 })).toBe('正在备份数据库 · 35%')
+    expect(controllerUpdateStatusLine({ phase: 'restarting', connectionInterrupted: true })).toBe('主控正在重启，等待重新连接')
+    expect(controllerUpdateStatusLine({ phase: 'complete', targetVersion: 'v1.2.0' })).toBe('更新完成 · v1.2.0')
+  })
+
+  it('shows only the first line of a failure', () => {
+    expect(controllerUpdateStatusLine({ phase: 'failed', failure: '磁盘空间不足\n详细日志' })).toBe('更新失败：磁盘空间不足')
+    expect(controllerUpdateStatusLine({ phase: 'failed' })).toBe('更新失败')
+  })
+
+  it('maps phases to animation modes', () => {
+    expect(controllerUpdateAnimationMode('confirm')).toBe('idle')
+    expect(controllerUpdateAnimationMode('installing')).toBe('running')
+    expect(controllerUpdateAnimationMode('complete')).toBe('success')
+    expect(controllerUpdateAnimationMode('force_finished')).toBe('failed')
+  })
+
+  it('builds up slower than it winds down and slows before thinning out', () => {
+    const start = lightfieldRamp('running')
+    const end = lightfieldRamp('success')
+    expect(start.density.delay + start.density.duration).toBeGreaterThan(end.density.delay + end.density.duration)
+    expect(start.speed.delay + start.speed.duration).toBeGreaterThan(end.speed.delay + end.speed.duration)
+    expect(end.density.delay).toBeGreaterThan(end.speed.delay)
+    expect(start.speed.ease(0.3)).toBeLessThan(0.3)
+  })
+})

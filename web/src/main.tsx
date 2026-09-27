@@ -220,7 +220,9 @@ import {
   CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
   controllerUpdateDisplayPhase,
   controllerUpdateFlowPercent,
+  controllerUpdateAnimationMode,
   controllerUpdatePendingToast,
+  controllerUpdateStatusLine,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
   isControllerUpdateForceFinishConfirmation,
@@ -230,6 +232,7 @@ import {
   shouldDeferControllerUpdateTerminalStatus,
 } from './controller-update'
 import { useControllerUpdatePromptAutoDismiss } from './controller-update-prompt'
+import { ControllerUpdateLightfield } from './controller-update-lightfield'
 import {
   controllerUpdateDiagnosticsReason,
   controllerUpdateActiveStartedAt,
@@ -4196,6 +4199,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       diagnostics={promptDiagnostics}
       diagnosticsReason={promptDiagnosticsReason}
       onRetryDiagnostics={promptDiagnostics.retry}
+      fetchDiagnostics={() => client.request('/controller-update/diagnostics') as Promise<ControllerUpdateDiagnostics>}
       onCancel={() => setDialogOpen(false)}
       onInstall={nextSkipBackup => void install(Boolean(nextSkipBackup))}
       onInterrupt={() => undefined}
@@ -4683,6 +4687,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       diagnostics={installDiagnostics}
       diagnosticsReason={installDiagnosticsReason}
       onRetryDiagnostics={installDiagnostics.retry}
+      fetchDiagnostics={() => client.request('/controller-update/diagnostics') as Promise<ControllerUpdateDiagnostics>}
       onCancel={() => setInstallDialogOpen(false)}
       onInstall={skipBackup => void install(Boolean(skipBackup))}
       onInterrupt={() => void cancelInstall()}
@@ -4768,12 +4773,12 @@ function controllerUpdateStageState(phase: ControllerUpdateInstallPhase, id: Con
   return ''
 }
 
-function ControllerUpdateDiagnosticsSection({ reason, diagnostics, onRetry }: { reason: 'failed' | 'timeout'; diagnostics: ControllerUpdateDiagnosticsState; onRetry: () => void }) {
+function ControllerUpdateDiagnosticsSection({ reason, diagnostics, onRetry }: { reason: 'failed' | 'timeout' | 'manual'; diagnostics: ControllerUpdateDiagnosticsState; onRetry: () => void }) {
   return <section className="controller-update-diagnostics">
     <div className="controller-update-diagnostics-head">
       <div>
-        <strong>{reason === 'timeout' ? '更新耗时超出预期' : '已自动抓取更新日志'}</strong>
-        <p>{reason === 'timeout' ? '更新仍在后台继续。下面是主控当前的更新记录，可以先复制给技术支持排查。' : '下面是本次更新的状态、阶段耗时和主控日志，复制后即可用于排查。'}</p>
+        <strong>{reason === 'timeout' ? '更新耗时超出预期' : reason === 'manual' ? '更新日志' : '已自动抓取更新日志'}</strong>
+        <p>{reason === 'timeout' ? '更新仍在后台继续。下面是主控当前的更新记录，可以先复制给技术支持排查。' : reason === 'manual' ? '主控当前的更新状态、阶段耗时和运行日志。重启期间可能暂时读取不到。' : '下面是本次更新的状态、阶段耗时和主控日志，复制后即可用于排查。'}</p>
       </div>
       {diagnostics.status !== 'loading' && <button type="button" className="ghost" onClick={onRetry}><RefreshCw size={14} />重新抓取</button>}
     </div>
@@ -4785,7 +4790,9 @@ function ControllerUpdateDiagnosticsSection({ reason, diagnostics, onRetry }: { 
   </section>
 }
 
-function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, download, elapsedLabel, diagnostics, diagnosticsReason, onRetryDiagnostics, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; download?: ControllerUpdateStatus['download']; elapsedLabel?: string; diagnostics?: ControllerUpdateDiagnosticsState; diagnosticsReason?: '' | 'failed' | 'timeout'; onRetryDiagnostics?: () => void; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
+const rejectControllerUpdateDiagnostics = () => Promise.reject(new Error('unavailable'))
+
+function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, download, elapsedLabel, diagnostics, diagnosticsReason, onRetryDiagnostics, fetchDiagnostics, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; download?: ControllerUpdateStatus['download']; elapsedLabel?: string; diagnostics?: ControllerUpdateDiagnosticsState; diagnosticsReason?: '' | 'failed' | 'timeout'; onRetryDiagnostics?: () => void; fetchDiagnostics?: () => Promise<ControllerUpdateDiagnostics>; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
   const waiting = ['starting', 'checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(phase)
   const backupShownRef = useRef(0)
   if (phase !== 'backing_up') backupShownRef.current = 0
@@ -4799,9 +4806,19 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const backupSkipped = Boolean(skipBackup) && phase !== 'backing_up'
   const backupStageDone = ['ready', 'installing', 'restarting', 'verifying'].includes(phase)
   const backupStageLabel = backupSkipped ? (backupStageDone ? '已跳过' : '将跳过') : (phase === 'backing_up' ? `${backupShown}%` : '等待准备完成')
+  const reduceMotion = useReducedMotion()
+  const detailsId = useId()
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const manualLogsWanted = detailsOpen && phase !== 'confirm' && !diagnosticsReason && Boolean(fetchDiagnostics)
+  const manualDiagnostics = useControllerUpdateDiagnostics(manualLogsWanted ? 'manual' : '', fetchDiagnostics || rejectControllerUpdateDiagnostics)
   const diagnosticsSection = diagnosticsReason && diagnostics && diagnostics.status !== 'idle'
     ? <ControllerUpdateDiagnosticsSection reason={diagnosticsReason} diagnostics={diagnostics} onRetry={onRetryDiagnostics || (() => {})} />
-    : null
+    : manualLogsWanted && manualDiagnostics.status !== 'idle'
+      ? <ControllerUpdateDiagnosticsSection reason="manual" diagnostics={manualDiagnostics} onRetry={manualDiagnostics.retry} />
+      : null
+  const animationMode = controllerUpdateAnimationMode(phase)
+  const statusTone = animationMode === 'success' ? 'success' : animationMode === 'failed' ? 'failed' : phase === 'cancelled' ? 'muted' : 'running'
+  const statusLine = controllerUpdateStatusLine({ phase, connectionInterrupted, downloadPercent, backupPercent: backupShown, targetVersion, failure: failure ? localizeErrorMessage(failure) : '' })
   return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog" surfaceMotion={phase === 'confirm' ? 'compact' : 'form'}>
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
@@ -4810,29 +4827,49 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
         <div className="controller-update-install-notice"><strong>更新期间暂时无法访问面板是正常现象</strong><span>主控停止和重新启动期间，连接可能短暂中断，刷新时也可能看到 502 或“页面暂时无法访问”的提示。这不代表更新失败。</span></div>
         <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。没有其他可用备份时，建议选择备份并更新。</p>
       </>}
-      {waiting && <>
-        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><div className="controller-update-transfer-detail">{phase === 'downloading' ? <>
-          <div className="controller-update-transfer-meta"><span>{download ? `${formatBytes(download.bytes)} / ${download.total_bytes > 0 ? formatBytes(download.total_bytes) : '大小待确认'}` : '正在连接下载源'}</span><span>{download ? `${formatBytes(download.bytes_per_second)}/s` : '—'}</span></div>
-          <div className="controller-update-transfer-meta"><span>{download?.attempt && download.attempt > 1 ? `第 ${download.attempt} 次尝试` : '下载后自动校验文件'}</span><span>{downloadPercent === undefined ? '等待进度' : `${downloadPercent.toFixed(1)}%`}</span></div>
-        </> : <><span className="controller-update-transfer-summary">{phase === 'backing_up' ? [sizeLabel, elapsedLabel].filter(Boolean).join(' · ') || '备份进行中，不预估剩余时间。' : '主控更新成功不依赖 Agent 重新连接。'}</span><span>{phase === 'backing_up' ? '备份完成后自动安装' : elapsedLabel || '正在准备，请稍候'}</span></>}</div></div></div>
-        <div className="controller-update-stages" aria-label="更新进度">
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'checking', ['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '1'}</span><div><strong>检查</strong><small>{phase === 'checking' ? '正在检查可用版本' : '完成'}</small></div></div>
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'downloading', ['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '2'}</span><div><strong>下载</strong><small>{phase === 'downloading' || phase === 'cancelling' ? (downloadPercent === undefined ? '正在下载并检查文件' : `已下载 ${downloadPercent.toFixed(1)}%`) : '等待开始'}</small></div></div>
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'preflight', ['backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '3'}</span><div><strong>准备</strong><small>{phase === 'preflight' ? (backupSkipped ? '正在准备安装' : '正在检查磁盘和备份条件') : '等待下载完成'}</small></div></div>
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'backing_up', ['ready', 'installing', 'restarting', 'verifying'])}`}><span>{backupStageDone ? <Check size={14} /> : '4'}</span><div><strong>备份</strong><small>{backupStageLabel}</small></div></div>
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'installing', ['restarting', 'verifying'])}`}><span>{['restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '5'}</span><div><strong>安装</strong><small>{phase === 'installing' ? '正在替换主控程序' : (backupSkipped ? '等待准备完成' : '等待备份完成')}</small></div></div>
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'restarting', ['verifying'])}`}><span>{phase === 'verifying' ? <Check size={14} /> : '6'}</span><div><strong>等待重启</strong><small>{phase === 'restarting' || connectionInterrupted ? '主控正在重新启动' : '等待安装完成'}</small></div></div>
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'verifying', [])}`}><span>7</span><div><strong>验证</strong><small>{phase === 'verifying' ? '正在确认新版本可用' : '等待重启完成'}</small></div></div>
-        </div>
-        <div className="controller-update-install-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(flowPercent)} aria-label="主控更新进度"><span style={{ transform: `scaleX(${Math.max(0.04, flowPercent / 100)})` }} /></div>
-        <div className="controller-update-install-notice compact"><span>期间出现连接中断、短暂白屏或 502 提示都是正常现象。</span></div>
+      {phase !== 'confirm' && <>
+        <ControllerUpdateLightfield mode={animationMode} reduceMotion={Boolean(reduceMotion)}>
+          <button type="button" className={`controller-update-lightfield-status ${statusTone}`} aria-expanded={detailsOpen} aria-controls={detailsId} title={detailsOpen ? '收起详情' : '查看详情和日志'} onClick={() => setDetailsOpen(open => !open)}>
+            <span className="controller-update-lightfield-dot" aria-hidden="true" />
+            <span className="controller-update-lightfield-text" aria-live="polite">{statusLine}</span>
+            <ChevronDown size={14} aria-hidden="true" className={detailsOpen ? 'open' : ''} />
+          </button>
+        </ControllerUpdateLightfield>
+        <AnimatePresence initial={false}>{detailsOpen && <m.div
+          id={detailsId}
+          className="controller-update-details"
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <div className="controller-update-details-inner">
+            {waiting && <>
+              <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><div className="controller-update-transfer-detail">{phase === 'downloading' ? <>
+                <div className="controller-update-transfer-meta"><span>{download ? `${formatBytes(download.bytes)} / ${download.total_bytes > 0 ? formatBytes(download.total_bytes) : '大小待确认'}` : '正在连接下载源'}</span><span>{download ? `${formatBytes(download.bytes_per_second)}/s` : '—'}</span></div>
+                <div className="controller-update-transfer-meta"><span>{download?.attempt && download.attempt > 1 ? `第 ${download.attempt} 次尝试` : '下载后自动校验文件'}</span><span>{downloadPercent === undefined ? '等待进度' : `${downloadPercent.toFixed(1)}%`}</span></div>
+              </> : <><span className="controller-update-transfer-summary">{phase === 'backing_up' ? [sizeLabel, elapsedLabel].filter(Boolean).join(' · ') || '备份进行中，不预估剩余时间。' : '主控更新成功不依赖 Agent 重新连接。'}</span><span>{phase === 'backing_up' ? '备份完成后自动安装' : elapsedLabel || '正在准备，请稍候'}</span></>}</div></div></div>
+              <div className="controller-update-stages" aria-label="更新进度">
+                <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'checking', ['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '1'}</span><div><strong>检查</strong><small>{phase === 'checking' ? '正在检查可用版本' : '完成'}</small></div></div>
+                <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'downloading', ['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '2'}</span><div><strong>下载</strong><small>{phase === 'downloading' || phase === 'cancelling' ? (downloadPercent === undefined ? '正在下载并检查文件' : `已下载 ${downloadPercent.toFixed(1)}%`) : '等待开始'}</small></div></div>
+                <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'preflight', ['backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '3'}</span><div><strong>准备</strong><small>{phase === 'preflight' ? (backupSkipped ? '正在准备安装' : '正在检查磁盘和备份条件') : '等待下载完成'}</small></div></div>
+                <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'backing_up', ['ready', 'installing', 'restarting', 'verifying'])}`}><span>{backupStageDone ? <Check size={14} /> : '4'}</span><div><strong>备份</strong><small>{backupStageLabel}</small></div></div>
+                <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'installing', ['restarting', 'verifying'])}`}><span>{['restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '5'}</span><div><strong>安装</strong><small>{phase === 'installing' ? '正在替换主控程序' : (backupSkipped ? '等待准备完成' : '等待备份完成')}</small></div></div>
+                <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'restarting', ['verifying'])}`}><span>{phase === 'verifying' ? <Check size={14} /> : '6'}</span><div><strong>等待重启</strong><small>{phase === 'restarting' || connectionInterrupted ? '主控正在重新启动' : '等待安装完成'}</small></div></div>
+                <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'verifying', [])}`}><span>7</span><div><strong>验证</strong><small>{phase === 'verifying' ? '正在确认新版本可用' : '等待重启完成'}</small></div></div>
+              </div>
+              <div className="controller-update-install-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(flowPercent)} aria-label="主控更新进度"><span style={{ transform: `scaleX(${Math.max(0.04, flowPercent / 100)})` }} /></div>
+              <div className="controller-update-install-notice compact"><span>期间出现连接中断、短暂白屏或 502 提示都是正常现象。</span></div>
+            </>}
+            {phase === 'cancelled' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>更新已安全中断</strong><p>当前版本没有被改动，可以稍后重新开始更新。</p></div></div>}
+            {phase === 'stopped' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>本次更新不会继续进行</strong><p>请重新检查当前版本，再决定是否重新更新。</p></div></div>}
+            {phase === 'force_finished' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>面板已停止追踪本次任务</strong><p>已经开始的系统安装不会回滚，仍可能自行完成。请稍后检查当前版本。</p></div></div>}
+            {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>Controller 更新成功</strong><p>Agent 版本同步将在后台滚动进行。</p></div></div>}
+            {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
+            {diagnosticsSection}
+          </div>
+        </m.div>}</AnimatePresence>
       </>}
-      {phase === 'cancelled' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>更新已安全中断</strong><p>当前版本没有被改动，可以稍后重新开始更新。</p></div></div>}
-      {phase === 'stopped' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>本次更新不会继续进行</strong><p>请重新检查当前版本，再决定是否重新更新。</p></div></div>}
-      {phase === 'force_finished' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>面板已停止追踪本次任务</strong><p>已经开始的系统安装不会回滚，仍可能自行完成。请稍后检查当前版本。</p></div></div>}
-      {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>Controller 更新成功</strong><p>Agent 版本同步将在后台滚动进行。</p></div></div>}
-      {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
-      {diagnosticsSection}
     </div>
     <footer className="dialog-actions">
       {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></>}

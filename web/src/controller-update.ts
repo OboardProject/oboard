@@ -112,3 +112,49 @@ export function controllerUpdatePendingToast(updateInProgress: boolean, error: u
   if (!isExpectedControllerUpdateDisconnect(error)) return null
   return { message: CONTROLLER_UPDATE_PENDING_MESSAGE, kind: 'info' }
 }
+
+export type ControllerUpdateStatusLineInput = {
+  phase: string
+  connectionInterrupted?: boolean
+  downloadPercent?: number
+  backupPercent?: number
+  targetVersion?: string
+  failure?: string
+}
+
+// One short line under the update animation. Details and logs live behind it.
+export function controllerUpdateStatusLine(input: ControllerUpdateStatusLineInput): string {
+  const { phase, connectionInterrupted, downloadPercent, backupPercent, targetVersion, failure } = input
+  if (connectionInterrupted && ['installing', 'restarting'].includes(phase)) return '主控正在重启，等待重新连接'
+  switch (phase) {
+    case 'starting': return '正在启动更新'
+    case 'checking': return '正在检查更新'
+    case 'downloading': return downloadPercent === undefined ? '正在下载更新' : `正在下载更新 · ${downloadPercent.toFixed(1)}%`
+    case 'preflight': return '正在准备安装'
+    case 'backing_up': return `正在备份数据库 · ${Math.round(backupPercent || 0)}%`
+    case 'ready': return '即将安装新版本'
+    case 'installing': return '正在安装更新'
+    case 'restarting': return '主控正在重启'
+    case 'verifying': return '正在验证新版本'
+    case 'cancelling': return '正在停止更新'
+    case 'complete': return targetVersion ? `更新完成 · ${targetVersion}` : '更新完成'
+    case 'cancelled': return '更新已安全中断，当前版本未改动'
+    case 'stopped': return '本次更新已停止'
+    case 'force_finished': return '已停止追踪本次更新'
+    case 'failed': {
+      const reason = String(failure || '').split('\n')[0].trim()
+      return reason ? `更新失败：${reason}` : '更新失败'
+    }
+    default: return '正在准备更新'
+  }
+}
+
+export type ControllerUpdateAnimationMode = 'idle' | 'running' | 'success' | 'failed'
+
+export function controllerUpdateAnimationMode(phase: string): ControllerUpdateAnimationMode {
+  if (phase === 'confirm') return 'idle'
+  if (phase === 'complete') return 'success'
+  if (phase === 'failed' || phase === 'stopped' || phase === 'force_finished') return 'failed'
+  if (phase === 'cancelled') return 'idle'
+  return 'running'
+}
