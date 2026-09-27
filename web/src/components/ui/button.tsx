@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Loader2 } from "lucide-react"
 
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -33,6 +34,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={busy || undefined}
         {...props}
       >
+        {busy && <Loader2 size={size === "sm" ? 14 : 16} className="spin" aria-hidden="true" style={{ flexShrink: 0 }} />}
         {children}
       </button>
     )

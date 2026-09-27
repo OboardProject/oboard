@@ -9090,6 +9090,7 @@ function formatTimeOffset(offsetMS: number) {
 
 function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalling = false, layout = 'grid', isSelected = false }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; uninstalling?: boolean; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list'; isSelected?: boolean }) {
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
+  const reduceMotion = useReducedMotion()
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
   const monitoring = serverMonitoring(server.monitoring_display, isOnline)
@@ -9124,7 +9125,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
                 <ServerDeliveryBadge server={server} />
                 <ServerExpiryBadge server={server} />
                 {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>{timeIssue.summary}</Badge>}
-                {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
+                {uninstalling && <Badge variant="warning" role="status" aria-label={`${server.name || `服务器 #${server.id}`} 正在卸载，完成后自动删除`} style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}><Loader2 size={11} className={reduceMotion ? '' : 'spin'} aria-hidden="true" />卸载并删除中</Badge>}
               </div>
             </div>
             <ServerAddressBadge server={server} />
@@ -9246,7 +9247,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <AlertTriangle size={12} aria-hidden="true" />
             <span>{timeIssue.summary}</span>
           </button>}
-          {uninstalling && <span className="status-pill warning">卸载中</span>}
+          {uninstalling && <span className="status-pill warning" role="status" aria-label={`${server.name || `服务器 #${server.id}`} 正在卸载，完成后自动删除`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Loader2 size={12} className={reduceMotion ? '' : 'spin'} aria-hidden="true" />卸载并删除中</span>}
           <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} title={!isOnline && server.last_seen_at ? `离线（${offlineAgoLabel(server.last_seen_at)}）` : server.latency_probe_enabled ? `在线 · 延迟 ${connectivityStatusLabel(server.connectivity_status)}` : '在线'} />
           <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
@@ -17869,7 +17870,7 @@ export function UserManagement({ data, client, load, notify }: any) {
         {selectedGroup && !selectedGroupProtected && <>
           <button className="ghost" onClick={() => setManagingGroupID(selectedGroup.id)}><UsersIcon size={15} />管理成员</button>
           <button className="ghost" onClick={() => openEditGroup(selectedGroup)} title="编辑分组" aria-label={`编辑 ${selectedGroup.name}`}><Edit3 size={15} />编辑用户组</button>
-          {!selectedGroup.system_key && <button className="ghost danger-text" disabled={groupAction.pending} onClick={() => void groupAction.run(() => deleteGroup(selectedGroup))} title="删除分组" aria-label={`删除 ${selectedGroup.name}`}><Trash2 size={15} />{groupAction.pending ? '删除中…' : '删除用户组'}</button>}
+          {!selectedGroup.system_key && <button className="ghost danger-text" disabled={groupAction.pending} aria-busy={groupAction.pending} onClick={() => void groupAction.run(() => deleteGroup(selectedGroup))} title="删除分组" aria-label={`删除 ${selectedGroup.name}`}>{groupAction.pending ? <Loader2 size={15} className="spin" aria-hidden="true" /> : <Trash2 size={15} />}{groupAction.pending ? '删除中…' : '删除用户组'}</button>}
         </>}
         <button onClick={openCreateUser}>创建账号</button>
       </div>
