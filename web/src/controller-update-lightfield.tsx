@@ -69,8 +69,8 @@ function spawnBeam(reach: number, orbRadius: number, random: () => number): Beam
 }
 
 type Palette = { core: string; mid: string; edge: string; glow: string }
-const ORB_CALM: Palette = { core: '#f6f7ff', mid: '#d6ddff', edge: '#8e9cff', glow: '150, 168, 255' }
-const ORB_FAILED: Palette = { core: '#fff3f1', mid: '#f4c8c8', edge: '#d9737c', glow: '232, 120, 132' }
+const ORB_CALM: Palette = { core: '#cddcff', mid: '#8498e8', edge: '#424f9a', glow: '150, 168, 255' }
+const ORB_FAILED: Palette = { core: '#f4d6dc', mid: '#c889a2', edge: '#85475f', glow: '232, 120, 132' }
 
 type Engine = { setMode: (mode: LightfieldMode) => void; setLifted: (lifted: boolean) => void; destroy: () => void }
 
@@ -156,7 +156,7 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
       const wInner = Math.max(0.25, beam.width * 0.12 * Math.min(1, inner / reach + 0.2))
       const fadeIn = Math.min(1, Math.max(0, (reach + length - inner) / (length * 0.9)))
       const fadeCore = Math.min(1, Math.max(0, (inner - orbRadius) / (orbRadius * 0.9)))
-      const alpha = beam.alpha * fadeIn * (0.25 + 0.75 * fadeCore)
+      const alpha = beam.alpha * fadeIn * fadeCore * 0.58
       if (alpha <= 0.01) continue
       const px = -sin
       const py = cos
@@ -182,17 +182,20 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
   }
 
   const drawOrb = (cx: number, cy: number, radius: number, time: number, energy: number) => {
-    const breathe = reduceMotion ? 0 : Math.sin(time / 1300) * 0.025
-    const r = radius * (1 + breathe + absorb * 0.05 + flash * 0.08)
+    time = reduceMotion ? 0 : time
+    const breathe = Math.sin(time / 2400) * 0.012
+    const r = radius * (1 + breathe + absorb * 0.018 + flash * 0.025)
     const mix = failedMix
     const glowColor = mix > 0.5 ? ORB_FAILED.glow : ORB_CALM.glow
-    const halo = g.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * (1.9 + energy * 0.7 + flash * 1.1))
-    halo.addColorStop(0, `rgba(${glowColor}, ${0.3 + energy * 0.2 + flash * 0.3})`)
-    halo.addColorStop(0.45, `rgba(${glowColor}, ${0.08 + energy * 0.07 + flash * 0.1})`)
+    const haloRadius = r * (2.35 + energy * 0.15)
+    const halo = g.createRadialGradient(cx, cy, r * 0.7, cx, cy, haloRadius)
+    halo.addColorStop(0, `rgba(${glowColor}, ${0.14 + energy * 0.035 + flash * 0.04})`)
+    halo.addColorStop(0.24, `rgba(${glowColor}, 0.065)`)
+    halo.addColorStop(0.58, `rgba(${glowColor}, 0.018)`)
     halo.addColorStop(1, `rgba(${glowColor}, 0)`)
     g.fillStyle = halo
     g.beginPath()
-    g.arc(cx, cy, r * (1.9 + energy * 0.7 + flash * 1.1), 0, Math.PI * 2)
+    g.arc(cx, cy, haloRadius, 0, Math.PI * 2)
     g.fill()
 
     g.save()
@@ -210,29 +213,55 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
       g.fillRect(cx - r, cy - r, r * 2, r * 2)
     }
     g.globalAlpha = 1
-    // Soft drifting haze, like light clouds inside the sphere.
-    for (let i = 0; i < 4; i += 1) {
-      const phase = time / (5200 + i * 1700) + i * 1.7
-      const hx = cx + Math.cos(phase) * r * 0.45
-      const hy = cy - r * 0.35 + i * r * 0.28 + Math.sin(phase * 1.3) * r * 0.08
-      const haze = g.createRadialGradient(hx, hy, 0, hx, hy, r * (0.55 + i * 0.08))
-      haze.addColorStop(0, `rgba(255, 255, 255, ${0.34 - i * 0.05})`)
-      haze.addColorStop(1, 'rgba(255, 255, 255, 0)')
+    const flow = time / 8500
+    for (let i = 0; i < 3; i += 1) {
+      const phase = flow * (0.65 + i * 0.2) + i * 2.1
+      const hx = cx + Math.cos(phase) * r * 0.42
+      const hy = cy + Math.sin(phase * 1.2) * r * 0.45
+      const haze = g.createRadialGradient(hx, hy, 0, hx, hy, r * 0.8)
+      haze.addColorStop(0, `rgba(${i === 1 ? glowColor : '218, 240, 255'}, 0.24)`)
+      haze.addColorStop(1, `rgba(${glowColor}, 0)`)
       g.fillStyle = haze
       g.fillRect(cx - r, cy - r, r * 2, r * 2)
     }
-    const shade = g.createLinearGradient(cx, cy - r, cx, cy + r)
-    shade.addColorStop(0, 'rgba(255, 255, 255, 0)')
-    shade.addColorStop(1, `rgba(${glowColor}, 0.35)`)
+
+    g.save()
+    g.translate(cx, cy)
+    g.rotate(-0.45 + Math.sin(flow * 0.4) * 0.18)
+    for (let i = 0; i < 5; i += 1) {
+      const phase = flow + i * 0.9
+      const y = (i - 2) * r * 0.27 + Math.sin(phase) * r * 0.1
+      const bend = Math.sin(phase * 0.8) * r * 0.32
+      const ribbon = g.createLinearGradient(-r, y - r * 0.22, r * 0.7, y + r * 0.3)
+      ribbon.addColorStop(0, 'rgba(185, 208, 255, 0)')
+      ribbon.addColorStop(0.35, `rgba(217, 239, 255, ${0.14 + energy * 0.05})`)
+      ribbon.addColorStop(0.62, 'rgba(239, 232, 255, 0.32)')
+      ribbon.addColorStop(1, 'rgba(169, 185, 255, 0)')
+      g.fillStyle = ribbon
+      g.beginPath()
+      g.moveTo(-r * 1.1, y + r * 0.28)
+      g.bezierCurveTo(-r * 0.45, y - r * 0.58 + bend, r * 0.25, y + r * 0.52, r * 1.1, y - r * 0.25)
+      g.bezierCurveTo(r * 0.25, y + r * 0.28, -r * 0.45, y - r * 0.36 + bend, -r * 1.1, y + r * 0.28)
+      g.fill()
+    }
+    g.restore()
+
+    for (let i = 0; i < 18; i += 1) {
+      const phase = i * 2.39996 + flow * (i % 2 ? 0.3 : -0.22)
+      const distance = r * (0.18 + (i % 7) * 0.095)
+      const alpha = 0.16 + 0.24 * (0.5 + Math.sin(flow * 2 + i) * 0.5)
+      g.fillStyle = `rgba(231, 244, 255, ${alpha})`
+      g.beginPath()
+      g.arc(cx + Math.cos(phase) * distance, cy + Math.sin(phase) * distance * 0.8, r * (i % 4 === 0 ? 0.012 : 0.007), 0, Math.PI * 2)
+      g.fill()
+    }
+    const shade = g.createRadialGradient(cx - r * 0.16, cy - r * 0.22, r * 0.35, cx, cy, r)
+    shade.addColorStop(0, 'rgba(24, 31, 77, 0)')
+    shade.addColorStop(0.8, 'rgba(24, 31, 77, 0.04)')
+    shade.addColorStop(1, 'rgba(24, 31, 77, 0.24)')
     g.fillStyle = shade
     g.fillRect(cx - r, cy - r, r * 2, r * 2)
     g.restore()
-
-    g.strokeStyle = `rgba(255, 255, 255, ${0.35 + energy * 0.3})`
-    g.lineWidth = 1
-    g.beginPath()
-    g.arc(cx, cy, r - 0.5, Math.PI * 1.05, Math.PI * 1.75)
-    g.stroke()
   }
 
   const draw = (now: number, dt: number) => {
