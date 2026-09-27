@@ -7712,7 +7712,6 @@ function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Serv
           <small>先远程卸载 Agent 并清理本机配置，成功后自动删除服务器。</small>
         </span>
       </label>
-      {busy && <div className="mutation-progress" role="status" aria-live="polite"><Loader2 size={16} className="spin" aria-hidden="true" />{uninstall ? '正在下发卸载任务，请稍候…' : '正在删除服务器，请等待确认…'}</div>}
     </div>
     <footer className="dialog-actions">
       <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
