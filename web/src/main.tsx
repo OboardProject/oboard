@@ -12475,7 +12475,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
           deleteKeyCode={null}
           proOptions={{ hideAttribution: true }}
         >
-          <Background id="minor-grid" color="var(--border-strong)" gap={24} size={1} variant={BackgroundVariant.Dots} />
+          <Background id="minor-grid" color="var(--graph-grid-line)" gap={32} lineWidth={1} variant={BackgroundVariant.Lines} />
           <Controls position="bottom-right" showFitView={false} showInteractive={false} />
         </ReactFlow>
         {!initialViewportReady && <div className="graph-canvas-loading" role="status">正在整理画布…</div>}

@@ -165,6 +165,7 @@
   --progress-muted: #93a4b8;
   --border: var(--border-color);
   --border-strong: #d0d5dd;
+  --graph-grid-line: #dfe4ea;
   /* Default readable body text — not pure muted gray. */
   --text: var(--text-secondary);
   --text-strong: var(--text-primary);
@@ -263,6 +264,7 @@
   --progress-muted: #8c9bb0;
   --border: var(--border-color);
   --border-strong: #485062;
+  --graph-grid-line: #39414f;
   --text: var(--text-secondary);
   --text-strong: var(--text-primary);
   --muted: var(--text-muted);
