@@ -244,3 +244,70 @@ func TestServerDNSListOwnerMigratesFromSharedOnlySchema(t *testing.T) {
 		t.Fatalf("bootstrap source = %s, want custom", custom.BootstrapSource)
 	}
 }
+
+// A benchmark task that fails before the Agent reports any result must still
+// surface on the policy it tested; otherwise a plain-DNS-only policy with an
+// intranet resolver stays "waiting for a test" forever with no error.
+func TestFailedDNSBenchmarkTaskRecordsPolicyFailure(t *testing.T) {
+	ctx := context.Background()
+	s, server := openServerDNSCustomStore(t)
+	policy := model.ServerDNSPolicy{ServerID: server.ID, Strategy: "auto", AutoTest: model.DNSAutoTestFirstApply,
+		BootstrapCandidates: []model.DNSCandidate{{Transport: model.DNSTransportUDP, Server: "10.10.10.10", Port: 53}},
+	}
+	if err := s.UpdateServerDNSPolicy(ctx, &policy); err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := s.GetDNSList(ctx, policy.BootstrapListID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := func(requestID string) int64 {
+		t.Helper()
+		task := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeBenchmarkDNS, PayloadJSON: "{}", Status: "pending", Nonce: requestID}
+		if err := s.CreateTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+		run := model.DNSBenchmarkRun{RequestID: requestID, ServerID: server.ID, PolicyRevision: policy.Revision, BootstrapListID: bootstrap.ID, BootstrapListRevision: bootstrap.Revision, Trigger: "manual"}
+		if err := s.CreateDNSBenchmarkRun(ctx, &run); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AttachDNSBenchmarkTask(ctx, requestID, task.ID); err != nil {
+			t.Fatal(err)
+		}
+		return task.ID
+	}
+
+	// The no-usable-candidates sentinel belongs to a real report only.
+	if err := s.FailDNSBenchmarkRunForTask(ctx, queue("sentinel"), `{"error":"`+model.DNSBenchmarkNoUsableCandidatesError+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetServerDNSPolicy(ctx, server.ID); got.LastError != "" || got.LastAttemptAt != nil {
+		t.Fatalf("task failure stored the local-dns fallback sentinel: %#v", got)
+	}
+
+	if err := s.FailDNSBenchmarkRunForTask(ctx, queue("rejected"), `{"message":"dns benchmark failed","error":"bootstrap candidates: candidate[0]: rejected"}`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetServerDNSPolicy(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastError != "bootstrap candidates: candidate[0]: rejected" || got.LastAttemptAt == nil || !got.NeedsBenchmark {
+		t.Fatalf("failed task not recorded on policy: %#v", got)
+	}
+
+	// A run for a policy that has since changed leaves the new policy alone.
+	stale := queue("stale")
+	changed := model.ServerDNSPolicy{ServerID: server.ID, Strategy: "auto", AutoTest: model.DNSAutoTestFirstApply,
+		BootstrapCandidates: []model.DNSCandidate{{Transport: model.DNSTransportUDP, Server: "10.10.10.11", Port: 53}},
+	}
+	if err := s.UpdateServerDNSPolicy(ctx, &changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FailDNSBenchmarkRunForTask(ctx, stale, `{"error":"timeout"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetServerDNSPolicy(ctx, server.ID); got.LastError != "" {
+		t.Fatalf("stale run failure overwrote the current policy: %#v", got)
+	}
+}

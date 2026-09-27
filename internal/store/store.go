@@ -5650,10 +5650,66 @@ func (s *Store) CompleteDNSBenchmarkApplyTask(ctx context.Context, taskID int64,
 	return err
 }
 
-func (s *Store) FailDNSBenchmarkRunForTask(ctx context.Context, taskID int64, message string) error {
+// FailDNSBenchmarkRunForTask closes a benchmark run whose task ended without a
+// result report: the Agent rejected the plan, never reached the resolvers, or
+// the task timed out. When the run still describes the server's current policy
+// and lists, the failure is also recorded on the policy; otherwise the panel
+// would keep showing an untouched "waiting for a test" state with no error.
+func (s *Store) FailDNSBenchmarkRunForTask(ctx context.Context, taskID int64, resultJSON string) error {
+	message := dnsBenchmarkTaskFailureMessage(resultJSON)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var run model.DNSBenchmarkRun
+	err = tx.QueryRowContext(ctx, `select server_id,policy_revision,encrypted_list_id,encrypted_list_revision,bootstrap_list_id,bootstrap_list_revision from dns_benchmark_runs where task_id=? and status in ('pending','running')`, taskID).Scan(&run.ServerID, &run.PolicyRevision, &run.EncryptedListID, &run.EncryptedListRevision, &run.BootstrapListID, &run.BootstrapListRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tx.Commit()
+	}
+	if err != nil {
+		return err
+	}
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `update dns_benchmark_runs set status='failed',error=?,completed_at=?,updated_at=? where task_id=? and status in ('pending','running')`, message, ts, ts, taskID)
-	return err
+	if _, err := tx.ExecContext(ctx, `update dns_benchmark_runs set status='failed',error=?,completed_at=?,updated_at=? where task_id=? and status in ('pending','running')`, message, ts, ts, taskID); err != nil {
+		return err
+	}
+	// The no-usable-candidates sentinel switches the server to local DNS, so
+	// only a real benchmark report may store it on the policy.
+	if message != "" && message != model.DNSBenchmarkNoUsableCandidatesError {
+		if _, err := tx.ExecContext(ctx, `update server_dns_policies set last_attempt_at=?,last_error=?,needs_benchmark=1,updated_at=?
+			where server_id=? and revision=? and coalesce(encrypted_list_id,0)=? and bootstrap_list_id=?
+			and coalesce((select revision from dns_lists where id=server_dns_policies.encrypted_list_id),0)=?
+			and (select revision from dns_lists where id=server_dns_policies.bootstrap_list_id)=?`,
+			ts, message, ts, run.ServerID, run.PolicyRevision, run.EncryptedListID, run.BootstrapListID, run.EncryptedListRevision, run.BootstrapListRevision); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// dnsBenchmarkTaskFailureMessage turns a failed task result into the operator
+// message recorded on the run and policy.
+func dnsBenchmarkTaskFailureMessage(resultJSON string) string {
+	var payload struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &payload); err != nil {
+		return truncateDNSBenchmarkMessage(strings.TrimSpace(resultJSON))
+	}
+	if message := strings.TrimSpace(payload.Error); message != "" {
+		return truncateDNSBenchmarkMessage(message)
+	}
+	return truncateDNSBenchmarkMessage(strings.TrimSpace(payload.Message))
+}
+
+func truncateDNSBenchmarkMessage(message string) string {
+	const limit = 512
+	if len(message) <= limit {
+		return message
+	}
+	return strings.ToValidUTF8(message[:limit], "")
 }
 
 type DNSBenchmarkStoreOutcome struct {

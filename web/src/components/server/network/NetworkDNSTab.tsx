@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Select } from '../../ui/select'
 import { Switch } from '../../ui/switch'
 import { FormField } from '../../ui/form-field'
-import { dnsPolicyErrorText } from '../../../dns-status'
+import { dnsPolicyErrorText, dnsPolicyStatus, dnsPolicyStatusLabel } from '../../../dns-status'
 import { DNSResolverFields, dnsResolverDraft, dnsResolverPayload } from './DNSResolverFields'
 import type { Server } from '../../proxy-path/types'
 
@@ -14,15 +14,6 @@ function labelValue(v:any){ const m:Record<string,string>={ auto:'跟随服务�
 function formatTableTime(v:string){ const d=new Date(v); if(Number.isNaN(d.getTime())) return v; const pad=(n:number)=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` }
 function dnsTransportLabel(t:string){ const m:Record<string,string>={ udp:'UDP', tcp:'TCP', dot:'DoT', doh:'DoH', doq:'DoQ'}; return m[t]||t }
 
-function isDNSPolicyStale(policy?: ServerDNSPolicy, lists: DNSList[]=[]){
-  if(!policy) return false
-  const p:any = policy
-  const enc = lists.find(l=> l.id===p.encrypted_list_id)
-  const boot = lists.find(l=> l.id===p.bootstrap_list_id)
-  if(enc && enc.revision !== p.encrypted_selection_revision) return true
-  if(boot && boot.revision !== p.bootstrap_selection_revision) return true
-  return Boolean(p.needs_benchmark)
-}
 function dnsPolicyDraft(policy?: ServerDNSPolicy, lists: DNSList[]=[]){
   return dnsResolverDraft(policy, lists)
 }
@@ -51,7 +42,8 @@ function NetworkDNSSession({ server, policy, lists, benchmarks, client, notify, 
   const latest = benchmarks[0]
   const encryptedList = lists.find(l=> l.id===draft.encryptedListID)
   const bootstrapList = lists.find(l=> l.id===draft.bootstrapListID)
-  const stale = isDNSPolicyStale(policy as any, lists)
+  const status = policy ? dnsPolicyStatus(policy as any, lists) : 'untested'
+  const stale = status === 'stale'
 
   useEffect(() => {
     const revision = policy?.revision || 0
@@ -111,7 +103,7 @@ function NetworkDNSSession({ server, policy, lists, benchmarks, client, notify, 
   return (
     <div className="server-dns-tab">
       <div className="dns-status-strip">
-        <span><strong>{stale ? '等待重新测试' : policy?.last_success_at ? '正常' : '等待首次测试'}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span>
+        <span className={status==='failed' ? 'has-error':''}><strong>{dnsPolicyStatusLabel(status)}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span>
         <span><strong>{draft.hourlyTest ? '每小时自动测试' : '关闭自动测试'}</strong><small>自动测试只更新测试结果，不会修改配置</small></span>
         <span className={policy?.last_error ? 'has-error':''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status==='stale' ? '测试结果已过期':'无异常'}</strong><small>{dnsPolicyErrorText(policy?.last_error, policy) || dnsPolicyErrorText(latest?.error, policy) || '—'}</small></span>
       </div>
