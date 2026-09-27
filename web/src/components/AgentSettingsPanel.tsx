@@ -220,7 +220,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
       {savingKey === 'auto-save' && <p className="settings-feedback" role="status">正在保存设置…</p>}
       <SettingsGroup title="资源下载" description="选择服务器安装和更新时的下载来源。订阅中继固定从主控下载。">
         <SettingsSwitchRow label="优先从 GitHub 下载" description="开启后优先从 GitHub 下载，无法下载时改用主控。" checked={data.settings?.resource_download_source === 'github'} onChange={checked => void autoSaveSetting({ resource_download_source: checked ? 'github' : 'controller' }, '资源下载来源已保存')} disabled={Boolean(savingKey)} ariaLabel="优先从 GitHub 下载资源" />
-        <SettingsSwitchRow label="中国大陆服务器优先从主控下载" description="中国大陆服务器固定从主控下载，其他服务器使用上方设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆服务器优先从主控下载" />
+        <SettingsSwitchRow label="中国大陆主控优先" description="开启后，中国大陆服务器优先从主控下载资源，其他服务器遵循上方下载来源设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆主控优先" />
       </SettingsGroup>
       <SettingsGroup title="网络优化" description="统一作用于所有服务器，在首次安装 Agent 时执行；已安装的服务器需重新安装才会生效。">
         <SettingsSwitchRow label="BBR + FQ" description="在支持的 Linux 节点上启用 BBR 与 FQ 网络优化，失败不影响安装。" checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="BBR + FQ" />
