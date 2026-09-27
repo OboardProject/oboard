@@ -156,6 +156,13 @@
   --surface-solid: var(--bg-card);
   --surface-2: var(--bg-control);
   --surface-3: #e9ecef;
+  --progress-track: #e7edf4;
+  --progress-info: #1686ff;
+  --progress-success: #12b76a;
+  --progress-warning: #f5a524;
+  --progress-danger: #f04452;
+  --progress-purple: #a78bfa;
+  --progress-muted: #93a4b8;
   --border: var(--border-color);
   --border-strong: #d0d5dd;
   /* Default readable body text — not pure muted gray. */
@@ -247,6 +254,13 @@
   --surface-solid: var(--bg-card);
   --surface-2: var(--bg-control);
   --surface-3: #323846;
+  --progress-track: #394150;
+  --progress-info: #60a5fa;
+  --progress-success: #34d399;
+  --progress-warning: #fbbf24;
+  --progress-danger: #fb7185;
+  --progress-purple: #c4b5fd;
+  --progress-muted: #8c9bb0;
   --border: var(--border-color);
   --border-strong: #485062;
   --text: var(--text-secondary);
@@ -2438,18 +2452,18 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 .server-list-quota-track {
   height: 3px;
-  background: var(--surface-3);
+  background: var(--progress-track);
   border-radius: var(--radius-full);
   overflow: hidden;
 }
 .server-list-quota-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--progress-info);
   border-radius: var(--radius-full);
   transition: width 0.3s ease;
 }
-.server-list-quota-fill.warning { background: var(--warning); }
-.server-list-quota-fill.danger { background: var(--danger); }
+.server-list-quota-fill.warning { background: var(--progress-warning); }
+.server-list-quota-fill.danger { background: var(--progress-danger); }
 
 /* Public Latency Pill Fixed Width Styling */
 .server-list-latency-btn {
@@ -3004,21 +3018,21 @@ button.server-address-line.copied:hover {
   height: 6px;
   overflow: hidden;
   border-radius: var(--radius-xl);
-  background: var(--surface-3, rgba(127, 127, 127, 0.14));
+  background: var(--progress-track);
 }
 
 .server-metric-fill {
   height: 100%;
   border-radius: inherit;
-  background: #3b82f6;
+  background: var(--progress-info);
   transition: width 0.28s ease;
 }
 
-.server-metric-fill.memory { background: #8b5cf6; }
-.server-metric-fill.disk { background: #22c55e; }
-.server-metric-fill.traffic { background: #3b82f6; }
-.server-metric-fill.warning { background: #f59e0b; }
-.server-metric-fill.danger { background: #ef4444; }
+.server-metric-fill.memory { background: var(--progress-purple); }
+.server-metric-fill.disk { background: var(--progress-success); }
+.server-metric-fill.traffic { background: var(--progress-info); }
+.server-metric-fill.warning { background: var(--progress-warning); }
+.server-metric-fill.danger { background: var(--progress-danger); }
 
 .server-metric-sub {
   color: var(--muted);
@@ -3958,19 +3972,19 @@ button.server-address-line.copied:hover {
 }
 .server-traffic-quota-track {
   height: 3px;
-  background: var(--surface-3);
+  background: var(--progress-track);
   border-radius: var(--radius-full);
   overflow: hidden;
 }
 .server-traffic-quota-fill {
   height: 100%;
   width: 0;
-  background: var(--primary);
+  background: var(--progress-info);
   border-radius: var(--radius-full);
   transition: width 0.3s ease;
 }
-.server-traffic-quota-fill.warning { background: var(--warning); }
-.server-traffic-quota-fill.danger { background: var(--danger); }
+.server-traffic-quota-fill.warning { background: var(--progress-warning); }
+.server-traffic-quota-fill.danger { background: var(--progress-danger); }
 
 .server-rate-row {
   display: grid;
@@ -4254,13 +4268,13 @@ button.server-address-line.copied:hover {
 .resource-progress-bar {
   width: 100%;
   height: 5px;
-  background: var(--surface-3);
+  background: var(--progress-track);
   border-radius: var(--radius-xs);
   overflow: hidden;
 }
 .resource-progress-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--progress-info);
   border-radius: var(--radius-xs);
   transition: width 0.3s ease-out;
 }
@@ -9243,7 +9257,7 @@ body:has(.dialog-layer) .main {
 .segmented-progress { display: grid; gap: 10px; }
 .segmented-progress-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; color: var(--muted); font-size: 12px; }
 .segmented-progress-head strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.segmented-progress-bar { display: flex; gap: 2px; height: 10px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
+.segmented-progress-bar { display: flex; gap: 2px; height: 10px; border-radius: var(--radius-full); background: var(--progress-track); overflow: hidden; }
 .segmented-progress-bar span { flex-basis: 0; min-width: 4px; background: var(--segment-color); transition: flex-grow 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.5); }
 .segmented-progress-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 12px; }
 .segmented-progress-legend > span, .segmented-progress-legend > button { display: inline-flex; align-items: center; gap: 6px; }
@@ -9253,11 +9267,11 @@ body:has(.dialog-layer) .main {
 .segmented-progress-legend > button:disabled { cursor: default; }
 .segmented-progress-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--segment-color); }
 .segmented-progress-legend strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-.segmented-progress .is-success { --segment-color: var(--success); }
-.segmented-progress .is-info { --segment-color: var(--primary); }
-.segmented-progress .is-warning { --segment-color: var(--warning); }
-.segmented-progress .is-danger { --segment-color: var(--danger); }
-.segmented-progress .is-muted { --segment-color: color-mix(in srgb, var(--muted) 45%, transparent); }
+.segmented-progress .is-success { --segment-color: var(--progress-success); }
+.segmented-progress .is-info { --segment-color: var(--progress-info); }
+.segmented-progress .is-warning { --segment-color: var(--progress-warning); }
+.segmented-progress .is-danger { --segment-color: var(--progress-danger); }
+.segmented-progress .is-muted { --segment-color: var(--progress-muted); }
 .controller-update-pinned {
   display: flex;
   align-items: flex-start;
@@ -9752,7 +9766,7 @@ body:has(.dialog-layer) .main {
 .controller-update-install-progress {
   height: 5px;
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--progress-track);
   border-radius: var(--radius-full);
 }
 
@@ -9762,7 +9776,7 @@ body:has(.dialog-layer) .main {
   height: 100%;
   transform: scaleX(0.04);
   transform-origin: left center;
-  background: var(--text-secondary);
+  background: var(--progress-info);
   transition: transform 200ms ease-out;
 }
 
@@ -11442,14 +11456,14 @@ button.server-related-jump-pill {
   height: 8px;
   overflow: hidden;
   border-radius: var(--radius-full);
-  background: var(--border);
+  background: var(--progress-track);
 }
 
 .base-path-progress-track > span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--primary);
+  background: var(--progress-info);
   transition: width 240ms ease;
 }
 
@@ -15002,7 +15016,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   width: 100%;
   height: 6px;
   border-radius: var(--radius-full);
-  background: var(--surface-3);
+  background: var(--progress-track);
   overflow: hidden;
   position: relative;
 }
@@ -15018,9 +15032,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   from { width: 0% !important; }
 }
 
-.connectivity-sla-progress-fill.great { background: var(--success); }
-.connectivity-sla-progress-fill.fair { background: var(--warning); }
-.connectivity-sla-progress-fill.poor { background: var(--danger); }
+.connectivity-sla-progress-fill.great { background: var(--progress-success); }
+.connectivity-sla-progress-fill.fair { background: var(--progress-warning); }
+.connectivity-sla-progress-fill.poor { background: var(--progress-danger); }
 
 .connectivity-coverage-note,
 .connectivity-explanation {
@@ -16735,17 +16749,17 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   height: 5px;
   overflow: hidden;
   border-radius: var(--radius-xs);
-  background: var(--border-color);
+  background: var(--progress-track);
 }
 
 .user-table-traffic-bar > div {
   height: 100%;
   border-radius: var(--radius-xs);
-  background: var(--color-primary);
+  background: var(--progress-info);
 }
 
-.user-table-traffic-bar > div.is-warning { background: var(--color-warning); }
-.user-table-traffic-bar > div.is-danger { background: var(--color-danger); }
+.user-table-traffic-bar > div.is-warning { background: var(--progress-warning); }
+.user-table-traffic-bar > div.is-danger { background: var(--progress-danger); }
 
 .user-subscription-status {
   min-width: 0;
@@ -18412,8 +18426,8 @@ button.user-table-compact-button:hover {
 .ai-review-row-main p { margin: 0; color: var(--text-secondary); font-size: 12px; }
 .ai-review-row-main small { color: var(--muted); font-size: 11px; }
 .ai-review-row-actions { display: flex; flex: 0 0 auto; gap: 6px; }
-.ai-review-progress { width: min(340px, 100%); height: 3px; overflow: hidden; border-radius: var(--radius-full); background: var(--surface-3); }
-.ai-review-progress span { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width .2s ease; }
+.ai-review-progress { width: min(340px, 100%); height: 3px; overflow: hidden; border-radius: var(--radius-full); background: var(--progress-track); }
+.ai-review-progress span { display: block; height: 100%; border-radius: inherit; background: var(--progress-info); transition: width .2s ease; }
 .ai-review-create-dialog { width: min(820px, calc(100vw - 32px)); }
 .ai-review-create-form { display: grid; gap: 16px; }
 .ai-review-create-form .two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -18438,14 +18452,14 @@ button.user-table-compact-button:hover {
 .ai-review-report { display: grid; gap: 20px; }
 .ai-review-report h3 { margin: 0 0 9px; color: var(--text-strong); font-size: 13px; }
 .ai-review-report-summary { display: grid; gap: 16px; padding: 16px; border-left: 3px solid var(--primary); background: var(--surface-2); }
-.ai-review-health-score { --health-score-color: var(--danger); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; color: var(--health-score-color); }
-.ai-review-health-score.good { --health-score-color: var(--success); }
-.ai-review-health-score.warning { --health-score-color: var(--warning); }
-.ai-review-health-score.danger { --health-score-color: var(--danger); }
+.ai-review-health-score { --health-score-color: var(--danger); --health-meter-color: var(--progress-danger); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; color: var(--health-score-color); }
+.ai-review-health-score.good { --health-score-color: var(--success); --health-meter-color: var(--progress-success); }
+.ai-review-health-score.warning { --health-score-color: var(--warning); --health-meter-color: var(--progress-warning); }
+.ai-review-health-score.danger { --health-score-color: var(--danger); --health-meter-color: var(--progress-danger); }
 .ai-review-health-score > strong { grid-column: 1 / -1; font-family: var(--font-display); font-size: 46px; font-variant-numeric: tabular-nums; font-weight: 500; line-height: 1; }
 .ai-review-health-score > span { align-self: center; color: var(--text-secondary); font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
-.ai-review-health-meter { align-self: center; height: 12px; overflow: hidden; border-radius: var(--radius-full); background: var(--border-strong); }
-.ai-review-health-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--health-score-color); }
+.ai-review-health-meter { align-self: center; height: 12px; overflow: hidden; border-radius: var(--radius-full); background: var(--progress-track); }
+.ai-review-health-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--health-meter-color); }
 .ai-review-report-summary-copy { padding-top: 14px; border-top: 1px solid var(--border); }
 .ai-review-report-summary h3 { margin: 10px 0 5px; font-size: 15px; line-height: 1.55; }
 .ai-review-report-summary p, .ai-review-report-list p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
@@ -21532,17 +21546,17 @@ button[aria-busy="true"] {
   height: 6px;
   overflow: hidden;
   border-radius: var(--radius-full);
-  background: var(--surface-2);
+  background: var(--progress-track);
 }
 .user-traffic-progress > span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--primary);
+  background: var(--progress-info);
   transition: width 0.2s ease;
 }
-.user-traffic-progress > span.warning { background: var(--warning); }
-.user-traffic-progress > span.danger { background: var(--danger); }
+.user-traffic-progress > span.warning { background: var(--progress-warning); }
+.user-traffic-progress > span.danger { background: var(--progress-danger); }
 
 .user-announcement-board {
   display: grid;
@@ -22120,7 +22134,7 @@ select:-webkit-autofill {
 .login-meter-bar {
   height: 5px;
   border-radius: var(--radius-full);
-  background: #e5e7eb;
+  background: var(--progress-track);
   overflow: hidden;
 }
 
@@ -22128,7 +22142,7 @@ select:-webkit-autofill {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #111827;
+  background: var(--progress-info);
 }
 
 .login-meter em {
