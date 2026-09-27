@@ -19269,16 +19269,6 @@ function DNS({ data, client, load, notify, patchPageData }: any) {
     }
   }
 
-  const stat = (key: DNSPolicyStatusFilter, value: number, label: string, tone = '') => <button
-    type="button"
-    className={`dns-overview-stat${tone ? ` ${tone}` : ''}`}
-    onClick={() => setManagerStatus(key)}
-    disabled={!rows.length}
-  >
-    <strong>{value}</strong>
-    <small>{label}</small>
-  </button>
-
   return <div className="dns-settings-page">
     <DNSListSettings data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
     <Panel title="服务器 DNS">
@@ -19289,12 +19279,17 @@ function DNS({ data, client, load, notify, patchPageData }: any) {
           <button type="button" className="ghost" onClick={() => setHistoryOpen(true)}><ClipboardList size={15} />测试记录</button>
         </div>
       </div>
-      <div className="dns-overview-stats">
-        {stat('all', summary.total, '已配置')}
-        {stat('ok', summary.ok, '正常', 'ok')}
-        {stat('pending', summary.pending, '待测试', 'warning')}
-        {stat('failed', summary.failed, '异常', 'danger')}
-      </div>
+      {rows.length > 0 && <SegmentedProgress
+        label="服务器 DNS 解析状态"
+        done={summary.ok}
+        caption="解析正常"
+        onSelect={key => setManagerStatus(key as DNSPolicyStatusFilter)}
+        segments={[
+          { key: 'ok', label: '正常', value: summary.ok, tone: 'success' },
+          { key: 'pending', label: '待测试', value: summary.pending, tone: 'warning' },
+          { key: 'failed', label: '异常', value: summary.failed, tone: 'danger' },
+        ]}
+      />}
       <div className="dns-overview-defaults">
         <span>默认策略</span>
         <strong>加密解析 · {defaultEncrypted?.name || '未设置'}</strong>

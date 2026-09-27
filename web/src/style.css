@@ -9227,7 +9227,11 @@ body:has(.dialog-layer) .main {
 .segmented-progress-bar { display: flex; gap: 2px; height: 10px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
 .segmented-progress-bar span { flex-basis: 0; min-width: 4px; background: var(--segment-color); transition: flex-grow 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.5); }
 .segmented-progress-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 12px; }
-.segmented-progress-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.segmented-progress-legend > span, .segmented-progress-legend > button { display: inline-flex; align-items: center; gap: 6px; }
+.segmented-progress-legend > button { min-height: 0; padding: 4px 8px; margin: -4px -8px; border: 0; border-radius: var(--radius-full); background: transparent; color: inherit; font: inherit; box-shadow: none; cursor: pointer; transition: background 0.2s ease, transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.5); }
+.segmented-progress-legend > button:hover:not(:disabled) { background: var(--surface-2); }
+.segmented-progress-legend > button:active:not(:disabled) { transform: scale(0.97) translateY(1px); }
+.segmented-progress-legend > button:disabled { cursor: default; }
 .segmented-progress-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--segment-color); }
 .segmented-progress-legend strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .segmented-progress .is-success { --segment-color: var(--success); }
@@ -24192,48 +24196,7 @@ select:-webkit-autofill {
 .dns-policy-selection-toolbar button svg { flex: 0 0 auto; }
 
 /* DNS page overview: aggregate state first, per-server browsing on demand. */
-.dns-overview-stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  margin-bottom: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-solid);
-  overflow: hidden;
-}
-.dns-overview-stat {
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-  gap: 4px;
-  padding: 16px 18px;
-  border: 0;
-  border-left: 1px solid var(--border);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-secondary);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--duration-control) ease;
-}
-.dns-overview-stat:first-child { border-left: 0; }
-.dns-overview-stat:hover:not(:disabled) { background: var(--surface-2); }
-.dns-overview-stat:active:not(:disabled) { background: var(--surface-3); }
-.dns-overview-stat:disabled { cursor: default; opacity: .75; }
-.dns-overview-stat strong {
-  color: var(--text-strong);
-  font-family: var(--font-display);
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-}
-.dns-overview-stat small { color: var(--muted); font-size: 12px; }
-.dns-overview-stat.ok strong { color: var(--success); }
-.dns-overview-stat.warning strong { color: var(--warning); }
-.dns-overview-stat.danger strong { color: var(--danger); }
+.dns-settings-page .segmented-progress { margin-bottom: 14px; }
 .dns-overview-defaults {
   display: flex;
   flex-wrap: wrap;
@@ -24519,9 +24482,6 @@ button.dns-policy-row-main:focus {
 }
 
 @media (max-width: 720px) {
-  .dns-overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .dns-overview-stat:nth-child(3) { border-left: 0; }
-  .dns-overview-stat:nth-child(n+3) { border-top: 1px solid var(--border); }
   .dns-attention-list { grid-template-columns: minmax(0, 1fr); }
   .dns-policy-manager-search { flex: 1 1 100%; }
   .dns-policy-manager-toolbar > .custom-select,
