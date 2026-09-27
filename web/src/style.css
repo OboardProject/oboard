@@ -9775,7 +9775,7 @@ body:has(.dialog-layer) .main {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 42%, #141a44 0%, #0a0e2a 48%, #05071a 100%);
+  background: radial-gradient(120% 90% at 50% 42%, #321b0e 0%, #190e09 48%, #0c0806 100%);
   isolation: isolate;
 }
 

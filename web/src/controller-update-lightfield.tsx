@@ -69,8 +69,8 @@ function spawnBeam(reach: number, orbRadius: number, random: () => number): Beam
 }
 
 type Palette = { core: string; mid: string; edge: string; glow: string }
-const ORB_CALM: Palette = { core: '#cddcff', mid: '#8498e8', edge: '#424f9a', glow: '150, 168, 255' }
-const ORB_FAILED: Palette = { core: '#f4d6dc', mid: '#c889a2', edge: '#85475f', glow: '232, 120, 132' }
+const ORB_CALM: Palette = { core: '#ffe6a3', mid: '#ff941f', edge: '#d7470b', glow: '255, 126, 24' }
+const ORB_FAILED: Palette = { core: '#ffd0a3', mid: '#ef6135', edge: '#9e291c', glow: '242, 80, 36' }
 
 type Engine = { setMode: (mode: LightfieldMode) => void; setLifted: (lifted: boolean) => void; destroy: () => void }
 
@@ -165,10 +165,10 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
       const ox = cx + cos * outer
       const oy = cy + sin * outer
       const gradient = g.createLinearGradient(ox, oy, ix, iy)
-      const hue = beam.tint > 0.7 ? '198, 208, 255' : '236, 240, 255'
+      const hue = beam.tint > 0.7 ? '255, 158, 58' : '255, 216, 148'
       gradient.addColorStop(0, `rgba(${hue}, 0)`)
       gradient.addColorStop(0.35, `rgba(${hue}, ${alpha * 0.8})`)
-      gradient.addColorStop(1, `rgba(255, 255, 255, ${alpha})`)
+      gradient.addColorStop(1, `rgba(255, 237, 188, ${alpha})`)
       g.fillStyle = gradient
       g.beginPath()
       g.moveTo(ox + px * wOuter / 2, oy + py * wOuter / 2)
@@ -219,7 +219,7 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
       const hx = cx + Math.cos(phase) * r * 0.42
       const hy = cy + Math.sin(phase * 1.2) * r * 0.45
       const haze = g.createRadialGradient(hx, hy, 0, hx, hy, r * 0.8)
-      haze.addColorStop(0, `rgba(${i === 1 ? glowColor : '218, 240, 255'}, 0.24)`)
+      haze.addColorStop(0, `rgba(${i === 1 ? glowColor : '255, 224, 151'}, 0.24)`)
       haze.addColorStop(1, `rgba(${glowColor}, 0)`)
       g.fillStyle = haze
       g.fillRect(cx - r, cy - r, r * 2, r * 2)
@@ -233,10 +233,10 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
       const y = (i - 2) * r * 0.27 + Math.sin(phase) * r * 0.1
       const bend = Math.sin(phase * 0.8) * r * 0.32
       const ribbon = g.createLinearGradient(-r, y - r * 0.22, r * 0.7, y + r * 0.3)
-      ribbon.addColorStop(0, 'rgba(185, 208, 255, 0)')
-      ribbon.addColorStop(0.35, `rgba(217, 239, 255, ${0.14 + energy * 0.05})`)
-      ribbon.addColorStop(0.62, 'rgba(239, 232, 255, 0.32)')
-      ribbon.addColorStop(1, 'rgba(169, 185, 255, 0)')
+      ribbon.addColorStop(0, 'rgba(255, 171, 57, 0)')
+      ribbon.addColorStop(0.35, `rgba(255, 217, 129, ${0.14 + energy * 0.05})`)
+      ribbon.addColorStop(0.62, 'rgba(255, 241, 184, 0.32)')
+      ribbon.addColorStop(1, 'rgba(255, 131, 28, 0)')
       g.fillStyle = ribbon
       g.beginPath()
       g.moveTo(-r * 1.1, y + r * 0.28)
@@ -250,15 +250,15 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
       const phase = i * 2.39996 + flow * (i % 2 ? 0.3 : -0.22)
       const distance = r * (0.18 + (i % 7) * 0.095)
       const alpha = 0.16 + 0.24 * (0.5 + Math.sin(flow * 2 + i) * 0.5)
-      g.fillStyle = `rgba(231, 244, 255, ${alpha})`
+      g.fillStyle = `rgba(255, 241, 196, ${alpha})`
       g.beginPath()
       g.arc(cx + Math.cos(phase) * distance, cy + Math.sin(phase) * distance * 0.8, r * (i % 4 === 0 ? 0.012 : 0.007), 0, Math.PI * 2)
       g.fill()
     }
     const shade = g.createRadialGradient(cx - r * 0.16, cy - r * 0.22, r * 0.35, cx, cy, r)
-    shade.addColorStop(0, 'rgba(24, 31, 77, 0)')
-    shade.addColorStop(0.8, 'rgba(24, 31, 77, 0.04)')
-    shade.addColorStop(1, 'rgba(24, 31, 77, 0.24)')
+    shade.addColorStop(0, 'rgba(102, 29, 5, 0)')
+    shade.addColorStop(0.8, 'rgba(102, 29, 5, 0.04)')
+    shade.addColorStop(1, 'rgba(102, 29, 5, 0.24)')
     g.fillStyle = shade
     g.fillRect(cx - r, cy - r, r * 2, r * 2)
     g.restore()
