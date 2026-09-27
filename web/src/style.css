@@ -5673,6 +5673,11 @@ button.server-address-line.copied:hover {
   .proxy-path-view-switch button { flex: 1 1 0; }
   .proxy-path-entry-picker,
   .proxy-path-focus-picker { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .proxy-path-entry-picker {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
   .graph-node-picker-body .graph-server-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -11885,6 +11890,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
       "menu status refresh"
       "title title title"
       "picker picker picker";
+    row-gap: 4px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
   }
   .topbar.topbar-quiet {
     grid-template-areas: "menu status refresh";
