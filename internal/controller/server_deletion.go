@@ -219,18 +219,63 @@ var errServerExternalCleanupPending = errors.New("服务器已删除，外部资
 // finishServerDeletion drives one deletion from wherever it currently is to
 // completion. It is safe to call repeatedly and from the resume worker.
 func (s *Server) finishServerDeletion(ctx context.Context, deletion store.ServerDeletion) error {
-	if deletion.Stage == store.ServerDeletionPurging {
-		if err := s.purgeServerHistory(ctx, deletion.ServerID); err != nil {
-			return err
+	deletion, err := s.removeDeletedServerRecord(ctx, deletion)
+	if err != nil {
+		return err
+	}
+	return s.completeServerDeletion(ctx, deletion)
+}
+
+// removeDeletedServerRecord runs the local stage: history purge and the row
+// delete. It only touches SQLite, so it stays on the request path.
+func (s *Server) removeDeletedServerRecord(ctx context.Context, deletion store.ServerDeletion) (store.ServerDeletion, error) {
+	if deletion.Stage != store.ServerDeletionPurging {
+		return deletion, nil
+	}
+	if err := s.purgeServerHistory(ctx, deletion.ServerID); err != nil {
+		return deletion, err
+	}
+	if err := s.store.DeleteServer(ctx, deletion.ServerID); err != nil {
+		return deletion, err
+	}
+	s.forgetServerRuntimeState(deletion.ServerID)
+	if err := s.store.SetServerDeletionStage(ctx, deletion.ServerID, store.ServerDeletionExternal); err != nil {
+		return deletion, err
+	}
+	deletion.Stage = store.ServerDeletionExternal
+	return deletion, nil
+}
+
+// releaseServerDeletionInBackground finishes the external stage of a deletion
+// whose server row is already gone, without holding the caller's request.
+func (s *Server) releaseServerDeletionInBackground(deletion store.ServerDeletion) {
+	s.serverDeletionWG.Add(1)
+	go func() {
+		defer s.serverDeletionWG.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := s.completeServerDeletion(ctx, deletion); err != nil {
+			log.Printf("server delete %d: %v", deletion.ServerID, err)
 		}
-		if err := s.store.DeleteServer(ctx, deletion.ServerID); err != nil {
-			return err
-		}
-		s.forgetServerRuntimeState(deletion.ServerID)
-		if err := s.store.SetServerDeletionStage(ctx, deletion.ServerID, store.ServerDeletionExternal); err != nil {
-			return err
-		}
-		deletion.Stage = store.ServerDeletionExternal
+	}()
+}
+
+// completeServerDeletion releases external state and closes the deletion. The
+// background release and the retry worker share it, so it is serialized to
+// keep one provider cleanup per deletion in flight.
+func (s *Server) completeServerDeletion(ctx context.Context, deletion store.ServerDeletion) error {
+	s.serverDeletionMu.Lock()
+	defer s.serverDeletionMu.Unlock()
+	current, err := s.store.GetServerDeletion(ctx, deletion.ServerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	deletion = current
+	if deletion.Stage != store.ServerDeletionExternal {
+		return nil
 	}
 	if err := s.releaseServerDeletionExternals(ctx, deletion); err != nil {
 		if recordErr := s.store.RecordServerDeletionFailure(ctx, deletion.ServerID, err.Error()); recordErr != nil {

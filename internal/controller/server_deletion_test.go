@@ -122,6 +122,7 @@ func TestServerDeleteSurvivesUnreachableDNSProvider(t *testing.T) {
 	if _, err := db.GetServer(ctx, serverID); err == nil {
 		t.Fatal("an unreachable DNS provider kept the server undeletable")
 	}
+	srv.serverDeletionWG.Wait()
 	pending, err := db.GetServerDeletion(ctx, serverID)
 	if err != nil {
 		t.Fatalf("no durable record of the unfinished cleanup: %v", err)
@@ -233,6 +234,7 @@ func TestUninstallCallbackIsNotFailedByPanelSideCleanup(t *testing.T) {
 	if _, err := db.GetServer(ctx, server.ID); err == nil {
 		t.Fatal("the server survived an uninstall that succeeded remotely")
 	}
+	srv.serverDeletionWG.Wait()
 	pending, err := db.GetServerDeletion(ctx, server.ID)
 	if err != nil || pending.Stage != store.ServerDeletionExternal {
 		t.Fatalf("pending=%+v err=%v", pending, err)
@@ -279,5 +281,62 @@ func TestDeletionClaimBlocksNewWorkOnTheServer(t *testing.T) {
 	srv.runServerDeletions(ctx)
 	if _, err := db.GetServer(ctx, serverID); err == nil {
 		t.Fatal("the interrupted deletion was not finished")
+	}
+}
+
+// TestServerDeleteDoesNotWaitForDNSProvider pins that the DELETE response only
+// covers the local removal. Provider cleanup is a network round trip per zone
+// and record; it runs afterwards and still releases the owned record.
+func TestServerDeleteDoesNotWaitForDNSProvider(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	records := map[string]fakeCloudflareRecord{}
+	down := false
+	fake := newFakeCloudflare(t, records, &down)
+	defer fake.Close()
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			<-release
+		}
+		fake.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer slow.Close()
+
+	srv := newTestServer(db, "test-secret", "")
+	srv.dnsEndpoints.cloudflare = slow.URL
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(created["id"].(float64))
+	credential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)["dns_credential"].(map[string]any)
+	credentialID := int64(credential["id"].(float64))
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusOK)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
+		"server_id": serverID, "name": "edge-ss", "kind": "ss-2022-128", "listen_ip": "0.0.0.0", "port": 10001,
+		"dns_sync_enabled": true, "dns_credential_id": credentialID, "dns_domain": "edge.example.com", "dns_record_types": "a",
+		"enabled": true,
+	}, http.StatusCreated)["inbound"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/dns-sync", token, map[string]any{"inbound_id": int64(inbound["id"].(float64))}, http.StatusOK)
+	if len(records) != 1 {
+		t.Fatalf("records after sync = %#v", records)
+	}
+
+	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, nil, http.StatusOK)
+	if _, err := db.GetServer(ctx, serverID); err == nil {
+		t.Fatal("the server row is still present after the delete response")
+	}
+	close(release)
+	srv.serverDeletionWG.Wait()
+	if len(records) != 0 {
+		t.Fatalf("owned record was not released: %#v", records)
+	}
+	if _, err := db.GetServerDeletion(ctx, serverID); err == nil {
+		t.Fatal("the deletion is still pending after the background release")
 	}
 }

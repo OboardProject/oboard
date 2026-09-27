@@ -6986,19 +6986,25 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     await load()
     notify?.(`已创建 ${s.name || '服务器'} 的网络诊断，请在任务中心查看结果`, 'success')
   }
+  // The drawer closes as soon as the form is submitted; the draft is kept so a
+  // rejected create reopens it unchanged instead of losing what was typed.
   const createServer = async () => {
+    const submitted = draft
+    setCreateOpen(false)
     try {
-      const payload = { ...draft, service_start_at: draft.service_start_at ? serverExpiryOutputValue(draft.service_start_at) : null, expires_at: draft.expires_at ? serverExpiryOutputValue(draft.expires_at) : null }
+      const payload = { ...submitted, service_start_at: submitted.service_start_at ? serverExpiryOutputValue(submitted.service_start_at) : null, expires_at: submitted.expires_at ? serverExpiryOutputValue(submitted.expires_at) : null }
       const result = await createServerRecord<Server>(client, payload, servers)
       localServerSnapshotsRef.current.set(result.server.id, result.server as Server)
       setServers(current => upsertServerSnapshot(current, result.server as Server))
       patchPageData?.((current: any) => ({ ...current, servers: upsertServerSnapshot(current.servers || [], result.server as Server) }))
-      setCreateOpen(false)
-      setDraft(defaultServerDraft(creationDefaults))
+      setDraft((current: any) => current === submitted ? defaultServerDraft(creationDefaults) : current)
       void refreshServers()
       notify?.(result.recovered ? `已找到服务器 ${result.server.name}，请核对服务器信息` : `服务器 ${result.server.name || `#${result.server.id}`} 已添加`, result.recovered ? 'info' : 'success')
     } catch (error: any) {
-      await dialogs.alert({ title: error instanceof ServerMutationUncertainError ? '服务器状态待确认' : '添加服务器失败', message: localizeErrorMessage(error?.message || error) })
+      const uncertain = error instanceof ServerMutationUncertainError
+      if (uncertain) void refreshServers()
+      else if (serversMountedRef.current) setCreateOpen(true)
+      await dialogs.alert({ title: uncertain ? '服务器状态待确认' : '添加服务器失败', message: localizeErrorMessage(error?.message || error) })
     }
   }
   const updateServer = async (next: any) => {
@@ -7167,9 +7173,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       notify?.(localizeErrorMessage(err?.message || err), 'error')
     }
   }
+  // Polls quickly at first so a fast uninstall is reflected without a fixed
+  // 1.5 s wait, then settles at the old cadence for slow hosts.
   const waitForUninstallTask = async (serverID: number) => {
-    for (let attempt = 0; attempt < 120; attempt++) {
-      await sleep(1500)
+    const deadline = Date.now() + 180_000
+    for (let delay = 400; Date.now() < deadline; delay = Math.min(1500, Math.round(delay * 1.5))) {
+      await sleep(delay)
       try {
         const res = await client.request(`/servers/${serverID}/tasks?limit=20`)
         const task = (res.tasks || []).find((item: any) => item.type === 'uninstall_agent')
@@ -7238,24 +7247,31 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       return
     }
 
-    pendingDeleteServerIDsRef.current.add(server.id)
-    setDeleteServerBusy(true)
+    // The card leaves the list immediately; a rejected delete puts it back.
+    const id = server.id
+    pendingDeleteServerIDsRef.current.add(id)
+    deletedServerIDsRef.current.add(id)
+    const localSnapshot = localServerSnapshotsRef.current.get(id)
+    localServerSnapshotsRef.current.delete(id)
+    setServers(current => removeServerSnapshot(current, id))
+    patchPageData?.((current: any) => ({ ...current, servers: removeServerSnapshot(current.servers || [], id) }))
+    setDeleteServerDraft(null)
+    setInspectedServerId(current => current === id ? null : current)
     try {
-      await deleteServerRecord(client, server.id)
-      deletedServerIDsRef.current.add(server.id)
-      localServerSnapshotsRef.current.delete(server.id)
-      setServers(current => removeServerSnapshot(current, server.id))
-      patchPageData?.((current: any) => ({ ...current, servers: removeServerSnapshot(current.servers || [], server.id) }))
-      setDeleteServerDraft(null)
-      pendingDeleteServerIDsRef.current.delete(server.id)
+      await deleteServerRecord(client, id)
+      pendingDeleteServerIDsRef.current.delete(id)
       void refreshServers()
-      notify?.(`服务器 ${server.name || `#${server.id}`} 已删除`, 'success')
+      notify?.(`服务器 ${server.name || `#${id}`} 已删除`, 'success')
     } catch (error: any) {
-      pendingDeleteServerIDsRef.current.delete(server.id)
+      pendingDeleteServerIDsRef.current.delete(id)
+      deletedServerIDsRef.current.delete(id)
+      if (localSnapshot) localServerSnapshotsRef.current.set(id, localSnapshot)
+      if (!(error instanceof ServerMutationUncertainError)) {
+        setServers(current => upsertServerSnapshot(current, server))
+        patchPageData?.((current: any) => ({ ...current, servers: upsertServerSnapshot(current.servers || [], server) }))
+      }
+      void refreshServers()
       await dialogs.alert({ title: error instanceof ServerMutationUncertainError ? '服务器状态待确认' : '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
-      if (error instanceof ServerMutationUncertainError) void refreshServers()
-    } finally {
-      if (serversMountedRef.current) setDeleteServerBusy(false)
     }
   }
   const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }

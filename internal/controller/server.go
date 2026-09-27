@@ -170,6 +170,8 @@ type Server struct {
 	connectionAuditCacheValid     bool
 	connectionAuditComputing      bool
 	notificationWG                sync.WaitGroup
+	serverDeletionMu              sync.Mutex
+	serverDeletionWG              sync.WaitGroup
 	notificationSender            func(context.Context, model.NotificationChannel, string, string) error
 	telegramAPI                   func(context.Context, string, string, url.Values) ([]byte, error)
 	telegramPollerID              string
@@ -4625,16 +4627,18 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	if err := s.finishServerDeletion(ctx, deletion); err != nil {
+	// Only the local removal is on the request path. Releasing provider
+	// records is a network round trip per zone and record; it runs after the
+	// response, and the worker retries it if it fails.
+	deletion, err = s.removeDeletedServerRecord(ctx, deletion)
+	if err != nil {
 		if errors.Is(err, store.ErrPlanVersionApplying) {
 			return http.StatusConflict, err
 		}
-		if !errors.Is(err, errServerExternalCleanupPending) {
-			// The record itself is still there, so this is a real failure.
-			return http.StatusInternalServerError, err
-		}
-		log.Printf("server delete %d: %v", id, err)
+		// The record itself is still there, so this is a real failure.
+		return http.StatusInternalServerError, err
 	}
+	s.releaseServerDeletionInBackground(deletion)
 	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
 	return 0, nil
 }
