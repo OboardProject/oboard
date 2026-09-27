@@ -64,6 +64,28 @@
 .user-picker .user-picker-row:has(input:checked) { background: var(--primary-soft); }
 .user-picker .user-picker-toolbar { flex-wrap: wrap; gap: 8px; }
 .user-picker .user-picker-toolbar input { flex: 1 1 220px; }
+@media (max-width: 768px) {
+  .node-assignments-panel .node-list-search {
+    flex: 0 0 44px;
+    width: 100%;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+  .node-assignments-panel .node-list-toolbar-tools {
+    flex-wrap: wrap;
+  }
+  .node-assignments-panel .node-filter-toggle-btn {
+    flex: 0 0 auto;
+    min-width: 72px;
+    padding-inline: 10px;
+  }
+  .node-assignments-panel .node-list-search .icon-button {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+  }
+}
 @media (max-width: 700px) {
   .signal-scope-columns { grid-template-columns: minmax(0, 1fr); }
   .node-signal-dialog .node-scope-auth-fields { grid-template-columns: minmax(0, 1fr); }
