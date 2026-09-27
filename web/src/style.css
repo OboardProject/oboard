@@ -12113,6 +12113,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     width: 100%;
     min-width: 0;
   }
+  .server-management-toolbar .server-list-toolbar { flex: 0 0 auto; }
   .server-management-panel .server-list-search { min-width: 180px; }
   .server-management-panel .section-actions {
     display: flex;
