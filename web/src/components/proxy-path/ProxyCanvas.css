@@ -270,11 +270,11 @@
   .graph-workbench-bar {
     top: 10px;
     right: 10px;
-    width: min(248px, calc(100% - 72px));
+    width: min(204px, calc(100% - 72px));
     max-width: none;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px;
+    gap: 3px;
     padding: 0;
     border: 0;
     background: transparent;
@@ -283,31 +283,34 @@
   .graph-workbench-status {
     grid-column: 1 / -1;
     justify-content: flex-end;
-    min-height: 18px;
+    min-height: 16px;
     padding-right: 2px;
     white-space: nowrap;
   }
   .graph-workbench-bar button {
     min-width: 0;
     justify-content: center;
-    padding-inline: 6px;
+    padding-inline: 4px;
     border: 1px solid var(--border);
     background: var(--surface-solid);
     box-shadow: var(--canvas-shadow, 0 8px 24px rgb(15 23 42 / 10%));
     white-space: nowrap;
   }
-  .proxy-flow:has(.graph-workbench-bar) .proxy-graph-legend { top: 88px; right: 10px; }
+  .proxy-flow:has(.graph-workbench-bar) .proxy-graph-legend { top: 80px; right: 10px; }
   .graph-selection-actions {
-    bottom: max(96px, calc(76px + env(safe-area-inset-bottom, 0px)));
-    width: min(320px, calc(100% - 24px));
+    left: 10px;
+    right: 63px;
+    bottom: 15px;
+    transform: none;
+    width: auto;
     max-width: none;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
     gap: 4px;
     box-sizing: border-box;
   }
   .graph-selection-actions:not(:has(button:nth-of-type(3))) {
-    grid-template-columns: minmax(0, 1fr) 40px;
+    grid-template-columns: minmax(0, 1fr) 36px;
   }
   .graph-selection-actions > strong {
     grid-column: 1 / -1;
@@ -323,13 +326,13 @@
     padding-inline: 6px;
     white-space: nowrap;
   }
-  .graph-selection-actions .icon-button { width: 40px; min-width: 40px; padding: 0; }
+  .graph-selection-actions .icon-button { width: 36px; min-width: 36px; padding: 0; }
   .graph-connection-hint { bottom: 104px; }
-  .proxy-flow:has(.graph-selection-actions) .graph-connection-hint { bottom: 192px; }
 }
 
 @media (pointer: coarse) {
   :is(.graph-workbench-bar, .graph-selection-actions) button { min-height: 44px; }
+  .graph-workbench-bar button { min-height: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
