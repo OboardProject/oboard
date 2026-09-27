@@ -24706,8 +24706,12 @@ button.dns-policy-row-main:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dns-list-toolbar { width: min(360px, 100%); }
-.dns-list-row { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.dns-list-toolbar { align-items: center; flex-direction: row; flex-wrap: wrap; }
+.dns-list-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.dns-list-row > .record-type { grid-column: 1; grid-row: 1; }
+.dns-list-row > .record-main { grid-column: 2; }
+.dns-list-row > .record-badges { grid-column: 3; }
+.dns-list-row > .record-actions { grid-column: 4; }
 .dns-record-list > .empty-inline { padding: 32px 20px; color: var(--text-muted); text-align: center; }
 .dns-list-dialog {
   width: min(720px, calc(100vw - 32px));
@@ -24865,8 +24869,12 @@ button.dns-policy-row-main:focus {
   .dns-status-strip > span:last-child { border-bottom: 0; }
   .dns-settings-form { grid-template-columns: minmax(0, 1fr); }
 	.dns-group-grid { grid-template-columns: minmax(0, 1fr); }
-	.dns-list-row { grid-template-columns: auto minmax(0, 1fr) auto; }
-	.dns-list-row .record-actions { grid-column: 2 / -1; }
+  .dns-list-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .dns-list-row > .record-type { display: none; }
+  .dns-list-row > .record-main { grid-column: 1; grid-row: 1; }
+  .dns-list-row > .record-badges { grid-column: 1; grid-row: 2; justify-content: flex-start; }
+  .dns-list-row > .record-actions { grid-column: 2; grid-row: 1 / span 2; align-self: start; }
+  .dns-list-row .record-main small { white-space: normal; overflow-wrap: anywhere; }
   .dns-candidate-editor-head { align-items: stretch; flex-direction: column; }
   .dns-candidate-editor-head button { width: 100%; }
   .dns-candidate-columns { display: none; }
