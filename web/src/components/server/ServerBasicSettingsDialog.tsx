@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import { MotionDialogPanel } from '../ui/motion'
 import { Select } from '../ui/select'
 import { FormField } from '../ui/form-field'
@@ -116,7 +117,7 @@ export function ServerBasicSettingsDialog({ server, onCancel, onSubmit }: { serv
   }
   const regionPreview = draft.region_mode==='manual' ? normalizeRegionCode(draft.region_code) : normalizeRegionCode(draft.detected_region_code)
   return (
-    <MotionDialogPanel onCancel={onCancel} className="server-dialog server-basic-settings-dialog" placement="right">
+    <MotionDialogPanel onCancel={saving ? () => undefined : onCancel} className="server-dialog server-basic-settings-dialog" placement="right">
       <header className="dialog-head">
         <div>
           <h2>基础设置 · {server.name || `服务器 #${server.id}`}</h2>
@@ -172,7 +173,7 @@ export function ServerBasicSettingsDialog({ server, onCancel, onSubmit }: { serv
       </div>
       <footer className="dialog-actions">
         <button className="ghost" onClick={onCancel} disabled={saving}>取消</button>
-        <button onClick={()=>void submit()} disabled={saving || !String(draft.name||'').trim()}>{saving? '保存中...':'保存修改'}</button>
+        <button onClick={()=>void submit()} disabled={saving || !String(draft.name||'').trim()} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving? '保存中…':'保存修改'}</button>
       </footer>
     </MotionDialogPanel>
   )

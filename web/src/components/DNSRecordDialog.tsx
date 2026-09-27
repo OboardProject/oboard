@@ -1,5 +1,5 @@
 import React, { useId, useState } from 'react'
-import { X } from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 
 import { FormField } from './ui/form-field'
 import { MotionDialogPanel } from './ui/motion'
@@ -102,10 +102,10 @@ export function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraf
   const canSubmit = Boolean(zoneID && hostPrefix.trim() && draft.content.trim())
   const submitHint = canSubmit ? undefined : '请填写域名、主机记录和记录值'
 
-  return <MotionDialogPanel onCancel={onCancel} placement="right" className="dns-record-dialog" ariaLabel={editing ? '编辑解析记录' : '添加解析记录'}>
-    <header className="dialog-head"><div><h2>{editing ? '编辑解析记录' : '添加解析记录'}</h2><p className="muted">{editing ? `所属域名：${selectedZoneName}` : '为指定域名创建一条子域名解析。'}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><X aria-hidden="true" /></button></header>
+  return <MotionDialogPanel onCancel={saving ? () => undefined : onCancel} placement="right" className="dns-record-dialog" ariaLabel={editing ? '编辑解析记录' : '添加解析记录'}>
+    <header className="dialog-head"><div><h2>{editing ? '编辑解析记录' : '添加解析记录'}</h2><p className="muted">{editing ? `所属域名：${selectedZoneName}` : '为指定域名创建一条子域名解析。'}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><X aria-hidden="true" /></button></header>
     <div className="dialog-body">
-      <form id={formID} className="form server-dialog-form labeled-form" onSubmit={event => { event.preventDefault(); if (canSubmit) void onSubmit() }}>
+      <form id={formID} className="form server-dialog-form labeled-form" onSubmit={event => { event.preventDefault(); if (canSubmit && !saving) void onSubmit() }}>
         <FormField label="域名" required><Select aria-label="域名" required disabled={editing} value={zoneID} onChange={event => handleZoneChange(Number(event.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(option => <option key={option.zone.id} value={option.zone.id}>{formatOptionLabel(option)}</option>)}</Select></FormField>
         <FormField label="记录类型" required><Select aria-label="记录类型" required value={draft.type || 'A'} onChange={event => update({ type: event.target.value, proxied: event.target.value === 'TXT' ? false : draft.proxied })}>{['A', 'AAAA', 'CNAME', 'TXT'].map(type => <option key={type} value={type}>{type}</option>)}</Select></FormField>
         <FormField label="主机记录" required hint="支持填写子域名前缀（例如 hkp 或 *）；如需解析主域名请填写 @。">
@@ -136,6 +136,6 @@ export function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraf
         {cloudflare && <div className="switch-form-row"><span className="switch-form-label">Cloudflare 代理</span><Switch checked={draft.proxied} disabled={draft.type === 'TXT'} onChange={checked => update({ proxied: checked, ttl: checked ? 1 : draft.ttl })} ariaLabel="Cloudflare 代理" /></div>}
       </form>
     </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="submit" form={formID} disabled={saving || !canSubmit} title={submitHint}>{saving ? (editing ? '保存中...' : '创建中...') : (editing ? '保存修改' : '添加记录')}</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="submit" form={formID} disabled={saving || !canSubmit} aria-busy={saving} title={submitHint}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving ? (editing ? '保存中…' : '创建中…') : (editing ? '保存修改' : '添加记录')}</button></footer>
   </MotionDialogPanel>
 }

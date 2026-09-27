@@ -3072,7 +3072,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
   if (tab === 'return-latency') return <ReturnLatencyPage servers={data.servers || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
-  if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} />
+  if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} patchPageData={patchPageData} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} focusRequest={proxyInboundFocus} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
@@ -3082,7 +3082,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'plans') return <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'nodes') return <NodeWorkspacePage data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} legacySubscriptions={hasManagementAccess(data.session?.role || data.current_user?.role || sessionUser?.role) ? <Subscriptions data={data} client={client} load={load} notify={notify} /> : <MySubscriptions data={data} client={client} load={load} notify={notify} />} />
   if (tab === 'node-order-templates') return <NodeAssignmentsPage data={data} client={client} load={load} notify={notify} />
-  if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
+  if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
   if (tab === 'mtu') return <MTU data={data} client={client} load={load} notify={notify} />
   if (tab === 'port-forwards') return <PortForwards data={data} client={client} load={load} notify={notify} />
@@ -4988,6 +4988,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   const [recordDraft, setRecordDraft] = useState(emptyDNSRecordDraft())
   const [editingRecord, setEditingRecord] = useState<DNSRecord | null>(null)
   const [working, setWorking] = useState('')
+  const [deleting, setDeleting] = useState('')
   const [recordQuery, setRecordQuery] = useState('')
   const [recordTypeFilters, setRecordTypeFilters] = useState<string[]>([])
   const [recordSourceFilters, setRecordSourceFilters] = useState<string[]>([])
@@ -5106,17 +5107,21 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
     } catch (error: any) { await load(); notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const deleteCredential = async (credential: DNSCredential) => {
+    if (deleting) return
     const ok = await dialogs.confirm({ title: '删除域名服务账号', message: `确认删除 ${credential.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    const outcome = await mutations.submit({
-      key: `dns-credential:${credential.id}`,
-      resources: ['dns'],
-      run: () => client.request(`/dns-credentials/${credential.id}`, { method: 'DELETE' }),
-    })
-    if (outcome.outcome === 'applied') { await load(); notify?.('域名服务账号已删除', 'success'); return }
-    if (outcome.outcome === 'superseded') return
-    await load()
-    notify?.(describeMutationOutcome(outcome, '删除域名服务账号'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    setDeleting(`credential-${credential.id}`)
+    try {
+      const outcome = await mutations.submit({
+        key: `dns-credential:${credential.id}`,
+        resources: ['dns'],
+        run: () => client.request(`/dns-credentials/${credential.id}`, { method: 'DELETE' }),
+      })
+      if (outcome.outcome === 'applied') { await load(); notify?.('域名服务账号已删除', 'success'); return }
+      if (outcome.outcome === 'superseded') return
+      await load()
+      notify?.(describeMutationOutcome(outcome, '删除域名服务账号'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    } finally { setDeleting('') }
   }
   const loadRecords = async (zoneID = selectedZoneID) => {
     if (!zoneID) { setRecords([]); return }
@@ -5147,17 +5152,21 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
     setRecordDialogOpen(true)
   }
   const deleteRecord = async (record: DNSRecord) => {
+    if (deleting) return
     const ok = await dialogs.confirm({ title: '删除解析记录', message: `${record.type} ${record.name}`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    const outcome = await mutations.submit({
-      key: `dns-record:${selectedZoneID}:${record.id}`,
-      resources: ['dns'],
-      run: () => client.request(`/dns-records?dns_zone_id=${selectedZoneID}&id=${encodeURIComponent(record.id)}`, { method: 'DELETE' }),
-    })
-    if (outcome.outcome === 'applied') { await loadRecords(); notify?.('解析记录已删除', 'success'); return }
-    if (outcome.outcome === 'superseded') return
-    await loadRecords()
-    notify?.(describeMutationOutcome(outcome, '删除解析记录'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    setDeleting(`record-${record.id}`)
+    try {
+      const outcome = await mutations.submit({
+        key: `dns-record:${selectedZoneID}:${record.id}`,
+        resources: ['dns'],
+        run: () => client.request(`/dns-records?dns_zone_id=${selectedZoneID}&id=${encodeURIComponent(record.id)}`, { method: 'DELETE' }),
+      })
+      if (outcome.outcome === 'applied') { await loadRecords(); notify?.('解析记录已删除', 'success'); return }
+      if (outcome.outcome === 'superseded') return
+      await loadRecords()
+      notify?.(describeMutationOutcome(outcome, '删除解析记录'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    } finally { setDeleting('') }
   }
   const selectedOption = zoneOptions.find(item => item.zone.id === selectedZoneID)
   const serverName = (id?: number) => id ? serverNames.get(id) || '' : ''
@@ -5206,11 +5215,15 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
       {visibleRecords.length ? <div className="dns-record-list">{visibleRecords.map(record => {
         const linkedServerName = record.server_id ? serverName(record.server_id) : ''
         const detail = record.comment || `TTL ${record.ttl}`
-        return <div className="dns-record-row" key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small></div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} title="编辑" aria-label={`编辑 ${record.name}`}><Edit3 size={14} aria-hidden="true" /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} title="删除" aria-label={`删除 ${record.name}`}><Trash2 size={14} aria-hidden="true" /></button></div></div>
+        const isDeleting = deleting === `record-${record.id}`
+        return <div className={`dns-record-row${isDeleting ? ' is-pending-delete' : ''}`} key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small>{isDeleting && <small role="status">正在删除，请等待确认…</small>}</div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} disabled={Boolean(deleting)} title="编辑" aria-label={`编辑 ${record.name}`}><Edit3 size={14} aria-hidden="true" /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} disabled={Boolean(deleting)} aria-busy={isDeleting} title={isDeleting ? '删除中' : '删除'} aria-label={`${isDeleting ? '正在删除' : '删除'} ${record.name}`}>{isDeleting ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}</button></div></div>
       })}</div> : <div className="dns-credential-empty">{!selectedZoneID ? '请先选择一个域名或在“域名管理”中添加账号。' : records.length ? '没有符合条件的解析记录。' : '该域名当前没有解析记录。'}</div>}
     </section> : <section className="settings-card dns-management-card">
       <div className="settings-card-head"><div><h3>域名与解析服务商</h3></div><button className="ghost" onClick={openCreateCredential}><Plus size={14} />新建账号</button></div>
-      {credentials.length ? <div className="dns-record-list">{credentials.map(credential => <div className="dns-record-row dns-credential-row" key={credential.id}><div className="dns-provider-logo-box" title={dnsProviderLabels[credential.provider]}><DNSProviderIcon provider={credential.provider} size={22} /></div><div className="record-main"><strong>{credential.name}</strong><span><small className="dns-provider-sublabel">{dnsProviderLabels[credential.provider]}</small>{(credential.zones || []).length ? ` · ${(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}` : ''}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small></div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
+      {credentials.length ? <div className="dns-record-list">{credentials.map(credential => {
+        const isDeleting = deleting === `credential-${credential.id}`
+        return <div className={`dns-record-row dns-credential-row${isDeleting ? ' is-pending-delete' : ''}`} key={credential.id}><div className="dns-provider-logo-box" title={dnsProviderLabels[credential.provider]}><DNSProviderIcon provider={credential.provider} size={22} /></div><div className="record-main"><strong>{credential.name}</strong><span><small className="dns-provider-sublabel">{dnsProviderLabels[credential.provider]}</small>{(credential.zones || []).length ? ` · ${(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}` : ''}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small>{isDeleting && <small role="status">正在删除，请等待确认…</small>}</div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} disabled={Boolean(deleting)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} disabled={Boolean(deleting)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} disabled={Boolean(deleting)} aria-busy={isDeleting} title={isDeleting ? '删除中' : '删除'} aria-label={`${isDeleting ? '正在删除' : '删除'} ${credential.name}`}>{isDeleting ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Trash2 size={14} />}</button></div></div>
+      })}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
     </section>}
     <AnimatePresence>{recordDialogOpen && <DNSRecordDialog zoneOptions={zoneOptions} zoneID={recordDialogZoneID} setZoneID={setRecordDialogZoneID} draft={recordDraft} setDraft={setRecordDraft} serverName={serverName} editing={Boolean(editingRecord)} saving={working === 'record-save'} onCancel={closeRecordDialog} onSubmit={saveRecord} />}</AnimatePresence>
     <AnimatePresence>{credentialDialogOpen && <DNSCredentialDialog draft={draft} setDraft={setDraft} editing={editingID > 0} saving={working === 'credential-save'} onCancel={closeCredentialDialog} onSubmit={saveCredential} />}</AnimatePresence>
@@ -5223,8 +5236,8 @@ function DNSCredentialDialog({ draft, setDraft, editing, saving, onCancel, onSub
   const update = (patch: Partial<typeof draft>) => setDraft((current: typeof draft) => ({ ...current, ...patch }))
   const updateZone = (index: number, patch: Record<string, unknown>) => update({ zones: draft.zones.map((zone: any, zoneIndex: number) => zoneIndex === index ? { ...zone, ...patch } : zone) })
   const removeZone = (index: number) => update({ zones: draft.zones.filter((_: any, zoneIndex: number) => zoneIndex !== index) })
-  return <MotionDialogPanel onCancel={onCancel} className="dns-credential-dialog">
-    <header className="dialog-head"><div><h2>{editing ? '编辑解析设置' : '新建解析设置'}</h2><p className="muted">同一份授权信息可以管理多个域名。</p></div><button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
+  return <MotionDialogPanel onCancel={saving ? () => undefined : onCancel} className="dns-credential-dialog">
+    <header className="dialog-head"><div><h2>{editing ? '编辑解析设置' : '新建解析设置'}</h2><p className="muted">同一份授权信息可以管理多个域名。</p></div><button className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body"><div className="form server-dialog-form labeled-form">
       <div className="form-section-title">账号信息</div>
       <FormField label="账号名称" required hint="用于在面板中识别。"><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：生产域名" /></FormField>
@@ -5260,7 +5273,7 @@ function DNSCredentialDialog({ draft, setDraft, editing, saving, onCancel, onSub
         </div>
       </section>
     </div></div>
-    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={() => void onSubmit()} disabled={saving}>{saving ? '保存中...' : editing ? '保存修改' : '创建账号'}</button></footer>
+    <footer className="dialog-actions"><button className="ghost" onClick={onCancel} disabled={saving}>取消</button><button onClick={() => void onSubmit()} disabled={saving} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving ? '保存中…' : editing ? '保存修改' : '创建账号'}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -5318,6 +5331,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
   const [autoIssueCA, setAutoIssueCA] = useState(String(data.settings?.certificate_auto_issue_acme_ca || 'letsencrypt'))
   const [autoIssueEABCredentialID, setAutoIssueEABCredentialID] = useState(Number(data.settings?.certificate_auto_issue_google_eab_credential_id || 0))
   const [working, setWorking] = useState('')
+  const [deletingCertificateID, setDeletingCertificateID] = useState<number | null>(null)
   const [importDraft, setImportDraft] = useState({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' })
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
@@ -5373,17 +5387,21 @@ function CertificateSettings({ data, client, load, notify }: any) {
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const deleteCertificate = async (certificate: Certificate) => {
+    if (deletingCertificateID !== null) return
     const ok = await dialogs.confirm({ title: '删除证书', message: `确认删除 ${certificate.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    const outcome = await mutations.submit({
-      key: `certificate:${certificate.id}`,
-      resources: ['certificates'],
-      run: () => client.request(`/certificates/${certificate.id}`, { method: 'DELETE' }),
-    })
-    if (outcome.outcome === 'applied') { await load(); notify?.('证书已删除', 'success'); return }
-    if (outcome.outcome === 'superseded') return
-    await load()
-    notify?.(describeMutationOutcome(outcome, '删除证书'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    setDeletingCertificateID(certificate.id)
+    try {
+      const outcome = await mutations.submit({
+        key: `certificate:${certificate.id}`,
+        resources: ['certificates'],
+        run: () => client.request(`/certificates/${certificate.id}`, { method: 'DELETE' }),
+      })
+      if (outcome.outcome === 'applied') { await load(); notify?.('证书已删除', 'success'); return }
+      if (outcome.outcome === 'superseded') return
+      await load()
+      notify?.(describeMutationOutcome(outcome, '删除证书'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    } finally { setDeletingCertificateID(null) }
   }
   const saveMatching = async () => {
     if (autoIssueCA === 'google' && !autoIssueEABCredentialID) return
@@ -5515,16 +5533,17 @@ function CertificateSettings({ data, client, load, notify }: any) {
         const issueLabel = ready ? '续签证书' : '签发证书'
         const issueWorking = working === `${issueAction}-${certificate.id}`
         const refreshWorking = working === `refresh-${certificate.id}`
-        return <div className="dns-record-row" key={certificate.id}>
+        const isDeleting = deletingCertificateID === certificate.id
+        return <div className={`dns-record-row${isDeleting ? ' is-pending-delete' : ''}`} key={certificate.id}>
           <span className="record-type">{certificate.wildcard ? 'WILD' : 'TLS'}</span>
-          <div className="record-main"><strong>{certificate.name}</strong><span>{certificate.domains.join(' · ')}</span><small>{certificate.last_error || (certificate.not_after ? `有效至 ${formatTableTime(certificate.not_after)}` : certificateLabelValue(certificate.challenge_type))}</small>{certificate.status === 'awaiting_dns' && (certificate.validation_records || []).map(record => <code key={`${record.name}-${record.content}`}>{record.name} TXT {record.content}</code>)}</div>
+          <div className="record-main"><strong>{certificate.name}</strong><span>{certificate.domains.join(' · ')}</span><small>{certificate.last_error || (certificate.not_after ? `有效至 ${formatTableTime(certificate.not_after)}` : certificateLabelValue(certificate.challenge_type))}</small>{isDeleting && <small role="status">正在删除，请等待确认…</small>}{certificate.status === 'awaiting_dns' && (certificate.validation_records || []).map(record => <code key={`${record.name}-${record.content}`}>{record.name} TXT {record.content}</code>)}</div>
           <span className={`status-pill ${ready ? 'ok' : certificate.status === 'failed' ? 'warning' : ''}`}>{certificateLabelValue(certificate.status)}</span>
           <div className="record-actions">
             <button type="button" className="ghost icon-button tooltip-button" onClick={() => void refreshCertificateStatus(certificate)} disabled={refreshWorking} data-tooltip="刷新证书状态" aria-label="刷新证书状态"><RefreshCw size={14} className={refreshWorking ? 'spin' : ''} /></button>
             <button type="button" className="ghost icon-button tooltip-button" onClick={() => setLogCertificate(certificate)} data-tooltip="查看签发日志" aria-label="查看签发日志"><FileText size={14} /></button>
             {certificate.acme_ca === 'google' && <button type="button" className="ghost icon-button tooltip-button" onClick={() => openCertificateEAB(certificate)} data-tooltip={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'} aria-label={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'}><KeyRound size={14} /></button>}
             {certificate.status === 'awaiting_dns' ? <button type="button" className="ghost" onClick={() => void certificateAction(certificate, 'confirm-dns')} disabled={working === `confirm-dns-${certificate.id}`}>已解析</button> : certificate.challenge_type !== 'imported' ? <button type="button" className="ghost icon-button tooltip-button" onClick={() => void certificateAction(certificate, issueAction)} disabled={issueWorking || certificate.status === 'issuing'} data-tooltip={issueLabel} aria-label={issueLabel}>{ready ? <CalendarSync size={14} className={issueWorking ? 'spin' : ''} /> : <BadgeCheck size={14} />}</button> : null}
-            <button type="button" className="ghost icon-button tooltip-button danger-text" onClick={() => void deleteCertificate(certificate)} data-tooltip="删除证书" aria-label="删除证书"><Trash2 size={14} /></button>
+            <button type="button" className="ghost icon-button tooltip-button danger-text" onClick={() => void deleteCertificate(certificate)} disabled={deletingCertificateID !== null} aria-busy={isDeleting} data-tooltip={isDeleting ? '删除中' : '删除证书'} aria-label={`${isDeleting ? '正在删除' : '删除'} ${certificate.name}`}>{isDeleting ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Trash2 size={14} />}</button>
           </div>
         </div>
       })}</div>
@@ -6603,7 +6622,7 @@ function sameNumberOrder(a: number[], b: number[]) {
   return a.length === b.length && a.every((value, index) => value === b[index])
 }
 
-function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
+function Servers({ data, client, load, loading, notify, realtimeStatus, patchPageData }: any) {
   const dialogs = useDialogs()
   const creationDefaults = data.server_creation_defaults || {}
   const [draft, setDraft] = useState(() => defaultServerDraft(creationDefaults))
@@ -6651,6 +6670,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const serverRequestInFlightRef = useRef(false)
   const serversMountedRef = useRef(false)
   const pendingDeleteServerIDsRef = useRef(new Set<number>())
+  const deletedServerIDsRef = useRef(new Set<number>())
+  const localServerSnapshotsRef = useRef(new Map<number, Server>())
   const [deleteServerDraft, setDeleteServerDraft] = useState<Server | null>(null)
   const [deleteServerBusy, setDeleteServerBusy] = useState(false)
   const [uninstallingServerIDs, setUninstallingServerIDs] = useState<Set<number>>(() => new Set())
@@ -6694,7 +6715,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
 
   useEffect(() => {
     const incoming = (data.servers || []) as Server[]
-    setServers(pendingDeleteServerIDsRef.current.size ? incoming.filter(server => !pendingDeleteServerIDsRef.current.has(server.id)) : incoming)
+    const next = incoming.filter(server => !deletedServerIDsRef.current.has(server.id))
+    for (const server of localServerSnapshotsRef.current.values()) {
+      const index = next.findIndex(item => item.id === server.id)
+      if (index < 0) next.unshift(server)
+      else next[index] = { ...next[index], ...server }
+    }
+    setServers(next)
   }, [data.servers])
   useEffect(() => {
     const incoming = (data.server_metrics || []) as ServerMetricSample[]
@@ -6755,7 +6782,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     try {
       const res = await client.request('/servers')
       if (!serversMountedRef.current) return
-      const nextServers: Server[] = (res.servers || []).filter((server: Server) => !pendingDeleteServerIDsRef.current.has(server.id))
+      const fresh = (res.servers || []) as Server[]
+      for (const id of localServerSnapshotsRef.current.keys()) {
+        if (fresh.some(server => server.id === id)) localServerSnapshotsRef.current.delete(id)
+      }
+      const nextServers: Server[] = fresh.filter(server => !deletedServerIDsRef.current.has(server.id))
+      for (const server of localServerSnapshotsRef.current.values()) {
+        if (!nextServers.some(item => item.id === server.id)) nextServers.unshift(server)
+      }
       setServers(nextServers)
       setServerMetrics(current => appendLiveServerMetrics(current, nextServers))
     } catch (error) {
@@ -6906,10 +6940,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     try {
       const payload = { ...draft, service_start_at: draft.service_start_at ? serverExpiryOutputValue(draft.service_start_at) : null, expires_at: draft.expires_at ? serverExpiryOutputValue(draft.expires_at) : null }
       const result = await createServerRecord<Server>(client, payload, servers)
+      localServerSnapshotsRef.current.set(result.server.id, result.server as Server)
       setServers(current => upsertServerSnapshot(current, result.server as Server))
+      patchPageData?.((current: any) => ({ ...current, servers: upsertServerSnapshot(current.servers || [], result.server as Server) }))
       setCreateOpen(false)
       setDraft(defaultServerDraft(creationDefaults))
-      revalidateServers()
+      void refreshServers()
       notify?.(result.recovered ? `已找到服务器 ${result.server.name}，请核对服务器信息` : `服务器 ${result.server.name || `#${result.server.id}`} 已添加`, result.recovered ? 'info' : 'success')
     } catch (error: any) {
       await dialogs.alert({ title: error instanceof ServerMutationUncertainError ? '服务器状态待确认' : '添加服务器失败', message: localizeErrorMessage(error?.message || error) })
@@ -6927,13 +6963,17 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       }
       const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(payload) }) as { server?: Server; time_check_error?: string }
       if (!result.server?.id) throw new Error('服务器设置已保存，但接口未返回服务器数据')
+      localServerSnapshotsRef.current.set(result.server.id, result.server)
       setServers(current => upsertServerSnapshot(current, result.server as Server))
+      patchPageData?.((current: any) => ({ ...current, servers: upsertServerSnapshot(current.servers || [], result.server as Server) }))
       setEditServer(null)
-      revalidateServers()
+      void refreshServers()
       if (modeChanged) notify?.(result.time_check_error ? `时间校准设置已保存，但检测未能启动：${result.time_check_error}` : '时间校准设置已保存，已开始检测', result.time_check_error ? 'warning' : 'success')
       else notify?.('服务器设置已保存', 'success')
+      return true
     } catch (error: any) {
       await dialogs.alert({ title: '保存服务器失败', message: localizeErrorMessage(error?.message || error) })
+      return false
     }
   }
   const extendServerExpiry = async (server: Server, days: number) => {
@@ -7122,12 +7162,16 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         )
         await waitForUninstallTask(id)
         if (!serversMountedRef.current) return
+        deletedServerIDsRef.current.add(id)
+        localServerSnapshotsRef.current.delete(id)
+        setServers(current => removeServerSnapshot(current, id))
+        patchPageData?.((current: any) => ({ ...current, servers: removeServerSnapshot(current.servers || [], id) }))
         setUninstallingServerIDs(current => {
           const next = new Set(current)
           next.delete(id)
           return next
         })
-        await refreshServers().catch(() => undefined)
+        void refreshServers()
         notify?.(`服务器 ${server.name || `#${server.id}`} 已删除`, 'success')
       } catch (error: any) {
         if (!serversMountedRef.current) return
@@ -7145,17 +7189,23 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     }
 
     pendingDeleteServerIDsRef.current.add(server.id)
-    setServers(current => removeServerSnapshot(current, server.id))
+    setDeleteServerBusy(true)
     try {
       await deleteServerRecord(client, server.id)
+      deletedServerIDsRef.current.add(server.id)
+      localServerSnapshotsRef.current.delete(server.id)
+      setServers(current => removeServerSnapshot(current, server.id))
+      patchPageData?.((current: any) => ({ ...current, servers: removeServerSnapshot(current.servers || [], server.id) }))
+      setDeleteServerDraft(null)
       pendingDeleteServerIDsRef.current.delete(server.id)
-      revalidateServers()
+      void refreshServers()
       notify?.(`服务器 ${server.name || `#${server.id}`} 已删除`, 'success')
     } catch (error: any) {
       pendingDeleteServerIDsRef.current.delete(server.id)
-      if (!(error instanceof ServerMutationUncertainError)) setServers(current => upsertServerSnapshot(current, server))
-      revalidateServers()
       await dialogs.alert({ title: error instanceof ServerMutationUncertainError ? '服务器状态待确认' : '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
+      if (error instanceof ServerMutationUncertainError) void refreshServers()
+    } finally {
+      if (serversMountedRef.current) setDeleteServerBusy(false)
     }
   }
   const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }
@@ -7453,7 +7503,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} role={role} onResetTraffic={() => void resetServerTraffic(detailServer)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{aboutServer && <ServerAboutDialog server={aboutServer} onClose={() => setAboutServer(null)} />}</AnimatePresence>
-    <AnimatePresence>{basicServer && <ServerBasicSettingsDialog server={basicServer} onCancel={() => setBasicServer(null)} onSubmit={async (patch) => { await updateServer(patch); setBasicServer(null) }} />}</AnimatePresence>
+    <AnimatePresence>{basicServer && <ServerBasicSettingsDialog server={basicServer} onCancel={() => setBasicServer(null)} onSubmit={async (patch) => { if (await updateServer(patch)) setBasicServer(null) }} />}</AnimatePresence>
     <AnimatePresence>{networkServer && <ServerNetworkDialog server={networkServer.server} initialTab={networkServer.tab} data={data} client={client} notify={notify} role={role} onClose={() => setNetworkServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
     <AnimatePresence>{systemServer && <ServerSystemDialog server={systemServer.server} initialTab={systemServer.tab} data={data} client={client} notify={notify} controllerURL={effectiveControllerURL(data)} role={role} onClose={() => setSystemServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
     <AnimatePresence>{tasksServer && <ServerTasksDialog server={tasksServer} client={client} onClose={() => setTasksServer(null)} />}</AnimatePresence>
@@ -7604,18 +7654,19 @@ function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Serv
       <button className="ghost dialog-close icon-button" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body">
-      <p>关联入口、链路和 DNS 记录也会被清理。删除失败时服务器会恢复显示。</p>
+      <p>关联入口、链路和 DNS 记录也会被清理。</p>
       <label className="server-delete-option">
-        <input type="checkbox" checked={uninstall} onChange={event => setUninstall(event.target.checked)} />
+        <input type="checkbox" checked={uninstall} disabled={busy} onChange={event => setUninstall(event.target.checked)} />
         <span>
           <strong>卸载 Agent 后删除</strong>
           <small>先远程卸载 Agent 并清理本机配置，成功后自动删除服务器。</small>
         </span>
       </label>
+      {busy && <div className="mutation-progress" role="status" aria-live="polite"><Loader2 size={16} className="spin" aria-hidden="true" />{uninstall ? '正在下发卸载任务，请稍候…' : '正在删除服务器，请等待确认…'}</div>}
     </div>
     <footer className="dialog-actions">
       <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
-      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy}>{busy ? '处理中...' : '删除'}</button>
+      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy} aria-busy={busy}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? '删除中…' : '删除'}</button>
     </footer>
   </MotionDialogPanel>
 }
@@ -8019,7 +8070,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
         <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
         {tab !== 'basic' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.max(0, serverSettingTabs.findIndex(item => item.id === tab) - 1)].id)} disabled={saving}>上一项</button>}
         {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
-        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '创建中...' : '创建'}</button>
+        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving ? '创建中…' : '创建'}</button>
       </footer>
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
@@ -8045,7 +8096,7 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
+function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<boolean>; servers?: Server[]; connectionAuditGated?: boolean }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
@@ -8194,7 +8245,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
       <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button>
         {tab !== 'basic' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.max(0, serverSettingTabs.findIndex(item => item.id === tab) - 1)].id)} disabled={saving}>上一项</button>}
         {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
-        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '保存中...' : '保存'}</button></footer>
+        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving ? '保存中…' : '保存'}</button></footer>
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
 }
@@ -18417,7 +18468,7 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
   const typeLabel = draft.kind === 'encrypted' ? '加密 DNS' : '默认 DNS'
   const addressPlaceholder = draft.kind === 'encrypted' ? 'https://cloudflare-dns.com/dns-query' : 'udp://1.1.1.1'
   const canSave = Boolean(draft.name.trim()) && draft.candidates.length >= 2 && draft.candidates.every(candidate => candidate.name.trim() && candidate.address.trim())
-  return <MotionDialogPanel onCancel={onCancel} className="dns-list-dialog">
+  return <MotionDialogPanel onCancel={saving ? () => undefined : onCancel} className="dns-list-dialog">
     <header className="dialog-head">
       <div><h2>{editing ? '编辑解析服务列表' : '新建解析服务列表'}</h2><p className="muted">{editing ? editing.name : typeLabel}</p></div>
       <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
@@ -18449,11 +18500,11 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
         </FormField>
       </div>
     </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={onSave} disabled={saving || !canSave}>{saving ? '保存中…' : editing ? '保存修改' : '创建列表'}</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={onSave} disabled={saving || !canSave} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving ? '保存中…' : editing ? '保存修改' : '创建列表'}</button></footer>
   </MotionDialogPanel>
 }
 
-function DNSListSettings({ data, client, load, notify }: any) {
+function DNSListSettings({ data, client, load, notify, patchPageData }: any) {
   const mutations = useMutationCoordinator(useRefreshResources())
   const dialogs = useDialogs()
   const lists: DNSList[] = data.dns_lists || []
@@ -18462,6 +18513,11 @@ function DNSListSettings({ data, client, load, notify }: any) {
   const [draft, setDraft] = useState<DNSListDraft>(() => ({ name: '', kind: 'encrypted', enabled: true, candidates: emptyDNSListCandidates() }))
   const [editorOpen, setEditorOpen] = useState(false)
   const [working, setWorking] = useState('')
+  const [listAction, setListAction] = useState('')
+  const updateList = (list: DNSList) => patchPageData?.((current: any) => {
+    const lists = (current.dns_lists || []) as DNSList[]
+    return { ...current, dns_lists: lists.some(item => item.id === list.id) ? lists.map(item => item.id === list.id ? list : item) : [...lists, list] }
+  })
   const openCreate = (kind = filter) => { setEditing(null); setDraft({ name: '', kind, enabled: true, candidates: emptyDNSListCandidates() }); setEditorOpen(true) }
   const edit = (list: DNSList) => { setEditing(list); setDraft({ name: list.name, kind: list.kind, enabled: list.enabled, candidates: serializeDNSListCandidates(list.candidates) }); setEditorOpen(true) }
   const copy = (list: DNSList) => { setEditing(null); setFilter(list.kind); setDraft({ name: `${list.name} 副本`, kind: list.kind, enabled: true, candidates: serializeDNSListCandidates(list.candidates) }); setEditorOpen(true) }
@@ -18472,41 +18528,57 @@ function DNSListSettings({ data, client, load, notify }: any) {
       const wasEditing = Boolean(editing)
       const payload = { name: draft.name.trim(), kind: draft.kind, enabled: draft.enabled, candidates: parseDNSListCandidates(draft.candidates, draft.kind) }
       if (!payload.name) throw new Error('请填写服务列表名称')
-      await client.request(editing ? `/dns-lists/${editing.id}` : '/dns-lists', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(payload) })
+      const result = await client.request(editing ? `/dns-lists/${editing.id}` : '/dns-lists', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(payload) })
+      if (result.dns_list) updateList(result.dns_list)
       setEditorOpen(false)
       setEditing(null)
       notify?.(wasEditing ? '解析服务列表已更新' : '解析服务列表已创建', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const toggle = async (list: DNSList) => {
+    if (listAction) return
+    setListAction(`toggle-${list.id}`)
     try {
-      await client.request(`/dns-lists/${list.id}`, { method: 'PUT', body: JSON.stringify({ ...list, enabled: !list.enabled }) })
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+      const result = await client.request(`/dns-lists/${list.id}`, { method: 'PUT', body: JSON.stringify({ ...list, enabled: !list.enabled }) })
+      if (result.dns_list) updateList(result.dns_list)
+      notify?.(`${list.name} 已${list.enabled ? '停用' : '启用'}`, 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setListAction('') }
   }
   const setDefault = async (list: DNSList) => {
+    if (listAction) return
+    setListAction(`default-${list.id}`)
     try {
-      await client.request(`/dns-lists/${list.id}/set-default`, { method: 'POST' })
+      const result = await client.request(`/dns-lists/${list.id}/set-default`, { method: 'POST' })
+      if (result.dns_list) patchPageData?.((current: any) => ({ ...current, dns_lists: (current.dns_lists || []).map((item: DNSList) => item.kind === list.kind ? item.id === list.id ? result.dns_list : { ...item, protected: false } : item) }))
       notify?.(`已将 ${list.name} 设为默认${list.kind === 'encrypted' ? '加密 DNS' : '默认 DNS'}列表`, 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setListAction('') }
   }
   const removeList = async (list: DNSList) => {
+    if (listAction) return
     const ok = await dialogs.confirm({ title: '删除服务列表', message: `确认删除 ${list.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    const outcome = await mutations.submit({
-      key: `dns-list:${list.id}`,
-      resources: ['dns'],
-      run: () => client.request(`/dns-lists/${list.id}`, { method: 'DELETE' }),
-    })
-    if (outcome.outcome === 'superseded') return
-    if (outcome.outcome === 'applied') { notify?.('解析服务列表已删除', 'success'); return }
-    notify?.(describeMutationOutcome(outcome, '删除解析服务列表'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    setListAction(`delete-${list.id}`)
+    try {
+      const outcome = await mutations.submit({
+        key: `dns-list:${list.id}`,
+        resources: ['dns'],
+        run: () => client.request(`/dns-lists/${list.id}`, { method: 'DELETE' }),
+      })
+      if (outcome.outcome === 'superseded') return
+      if (outcome.outcome === 'applied') {
+        patchPageData?.((current: any) => ({ ...current, dns_lists: (current.dns_lists || []).filter((item: DNSList) => item.id !== list.id) }))
+        notify?.('解析服务列表已删除', 'success')
+        return
+      }
+      notify?.(describeMutationOutcome(outcome, '删除解析服务列表'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    } finally { setListAction('') }
   }
   const listMenuGroups = (list: DNSList): OverflowMenuGroup[] => [
     {
       key: 'edit',
       items: [
-        { key: 'edit', label: '编辑列表', icon: Edit3, onSelect: () => edit(list) },
-        { key: 'copy', label: '复制列表', icon: Copy, onSelect: () => copy(list) },
+        { key: 'edit', label: '编辑列表', icon: Edit3, disabled: Boolean(listAction), onSelect: () => edit(list) },
+        { key: 'copy', label: '复制列表', icon: Copy, disabled: Boolean(listAction), onSelect: () => copy(list) },
       ],
     },
     {
@@ -18516,7 +18588,7 @@ function DNSListSettings({ data, client, load, notify }: any) {
           key: 'default',
           label: '设为默认',
           icon: Star,
-          disabled: list.protected || !list.enabled,
+          disabled: Boolean(listAction) || list.protected || !list.enabled,
           title: list.protected ? '已经是默认列表' : list.enabled ? '设为默认' : '启用后才能设为默认',
           onSelect: () => void setDefault(list),
         },
@@ -18524,7 +18596,7 @@ function DNSListSettings({ data, client, load, notify }: any) {
           key: 'toggle',
           label: list.enabled ? '停用列表' : '启用列表',
           icon: CheckSquare,
-          disabled: list.protected,
+          disabled: Boolean(listAction) || list.protected,
           title: list.protected ? '默认列表始终启用' : list.enabled ? '停用列表' : '启用列表',
           onSelect: () => void toggle(list),
         },
@@ -18538,7 +18610,7 @@ function DNSListSettings({ data, client, load, notify }: any) {
           label: '删除列表',
           icon: Trash2,
           danger: true,
-          disabled: list.protected,
+          disabled: Boolean(listAction) || list.protected,
           title: list.protected ? '默认列表不能删除' : '删除列表',
           onSelect: () => void removeList(list),
         },
@@ -18549,9 +18621,9 @@ function DNSListSettings({ data, client, load, notify }: any) {
   return <section className="settings-card dns-lists-card">
     <div className="settings-card-head"><div><h3>解析服务</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务；标记为默认的列表会被新建服务器直接使用。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建解析列表</button></div>
     <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select></div>
-    <div className="dns-record-list">{visible.length ? visible.map(list => <div className="dns-record-row dns-list-row" key={list.id}>
+    <div className="dns-record-list">{visible.length ? visible.map(list => <div className={`dns-record-row dns-list-row${listAction === `delete-${list.id}` ? ' is-pending-delete' : ''}`} key={list.id}>
         <span className="record-type">{list.kind === 'encrypted' ? '加密' : '基础'}</span>
-        <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用</small></div>
+        <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用</small>{listAction.endsWith(`-${list.id}`) && <small role="status"><Loader2 size={14} className="spin" aria-hidden="true" />{listAction.startsWith('delete-') ? '正在删除，请等待确认…' : listAction.startsWith('toggle-') ? '正在更新状态…' : '正在设置默认列表…'}</small>}</div>
         <span className={`status-pill ${list.enabled ? 'ok' : 'warning'}`}>{list.enabled ? '启用' : '停用'}</span>
         {list.protected && <span className="status-pill managed">默认</span>}
         <div className="record-actions"><OverflowMenu groups={listMenuGroups(list)} label={`${list.name} 的操作`} /></div>
@@ -18995,7 +19067,7 @@ function DNSPolicyManagerDialog({ rows, servers, lists, client, initialStatus, o
 
 const dnsAttentionPreviewLimit = 4
 
-function DNS({ data, client, load, notify }: any) {
+function DNS({ data, client, load, notify, patchPageData }: any) {
   const servers: Server[] = data.servers || []
   const lists: DNSList[] = data.dns_lists || []
   const policies: ServerDNSPolicy[] = data.server_dns_policies || []
@@ -19042,7 +19114,7 @@ function DNS({ data, client, load, notify }: any) {
   </button>
 
   return <div className="dns-settings-page">
-    <DNSListSettings data={data} client={client} load={load} notify={notify} />
+    <DNSListSettings data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
     <Panel title="服务器 DNS">
       <div className="section-toolbar">
         <div><h3>解析状态</h3><p className="muted">每台服务器使用一组加密解析服务和一组基础解析服务；测试只更新排序结果，应用才会下发配置。</p></div>
