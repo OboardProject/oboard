@@ -9827,7 +9827,8 @@ type TunnelDraft = { name: string; source_server_id: number; target_server_id: n
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
 type ProxyInboundFocusRequest = { inboundID: number; requestID: number }
 type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
-type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge'; sheet: boolean }
+type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge'; sheet: boolean; position?: GraphPosition }
+type GraphCanvasMenu = { x: number; y: number; sheet: boolean; position?: GraphPosition }
 
 function graphMenuShouldUseSheet() {
   return window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 720
@@ -10024,6 +10025,9 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	const [familySplitEditor, setFamilySplitEditor] = useState<{ templateID?: number; select?: boolean } | null>(null)
 	const [sourceSelectionRequest, setSourceSelectionRequest] = useState<GraphSourceSelectionRequest | null>(null)
   const [graphMenu, setGraphMenu] = useState<GraphContextMenu | null>(null)
+  const [canvasMenu, setCanvasMenu] = useState<GraphCanvasMenu | null>(null)
+  const [nodePickerOpen, setNodePickerOpen] = useState(false)
+  const nodePickerPosition = useRef<GraphPosition | null>(null)
   const graphMenuRef = useRef<HTMLDivElement | null>(null)
   const suppressGraphClickRef = useRef(false)
   const nodesRef = useRef<Node[]>([])
@@ -10037,6 +10041,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
 	  const sheet = graphMenuShouldUseSheet()
 	  const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
+	  setCanvasMenu(null)
 	  if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
     setSelectedGraphItem({ entity, pathIDs, source })
 	  setGraphMenu({
@@ -10046,6 +10051,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    pathIDs,
 	    source,
 	    sheet,
+	    position: flowInstance?.screenToFlowPosition({ x: clientX, y: clientY }),
 	  })
 	}
   nodesRef.current = nodes
@@ -10079,6 +10085,29 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     const y = Math.max(8, Math.min(graphMenu.y, window.innerHeight - height - 8))
     if (x !== graphMenu.x || y !== graphMenu.y) setGraphMenu({ ...graphMenu, x, y })
   }, [graphMenu])
+  useLayoutEffect(() => {
+    if (!canvasMenu || canvasMenu.sheet) return
+    const menu = graphMenuRef.current
+    if (!menu) return
+    const x = Math.max(8, Math.min(canvasMenu.x, window.innerWidth - menu.offsetWidth - 8))
+    const y = Math.max(8, Math.min(canvasMenu.y, window.innerHeight - menu.offsetHeight - 8))
+    if (x !== canvasMenu.x || y !== canvasMenu.y) setCanvasMenu({ ...canvasMenu, x, y })
+  }, [canvasMenu])
+  useEffect(() => {
+    if (!canvasMenu) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setCanvasMenu(null) }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.graph-context-menu, .graph-context-menu-overlay')) return
+      setCanvasMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onPointerDown, true)
+    }
+  }, [canvasMenu])
   useEffect(() => {
     if (!graphMenu) return
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setGraphMenu(null) }
@@ -10665,7 +10694,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	const putImportedOnCanvas = (node: ExternalOutbound) => {
 	  setCanvasImportedIDs(ids => ids.includes(node.id) ? ids : [...ids, node.id])
 	  const id = `imported-${node.id}`
-	  if (!positions[id]) placeGraphNode(id, getPreferredViewportNewNodePosition(260, 140))
+	  if (!positions[id]) placeGraphNode(id, nodePickerPosition.current || getPreferredViewportNewNodePosition(260, 140))
 	}
 	const positionFromCurrentRoot = (layout: Record<string, GraphPosition>, nodeID: string) => {
 	  const candidate = layout[nodeID]
@@ -10728,7 +10757,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  const instance: CanvasServerInstance = { instance_id: `${server.id}-${Date.now()}-${++canvasServerSequence.current}`, server_id: server.id }
 	  const id = canvasServerNodeID(instance)
 	  const width = graphServerNodeWidth(1)
-	  const targetPos = getPreferredViewportNewNodePosition(width, 140)
+	  const targetPos = nodePickerPosition.current || getPreferredViewportNewNodePosition(width, 140)
 	  setCanvasServerInstances(current => [...current, instance])
 	  placeGraphNode(id, targetPos)
 	}
@@ -11414,8 +11443,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     dns_sync_enabled: Boolean(entry.dns_sync_enabled),
   })
   const openEditEntry = (entry: Inbound) => setEditEntry(inboundDraftFromEntry(entry))
-  const addEntry = async (position?: GraphPosition) => {
-    const server = selected || servers[0]
+  const addEntry = async (position?: GraphPosition, serverID?: number) => {
+    const server = servers.find(item => item.id === serverID) || selected || servers[0]
     if (!server) return dialogs.alert({ title: '无法添加入口', message: '请先添加服务器。' })
     const preset = inboundPreset(defaultInboundPreset('vless'))
     const stored = matchingNodePreset(preset.id, data.node_presets || [])
@@ -11434,7 +11463,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	      const { __graphPosition, body } = controlledInboundPayload(finalDraft)
 	      const result = await client.request('/inbounds', { method: 'POST', body: JSON.stringify(body) }) as { inbound?: Inbound }
 	      applyMutationResult(result)
-      if (result.inbound?.id) {
+      if (Number(body.server_id) !== selected?.id) selectEntryServer(Number(body.server_id))
+      else if (result.inbound?.id) {
         placeGraphNode(`entry-${result.inbound.id}`, __graphPosition || nextEntryGraphPosition(data, positions, Number(body.server_id), selected?.id || Number(body.server_id)), Boolean(__graphPosition))
       }
 	      setEntryDraft(null)
@@ -12065,9 +12095,52 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    selectGraphItem(edge)
 	    openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(edge), 'edge')
   }
+	const openCanvasMenu = (clientX: number, clientY: number) => {
+	  const sheet = graphMenuShouldUseSheet()
+	  setGraphMenu(null)
+	  setCanvasMenu({
+	    x: sheet ? 0 : clientX,
+	    y: sheet ? 0 : clientY,
+	    sheet,
+	    position: flowInstance?.screenToFlowPosition({ x: clientX, y: clientY }),
+	  })
+	}
+	const canvasMenuPosition = (position?: GraphPosition, width = 220, height = 88) => position ? snapGraphPosition({ x: position.x - width / 2, y: position.y - height / 2 }) : undefined
+	const runCanvasMenuTool = (action: ProxyToolAction) => {
+	  const position = canvasMenuPosition(canvasMenu?.position)
+	  setCanvasMenu(null)
+	  runTool(action, position)
+	}
+	const openNodePickerAt = (position?: GraphPosition) => {
+	  nodePickerPosition.current = position || null
+	  setCanvasMenu(null)
+	  setGraphMenu(null)
+	  setNodePickerOpen(true)
+	}
+	const graphMenuServerID = (entity: GraphEntity) => {
+	  if (entity.type === 'server') return entity.id
+	  if (entity.type === 'entry') return entries.find(item => item.id === entity.id)?.server_id || 0
+	  if (entity.type === 'proxy-path-step') {
+	    const step = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === entity.id)
+	    return step?.node_type === 'server_inbound' ? step.server_id || 0 : 0
+	  }
+	  return 0
+	}
+	const createEntryFromGraphMenu = () => {
+	  const menu = graphMenu
+	  setGraphMenu(null)
+	  if (!menu) return
+	  const offset = menu.position ? { x: menu.position.x - 110, y: menu.position.y - 200 } : undefined
+	  void addEntry(offset ? snapGraphPosition(offset) : undefined, graphMenuServerID(menu.entity))
+	}
+	const addRoutingFromGraphMenu = () => {
+	  const entity = graphMenu?.entity
+	  setGraphMenu(null)
+	  if (entity?.type === 'entry') void openRouting({ inboundID: entity.id, lockHost: true })
+	}
 	const onPaneContextMenu = (e: React.MouseEvent) => {
 	  e.preventDefault()
-	  if (!flowInstance) return
+	  if (!flowInstance) return openCanvasMenu(e.clientX, e.clientY)
 	  const cursor = { x: e.clientX, y: e.clientY }
 	  const closest = displayEdges.reduce<{ edge: Edge; distance: number } | null>((current, edge) => {
 	    const edgeData = edge.data as GraphTransportEdgeData | undefined
@@ -12076,7 +12149,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    const distance = pointToPolylineDistance(cursor, screenPoints)
 	    return !current || distance < current.distance ? { edge, distance } : current
 	  }, null)
-	  if (!closest || closest.distance > 36) return
+	  if (!closest || closest.distance > 36) return openCanvasMenu(e.clientX, e.clientY)
 	  const entity = closest.edge.data?.entity as GraphEntity
 	  selectGraphItem(closest.edge)
 	  openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(closest.edge), 'edge')
@@ -12315,6 +12388,11 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
             onInspectImported={setConfigNode}
             onAutoArrange={autoArrangeGraph}
             onToggleInspector={toggleInspector}
+            nodePickerOpen={nodePickerOpen}
+            onNodePickerOpenChange={open => {
+              if (open) nodePickerPosition.current = null
+              setNodePickerOpen(open)
+            }}
           />
         </div>
         <div className={`flow proxy-flow ${initialViewportReady ? 'initial-viewport-ready' : 'initial-viewport-pending'}`} onDragOver={onToolDragOver} onDrop={onToolDrop}>
@@ -12410,6 +12488,39 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         {(connectionHint || connectingFrom) && <div className="graph-connection-hint" role="status">{connectionHint || '连接到目标节点上方的连接点；也可依次点击两个连接点。'}</div>}
         <ProxyGraphLegend />
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
+        {canvasMenu && createPopoverPortal(
+          <>
+            {canvasMenu.sheet && <div className="graph-context-menu-overlay is-sheet" onPointerDown={() => setCanvasMenu(null)} />}
+            <div
+              ref={graphMenuRef}
+              className={`graph-context-menu graph-canvas-menu${canvasMenu.sheet ? ' is-sheet' : ''}`}
+              role="menu"
+              aria-label="画布操作"
+              style={canvasMenu.sheet ? undefined : { left: canvasMenu.x, top: canvasMenu.y }}
+              onContextMenu={e => e.preventDefault()}
+              onPointerDown={e => e.stopPropagation()}
+            >
+              {canvasMenu.sheet && <div className="graph-context-menu-handle" aria-hidden="true" />}
+              <div className="graph-context-menu-title">在此处新建</div>
+              {proxyTools.filter(tool => tool.id !== 'transport' && tool.id !== 'family_split_template').map(tool => <button
+                key={tool.id}
+                type="button"
+                role="menuitem"
+                disabled={tool.id !== 'server' && tool.id !== 'imported' && !selected?.id}
+                onClick={() => runCanvasMenuTool(tool.id)}
+              ><ProxyToolIcon kind={tool.id} />{tool.label}</button>)}
+              <button type="button" role="menuitem" onClick={() => openNodePickerAt(canvasMenuPosition(canvasMenu.position, 280, 140))}><ServerIcon size={14} />其他服务器 / 已有节点</button>
+              <div className="graph-context-menu-separator" role="separator" />
+              <button type="button" role="menuitem" onClick={() => runCanvasMenuTool('transport')}><ProxyToolIcon kind="transport" />流量转发</button>
+              <button type="button" role="menuitem" onClick={() => runCanvasMenuTool('family_split_template')}><ProxyToolIcon kind="family_split_template" />双栈模板</button>
+              <div className="graph-context-menu-separator" role="separator" />
+              <button type="button" role="menuitem" disabled={!nodes.length} onClick={() => { setCanvasMenu(null); fitGraphToSafeArea() }}><Search size={14} />查看全图</button>
+              <button type="button" role="menuitem" disabled={!nodes.length || pendingGraphNodeIDs.length > 0} onClick={() => { setCanvasMenu(null); autoArrangeGraph() }}><Sliders size={14} />整理布局</button>
+              {canvasMenu.sheet && <button type="button" role="menuitem" className="graph-context-menu-cancel" onClick={() => setCanvasMenu(null)}>取消</button>}
+            </div>
+          </>,
+          document.body,
+        )}
         {graphMenu && createPopoverPortal(
           <>
             {graphMenu.sheet && <div className="graph-context-menu-overlay is-sheet" onPointerDown={dismissGraphMenu} />}
@@ -12429,6 +12540,9 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               {graphMenu.source === 'node' && relationTargetForEntity(graphMenu.entity, graphMenu.pathIDs) && <button type="button" role="menuitem" onClick={() => openRelatedPaths(graphMenu.entity, graphMenu.pathIDs)}><Workflow size={14} aria-hidden="true" />相关链路</button>}
               {graphMenuPrimaryLabel && <button type="button" role="menuitem" onClick={() => void openGraphMenuEntity()}>{graphMenu.entity.type === 'proxy-path-step' ? <ArrowLeftRight size={14} /> : <Edit3 size={14} />}{graphMenuPrimaryLabel}</button>}
               {graphMenu.entity.type === 'direct' && <button type="button" role="menuitem" onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
+              {graphMenu.source === 'node' && graphMenuServerID(graphMenu.entity) > 0 && <button type="button" role="menuitem" onClick={createEntryFromGraphMenu}><ProxyToolIcon kind="entry" />{graphMenu.entity.type === 'entry' ? '同服务器新建入口' : '在此服务器创建入口'}</button>}
+              {graphMenu.source === 'node' && graphMenu.entity.type === 'entry' && <button type="button" role="menuitem" onClick={addRoutingFromGraphMenu}><ProxyToolIcon kind="routing" />添加分流规则</button>}
+              {graphMenu.source === 'node' && graphMenu.entity.type === 'server' && <button type="button" role="menuitem" onClick={() => { setGraphMenu(null); openTrafficForwarding() }}><ProxyToolIcon kind="transport" />流量转发</button>}
               <button type="button" role="menuitem" className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphEntityRemoveLabel(graphMenu.entity, true)}</button>
               {graphMenu.sheet && <button type="button" role="menuitem" className="graph-context-menu-cancel" onClick={dismissGraphMenu}>取消</button>}
             </div>
@@ -12741,7 +12855,7 @@ function isProxyToolAction(value: string): value is ProxyToolAction {
   return proxyTools.some(x => x.id === value)
 }
 
-function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNodes, canAutoArrange, inspectorOpen, onToggle, onMoveStart, onAction, onShowServer, onAddImported, onShowImported, onInspectImported, onAutoArrange, onToggleInspector }: {
+function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNodes, canAutoArrange, inspectorOpen, nodePickerOpen, onNodePickerOpenChange: setNodePickerOpen, onToggle, onMoveStart, onAction, onShowServer, onAddImported, onShowImported, onInspectImported, onAutoArrange, onToggleInspector }: {
   collapsed: boolean
   dragging: boolean
   selected?: Server
@@ -12758,9 +12872,10 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
   onInspectImported: (node: ExternalOutbound) => void
   onAutoArrange: () => void
   onToggleInspector: () => void
+  nodePickerOpen: boolean
+  onNodePickerOpenChange: (open: boolean) => void
 }) {
   const availableServers = servers.filter(server => server.id !== selected?.id)
-  const [nodePickerOpen, setNodePickerOpen] = useState(false)
   const [nodeQuery, setNodeQuery] = useState('')
   const [nodeRegion, setNodeRegion] = useState('all')
   const [nodeTypeFilter, setNodeTypeFilter] = useState<'all' | 'server' | 'imported'>('all')

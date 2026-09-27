@@ -19440,6 +19440,30 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
 .graph-context-menu-handle {
   display: none;
 }
+.graph-context-menu button > svg:not([class]) {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.graph-context-menu button:disabled {
+  color: var(--muted);
+  background: transparent;
+  cursor: not-allowed;
+}
+.graph-context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+.graph-canvas-menu:not(.is-sheet) {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
 .graph-context-menu-cancel {
   margin-top: 4px;
   border-top: 1px solid var(--border) !important;

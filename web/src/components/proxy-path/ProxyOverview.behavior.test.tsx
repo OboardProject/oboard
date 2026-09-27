@@ -100,7 +100,28 @@ describe('ProxyOverview canvas behavior', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('keeps staged servers isolated and restores each A/B canvas on switching', async () => {
+  it('offers create actions from a right click on the empty canvas and on a server node', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener: () => undefined, removeEventListener: () => undefined }))
+    await render()
+    const contextMenu = (target: Record<string, unknown> = {}) => ({ clientX: 200, clientY: 160, preventDefault: () => undefined, stopPropagation: () => undefined, ...target }) as unknown as React.MouseEvent
+    await act(async () => flow.props.onPaneContextMenu!(contextMenu()))
+    expect(document.querySelector('[aria-label="画布操作"]')).toBeTruthy()
+    const before = nodes().length
+    const menuItem = (text: string) => Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="画布操作"] button')).find(item => item.textContent?.trim() === text)!
+    await act(async () => menuItem('直接出口').click())
+    expect(document.querySelector('[aria-label="画布操作"]')).toBeNull()
+    expect(nodes().length).toBe(before + 1)
+    await act(async () => flow.props.onPaneContextMenu!(contextMenu()))
+    await act(async () => menuItem('其他服务器 / 已有节点').click())
+    await act(async () => button('将 Server 3 放入画布').click())
+    expect(staged()).toHaveLength(1)
+    const server = nodes().find(node => node.id === 'server-1')!
+    await act(async () => flow.props.onNodeContextMenu!(contextMenu(), server))
+    expect(button('在此服务器创建入口')).toBeTruthy()
+    expect(request).not.toHaveBeenCalled()
+  })
+
+    it('keeps staged servers isolated and restores each A/B canvas on switching', async () => {
     await render(1)
     const a = await stage(3)
     const aPosition = { ...a.position }
