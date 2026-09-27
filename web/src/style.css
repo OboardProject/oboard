@@ -9754,12 +9754,20 @@ body:has(.dialog-layer) .main {
   .controller-update-install-progress span { transition: none; }
 }
 
+html:has(.controller-update-immersive-layer),
+body:has(.controller-update-immersive-layer) {
+  background: #0c0806;
+  color-scheme: dark;
+}
+
 .dialog-layer.controller-update-immersive-layer {
+  background: #0c0806;
+  color-scheme: dark;
   padding: 0;
 }
 
 .dialog-layer.controller-update-immersive-layer > .dialog-backdrop {
-  background: #05071a;
+  background: #0c0806;
   backdrop-filter: none;
 }
 
@@ -9778,7 +9786,7 @@ body:has(.dialog-layer) .main {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 42%, #321b0e 0%, #190e09 48%, #0c0806 100%);
+  background: #0c0806 radial-gradient(ellipse at 50% 42%, #29170b 0%, #150d08 40%, #0c0806 72%);
   isolation: isolate;
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useRef } from 'react'
 
 export type LightfieldMode = 'idle' | 'running' | 'success' | 'failed'
 
@@ -69,7 +69,7 @@ function spawnBeam(reach: number, orbRadius: number, random: () => number): Beam
 }
 
 type Palette = { core: string; mid: string; edge: string; glow: string }
-const ORB_CALM: Palette = { core: '#ffe6a3', mid: '#ff941f', edge: '#d7470b', glow: '255, 126, 24' }
+const ORB_CALM: Palette = { core: '#ffd477', mid: '#ff9b24', edge: '#ed610d', glow: '255, 126, 24' }
 const ORB_FAILED: Palette = { core: '#ffd0a3', mid: '#ef6135', edge: '#9e291c', glow: '242, 80, 36' }
 
 type Engine = { setMode: (mode: LightfieldMode) => void; setLifted: (lifted: boolean) => void; destroy: () => void }
@@ -204,63 +204,35 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
     g.clip()
     for (const [palette, weight] of [[ORB_CALM, 1], [ORB_FAILED, mix]] as const) {
       if (weight <= 0.01) continue
-      const body = g.createRadialGradient(cx - r * 0.25, cy - r * 0.35, r * 0.1, cx, cy, r)
+      const body = g.createRadialGradient(cx, cy, 0, cx, cy, r)
       body.addColorStop(0, palette.core)
-      body.addColorStop(0.55, palette.mid)
-      body.addColorStop(1, palette.edge)
+      body.addColorStop(0.6, palette.mid)
+      body.addColorStop(0.91, palette.edge)
+      body.addColorStop(0.97, `rgba(${palette.glow}, 0.7)`)
+      body.addColorStop(1, `rgba(${palette.glow}, 0)`)
       g.globalAlpha = weight
       g.fillStyle = body
       g.fillRect(cx - r, cy - r, r * 2, r * 2)
     }
     g.globalAlpha = 1
-    const flow = time / 8500
-    for (let i = 0; i < 3; i += 1) {
-      const phase = flow * (0.65 + i * 0.2) + i * 2.1
-      const hx = cx + Math.cos(phase) * r * 0.42
-      const hy = cy + Math.sin(phase * 1.2) * r * 0.45
-      const haze = g.createRadialGradient(hx, hy, 0, hx, hy, r * 0.8)
-      haze.addColorStop(0, `rgba(${i === 1 ? glowColor : '255, 224, 151'}, 0.24)`)
-      haze.addColorStop(1, `rgba(${glowColor}, 0)`)
-      g.fillStyle = haze
-      g.fillRect(cx - r, cy - r, r * 2, r * 2)
+    const flow = time / 6500
+    // Overlapping convection cells keep the surface fluid without latitude-like stripes.
+    for (let i = 0; i < 28; i += 1) {
+      const phase = i * 2.39996 + flow * (i % 2 ? 0.24 : -0.18)
+      const distance = r * (0.12 + (i % 9) * 0.075)
+      const hx = cx + Math.cos(phase) * distance
+      const hy = cy + Math.sin(phase + Math.sin(flow * 0.7 + i) * 0.16) * distance
+      const size = r * (0.16 + (i % 4) * 0.045)
+      const pulse = 0.5 + Math.sin(flow * 1.3 + i * 1.7) * 0.5
+      const color = i % 3 === 0 ? '184, 49, 3' : '255, 232, 145'
+      const cell = g.createRadialGradient(hx, hy, 0, hx, hy, size)
+      cell.addColorStop(0, `rgba(${color}, ${0.12 + pulse * 0.18 + energy * 0.035})`)
+      cell.addColorStop(0.45, `rgba(${color}, ${0.06 + pulse * 0.07})`)
+      cell.addColorStop(1, `rgba(${color}, 0)`)
+      g.fillStyle = cell
+      g.fillRect(hx - size, hy - size, size * 2, size * 2)
     }
 
-    g.save()
-    g.translate(cx, cy)
-    g.rotate(-0.45 + Math.sin(flow * 0.4) * 0.18)
-    for (let i = 0; i < 5; i += 1) {
-      const phase = flow + i * 0.9
-      const y = (i - 2) * r * 0.27 + Math.sin(phase) * r * 0.1
-      const bend = Math.sin(phase * 0.8) * r * 0.32
-      const ribbon = g.createLinearGradient(-r, y - r * 0.22, r * 0.7, y + r * 0.3)
-      ribbon.addColorStop(0, 'rgba(255, 171, 57, 0)')
-      ribbon.addColorStop(0.35, `rgba(255, 217, 129, ${0.14 + energy * 0.05})`)
-      ribbon.addColorStop(0.62, 'rgba(255, 241, 184, 0.32)')
-      ribbon.addColorStop(1, 'rgba(255, 131, 28, 0)')
-      g.fillStyle = ribbon
-      g.beginPath()
-      g.moveTo(-r * 1.1, y + r * 0.28)
-      g.bezierCurveTo(-r * 0.45, y - r * 0.58 + bend, r * 0.25, y + r * 0.52, r * 1.1, y - r * 0.25)
-      g.bezierCurveTo(r * 0.25, y + r * 0.28, -r * 0.45, y - r * 0.36 + bend, -r * 1.1, y + r * 0.28)
-      g.fill()
-    }
-    g.restore()
-
-    for (let i = 0; i < 18; i += 1) {
-      const phase = i * 2.39996 + flow * (i % 2 ? 0.3 : -0.22)
-      const distance = r * (0.18 + (i % 7) * 0.095)
-      const alpha = 0.16 + 0.24 * (0.5 + Math.sin(flow * 2 + i) * 0.5)
-      g.fillStyle = `rgba(255, 241, 196, ${alpha})`
-      g.beginPath()
-      g.arc(cx + Math.cos(phase) * distance, cy + Math.sin(phase) * distance * 0.8, r * (i % 4 === 0 ? 0.012 : 0.007), 0, Math.PI * 2)
-      g.fill()
-    }
-    const shade = g.createRadialGradient(cx - r * 0.16, cy - r * 0.22, r * 0.35, cx, cy, r)
-    shade.addColorStop(0, 'rgba(102, 29, 5, 0)')
-    shade.addColorStop(0.8, 'rgba(102, 29, 5, 0.04)')
-    shade.addColorStop(1, 'rgba(102, 29, 5, 0.24)')
-    g.fillStyle = shade
-    g.fillRect(cx - r, cy - r, r * 2, r * 2)
     g.restore()
   }
 
@@ -361,6 +333,20 @@ export function ControllerUpdateLightfield({ mode, reduceMotion, lifted = false,
   modeRef.current = mode
   const liftedRef = useRef(lifted)
   liftedRef.current = lifted
+
+  useLayoutEffect(() => {
+    const existing = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    const meta = existing ?? document.createElement('meta')
+    const previous = meta.getAttribute('content')
+    meta.name = 'theme-color'
+    meta.content = '#0c0806'
+    if (!existing) document.head.appendChild(meta)
+    return () => {
+      if (!existing) meta.remove()
+      else if (previous === null) meta.removeAttribute('content')
+      else meta.content = previous
+    }
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
