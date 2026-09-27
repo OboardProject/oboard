@@ -4700,6 +4700,29 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   </section>
 }
 
+function AgentFleetProgress({ status }: { status: AgentFleetUpdateStatus }) {
+  const segments = [
+    { key: 'current', label: '已完成', value: status.current },
+    { key: 'running', label: '更新中', value: status.running },
+    { key: 'pending', label: '待更新', value: status.pending },
+    { key: 'offline', label: '离线', value: status.offline },
+  ]
+  const total = segments.reduce((sum, item) => sum + Math.max(0, item.value || 0), 0)
+  const percent = total > 0 ? Math.round((status.current / total) * 100) : 0
+  return <div className="agent-fleet-progress">
+    <div className="agent-fleet-progress-head">
+      <span>目标构建 <strong title={status.target_build}>{status.target_build || '—'}</strong></span>
+      <span><strong>{status.current}</strong> / {total}（{percent}%）</span>
+    </div>
+    <div className="agent-fleet-progress-bar" role="progressbar" aria-label="Agent 版本同步进度" aria-valuemin={0} aria-valuemax={total} aria-valuenow={status.current}>
+      {total > 0 && segments.filter(item => item.value > 0).map(item => <span key={item.key} className={`is-${item.key}`} style={{ flexGrow: item.value }} title={`${item.label} ${item.value}`} />)}
+    </div>
+    <div className="agent-fleet-progress-legend">
+      {segments.map(item => <span key={item.key} className={`is-${item.key}`}><i />{item.label}<strong>{item.value}</strong></span>)}
+    </div>
+  </div>
+}
+
 function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdateSetting, working, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const [status, setStatus] = useState<AgentFleetUpdateStatus | null>(null)
   const [busy, setBusy] = useState('')
@@ -4731,13 +4754,7 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
   if (!status) return null
   return <section className="settings-card controller-update-card">
     <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.rolling && !status.paused ? '正在滚动更新全部已接入 Agent。' : status.message}</p></div>
-    <div className="controller-update-meta">
-      <span>目标构建<strong title={status.target_build}>{status.target_build || '—'}</strong></span>
-      <span>已是当前<strong>{status.current}</strong></span>
-      <span>滚动中<strong>{status.running}</strong></span>
-      <span>待更新<strong>{status.pending}</strong></span>
-      <span>离线<strong>{status.offline}</strong></span>
-    </div>
+    <AgentFleetProgress status={status} />
     {status.paused && <div className="controller-update-error" role="status">{status.pause_reason || 'Agent 滚动更新已暂停'}</div>}
     {updateSettings?.database_maintenance_hint && <div className="controller-update-warning">{String(updateSettings.database_maintenance_hint)}</div>}
     <div className="settings-actions controller-update-actions">

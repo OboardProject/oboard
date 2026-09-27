@@ -9221,6 +9221,21 @@ body:has(.dialog-layer) .main {
 }
 .controller-update-warning,
 .controller-update-error,
+.agent-fleet-progress { display: grid; gap: 10px; }
+.agent-fleet-progress-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; color: var(--muted); font-size: 12px; }
+.agent-fleet-progress-head strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.agent-fleet-progress-bar { display: flex; gap: 2px; height: 10px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
+.agent-fleet-progress-bar span { flex-basis: 0; min-width: 4px; transition: flex-grow 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.5); }
+.agent-fleet-progress-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 12px; }
+.agent-fleet-progress-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.agent-fleet-progress-legend i { width: 8px; height: 8px; border-radius: 50%; }
+.agent-fleet-progress-legend strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.agent-fleet-progress { --fleet-current: var(--success); --fleet-running: var(--primary); --fleet-pending: var(--warning); --fleet-offline: color-mix(in srgb, var(--muted) 45%, transparent); }
+.agent-fleet-progress .is-current { --fleet-color: var(--fleet-current); }
+.agent-fleet-progress .is-running { --fleet-color: var(--fleet-running); }
+.agent-fleet-progress .is-pending { --fleet-color: var(--fleet-pending); }
+.agent-fleet-progress .is-offline { --fleet-color: var(--fleet-offline); }
+.agent-fleet-progress-bar span, .agent-fleet-progress-legend i { background: var(--fleet-color); }
 .controller-update-pinned {
   display: flex;
   align-items: flex-start;
