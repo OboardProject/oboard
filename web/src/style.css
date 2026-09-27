@@ -9460,14 +9460,11 @@ body:has(.dialog-layer) .main {
 
 @media (max-width: 900px) {
   .controller-update-prompt {
-    position: relative;
-    top: auto;
-    left: auto;
-    right: auto;
-    width: calc(100% - 24px);
+    top: max(10px, env(safe-area-inset-top, 0px));
+    width: min(680px, calc(100vw - 24px));
     max-width: 100%;
     box-sizing: border-box;
-    margin: max(10px, env(safe-area-inset-top, 0px)) 12px 10px;
+    margin: 0 auto;
     min-height: 52px;
     grid-template-columns: auto minmax(0, 1fr) 36px auto;
     gap: 8px;
