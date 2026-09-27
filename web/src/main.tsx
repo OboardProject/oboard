@@ -19276,7 +19276,7 @@ function DNS({ data, client, load, notify, patchPageData }: any) {
     <DNSListSettings data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
     <Panel title="服务器 DNS">
       <div className="section-toolbar">
-        <div><h3>解析状态</h3><p className="muted">每台服务器使用一组加密解析服务和一组基础解析服务；测试只更新排序结果，应用才会下发配置。</p></div>
+        <div><h3>解析状态</h3></div>
         <div className="section-actions">
           <button type="button" className="ghost" onClick={() => setManagerStatus('all')}><Settings2 size={15} />管理服务器策略</button>
           <button type="button" className="ghost" onClick={() => setHistoryOpen(true)}><ClipboardList size={15} />测试记录</button>
