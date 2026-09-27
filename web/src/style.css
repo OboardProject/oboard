@@ -4948,15 +4948,6 @@ button.server-address-line.copied:hover {
   gap: 10px;
 }
 
-.proxy-path-focus-picker {
-  min-width: 0;
-  flex: 0 1 300px;
-  display: grid;
-  grid-template-columns: auto minmax(160px, 1fr);
-  align-items: center;
-  gap: 10px;
-}
-
 .proxy-path-entry-label {
   color: var(--muted);
   font-size: 11px;
@@ -4965,24 +4956,11 @@ button.server-address-line.copied:hover {
 }
 
 .graph-entry-select { width: 100%; }
-.graph-path-select { width: 100%; }
-.proxy-path-entry-picker .custom-select-trigger,
-.proxy-path-focus-picker .custom-select-trigger { min-height: 36px; }
+.proxy-path-entry-picker .custom-select-trigger { min-height: 36px; }
 .graph-entry-select .custom-select-value,
 .proxy-path-entry-picker .custom-select-value {
   overflow: visible;
 }
-.path-focus-option-label {
-  min-width: 0;
-  width: 100%;
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 7px;
-}
-.path-focus-option-label > svg { color: var(--primary); }
-.path-focus-option-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.path-focus-option-label > small { color: var(--muted); font-size: 9.5px; font-variant-numeric: tabular-nums; }
 .entry-server-option-label {
   min-width: 0;
   width: 100%;
@@ -5679,8 +5657,7 @@ button.server-address-line.copied:hover {
     flex-direction: column;
   }
   .proxy-path-view-switch { align-self: flex-start; }
-  .proxy-path-entry-picker,
-  .proxy-path-focus-picker { width: 100%; flex: 0 0 auto; }
+  .proxy-path-entry-picker { width: 100%; flex: 0 0 auto; }
   .proxy-editor-workspace,
   .proxy-editor-workspace.toolbox-collapsed,
   .proxy-editor-workspace.inspector-open {
@@ -5706,8 +5683,6 @@ button.server-address-line.copied:hover {
 @media (max-width: 520px) {
   .proxy-path-view-switch { width: 100%; }
   .proxy-path-view-switch button { flex: 1 1 0; }
-  .proxy-path-entry-picker,
-  .proxy-path-focus-picker { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .proxy-path-entry-picker {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
@@ -25025,8 +25000,7 @@ button.dns-policy-row-main:focus {
   .sub-assign-submit { min-height: 44px; }
 
   .automation-section-head > button { min-height: 44px; }
-  .proxy-path-entry-picker .custom-select-trigger,
-  .proxy-path-focus-picker .custom-select-trigger { min-height: 44px; }
+  .proxy-path-entry-picker .custom-select-trigger { min-height: 44px; }
 
   .transport-copy-modes button { min-height: 40px; }
   .exit-region-probe {

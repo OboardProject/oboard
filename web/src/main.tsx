@@ -12293,16 +12293,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   }
   const selectOptions = filteredEntryServers.map(server => ({ value: String(server.id), label: serverSelectLabel(server) }))
   const selectedServerLabel = selected ? serverSelectLabel(selected) : undefined
-  const pathFocusLabel = (path?: ProxyPath) => <span className="path-focus-option-label">
-    <Workflow size={13} aria-hidden="true" />
-    <span>{path ? (path.name || `路径 ${path.id}`) : '全部路径'}</span>
-    <small>{path ? `#${path.id}` : visibleProxyPaths.length}</small>
-  </span>
-  const pathFocusOptions = [
-    { value: '0', label: pathFocusLabel() },
-    ...visibleProxyPaths.map(path => ({ value: String(path.id), label: pathFocusLabel(path) })),
-  ]
-  const focusedPath = visibleProxyPaths.find(path => path.id === focusedPathID)
   const entryServerMenuHeader = <div className="entry-server-menu-tools">
     <label className="entry-server-search">
       <Search size={15} aria-hidden="true" />
@@ -12352,29 +12342,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               ariaLabel="选择当前入口服务器"
             />
           </div>
-		  {visibleProxyPaths.length > 0 && <div className="proxy-path-focus-picker">
-		    <span className="proxy-path-entry-label">路径聚焦</span>
-		    <CustomSelect
-		      className="graph-path-select"
-		      value={String(focusedPathID)}
-		      onChange={value => {
-            const path = visibleProxyPaths.find(item => item.id === Number(value))
-            if (path) {
-              setFocusedPathID(path.id)
-              setHoveredGraphFocus(undefined)
-              const pathNodes = flowInstance?.getNodes().filter(node => ((node.data?.pathIDs || []) as number[]).includes(path.id)) || []
-              if (pathNodes.length) void flowInstance?.fitView({ nodes: pathNodes, padding: 0.3, minZoom: 0.3, maxZoom: 1, duration: 240 })
-            } else {
-              setFocusedPathID(0)
-              setHoveredGraphFocus(undefined)
-              fitGraphToSafeArea()
-            }
-		      }}
-		      options={pathFocusOptions}
-		      selectedLabel={pathFocusLabel(focusedPath)}
-		      ariaLabel="聚焦一条代理路径"
-		    />
-		  </div>}
         </div>,
         topbarTarget,
       )}
