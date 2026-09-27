@@ -2487,6 +2487,25 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   border-radius: var(--radius-full);
   line-height: 1.2;
 }
+@media (max-width: 768px) {
+  .server-list-identity { gap: 8px; }
+  .server-list-name { font-size: 13.5px; font-weight: 700; }
+  .server-list-latency-btn {
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    height: 24px;
+    min-height: 24px;
+    padding: 2px 7px;
+    gap: 4px;
+  }
+  .server-list-latency-btn strong { font-size: 11px; }
+  .server-list-latency-btn .latency-status-badge {
+    font-size: 9.5px;
+    padding: 0 4px;
+    line-height: 14px;
+  }
+}
 
 .server-list-latency-btn.disabled {
   justify-content: center;
@@ -27078,6 +27097,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   padding: 18px;
   align-items: start;
 }
+@media (max-width: 620px) {
+  .settings-shell { padding: 12px; }
+}
 
 .settings-topbar, .settings-nav { min-width: 0; }
 .settings-topbar .settings-tabs {
@@ -29653,6 +29675,70 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   border-color: var(--border);
 }
 .return-latency-server-list { display: block; }
+@media (max-width: 860px) {
+  .return-latency-page .network-probe-header {
+    align-items: stretch;
+    gap: 12px;
+    border-bottom: 0;
+  }
+  .return-latency-page .network-probe-header .network-probe-tabs {
+    justify-content: flex-start;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  .return-latency-page .network-probe-header .return-latency-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-bottom: 0;
+  }
+  .return-latency-page .return-latency-toolbar > button:first-child { grid-column: 1 / -1; }
+  .return-latency-page .network-probe-table-scroll { overflow-x: visible; border: 0; }
+  .return-latency-page .network-probe-table { display: block; min-width: 0; }
+  .return-latency-page .network-probe-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .return-latency-page .network-probe-table tbody { display: grid; gap: 10px; }
+  .return-latency-page .network-probe-table :is(.probe-task-card, .return-latency-server) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-solid);
+  }
+  .return-latency-page .network-probe-table td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+  .return-latency-page .network-probe-table td:first-child {
+    grid-column: 1 / -1;
+    min-width: 0;
+    max-width: none;
+  }
+  .return-latency-page .network-probe-table td:last-child { grid-column: 1 / -1; }
+  .return-latency-page .network-probe-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .return-latency-page .network-probe-table :is(.probe-task-card-actions, .return-latency-row-actions) {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+    margin-top: 4px;
+  }
+}
 .probe-method-hint { margin: 8px 0 0; font-size: 12px; }
 .probe-preset-picker { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 0; }
 .probe-preset-picker > button {

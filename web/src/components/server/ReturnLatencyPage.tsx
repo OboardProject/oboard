@@ -210,10 +210,10 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
             const live = assigned.filter(server => online(server) && server.latency_probe_enabled).length
             return <tr key={task.id} className="probe-task-card">
               <td><strong>{task.name}</strong><span className="probe-task-target">{task.address ? `${task.address}${task.method === 'tcp' ? `:${task.port}` : ''}` : targetLabel(task.province, task.carrier)}</span></td>
-              <td><span className="probe-task-badge">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'}</span></td>
-              <td>{formatInterval(task.interval_seconds)}</td>
-              <td title={assigned.map(server => server.name).join('、')}>{assigned.length} 台<small className="muted">{live} 台可执行</small></td>
-              <td><span className={`probe-task-badge${task.enabled ? ' is-on' : ''}`}>{task.enabled ? assigned.length ? '已启用' : '待分配' : '已停用'}</span></td>
+              <td data-label="方式"><span className="probe-task-badge">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'}</span></td>
+              <td data-label="间隔">{formatInterval(task.interval_seconds)}</td>
+              <td data-label="执行节点" title={assigned.map(server => server.name).join('、')}>{assigned.length} 台<small className="muted">{live} 台可执行</small></td>
+              <td data-label="任务状态"><span className={`probe-task-badge${task.enabled ? ' is-on' : ''}`}>{task.enabled ? assigned.length ? '已启用' : '待分配' : '已停用'}</span></td>
               <td><div className="probe-task-card-actions">
                 <button type="button" className="ghost" aria-label={`编辑 ${task.name}`} disabled={!canManage || busy} onClick={() => setEditing({ open: true, task })}><Pencil size={14} aria-hidden="true" />编辑</button>
                 <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => toggleTask(task)}>{task.enabled ? '停用' : '启用'}</button>
@@ -251,10 +251,10 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
                   <strong>{server.name}</strong>
                 </div>
               </td>
-              <td><span className={`probe-server-status ${online(server) ? 'online' : server.agent_id ? 'offline' : 'unregistered'}`}>{online(server) ? '在线' : server.agent_id ? '离线' : '未接入'}</span></td>
-              <td>{!online(server) ? '—' : !server.latency_probe_enabled ? '未启用' : server.connectivity_status === 'available' ? `${server.connectivity_latency_ms ?? 0} ms` : server.connectivity_status === 'unavailable' ? '不可达' : '等待结果'}</td>
-              <td>{taskCountByServer.get(server.id) || 0} 个</td>
-              <td>{server.latency_probe_enabled ? '已启用' : '已关闭'}</td>
+              <td data-label="连接状态"><span className={`probe-server-status ${online(server) ? 'online' : server.agent_id ? 'offline' : 'unregistered'}`}>{online(server) ? '在线' : server.agent_id ? '离线' : '未接入'}</span></td>
+              <td data-label="公网探测">{!online(server) ? '—' : !server.latency_probe_enabled ? '未启用' : server.connectivity_status === 'available' ? `${server.connectivity_latency_ms ?? 0} ms` : server.connectivity_status === 'unavailable' ? '不可达' : '等待结果'}</td>
+              <td data-label="任务">{taskCountByServer.get(server.id) || 0} 个</td>
+              <td data-label="自动探测">{server.latency_probe_enabled ? '已启用' : '已关闭'}</td>
               <td><div className="return-latency-row-actions">
                 <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => setSettingsServer(server)}><Settings2 size={14} aria-hidden="true" />探测参数</button>
                 <button type="button" className="ghost" disabled={!canManage || busy || !online(server) || !server.latency_probe_enabled} onClick={() => probeNow(server)}><Activity size={14} aria-hidden="true" />立即探测</button>
@@ -292,4 +292,3 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     {historyServer && renderHistory(historyServer, () => setHistoryID(null))}
   </section>
 }
-
