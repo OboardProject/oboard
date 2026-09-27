@@ -72,9 +72,19 @@ type Palette = { core: string; mid: string; edge: string; glow: string }
 const ORB_CALM: Palette = { core: '#f6f7ff', mid: '#d6ddff', edge: '#8e9cff', glow: '150, 168, 255' }
 const ORB_FAILED: Palette = { core: '#fff3f1', mid: '#f4c8c8', edge: '#d9737c', glow: '232, 120, 132' }
 
-type Engine = { setMode: (mode: LightfieldMode) => void; destroy: () => void }
+type Engine = { setMode: (mode: LightfieldMode) => void; setLifted: (lifted: boolean) => void; destroy: () => void }
 
-function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial: LightfieldMode): Engine | null {
+// Orb anchor and size mirror the CSS that places the status dock under it
+// (--lf-anchor, --lf-orb): keep both sides in sync.
+const ANCHOR_REST = 0.42
+const ANCHOR_LIFTED = 0.2
+const ORB_LIFTED_SCALE = 0.62
+
+export function lightfieldOrbRadius(width: number, height: number): number {
+  return Math.max(44, Math.min(108, Math.min(width, height) * 0.11))
+}
+
+function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial: LightfieldMode, initialLifted: boolean): Engine | null {
   let ctx: CanvasRenderingContext2D | null = null
   try { ctx = canvas.getContext('2d') } catch { ctx = null }
   if (!ctx) return null
@@ -90,13 +100,19 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
   let flash = 0
   let failedMix = initial === 'failed' ? 1 : 0
   let mode: LightfieldMode = initial
+  let lift = initialLifted ? 1 : 0
+  let liftTarget = lift
   const beams: Beam[] = []
   const start = performance.now()
   const idleRamp = lightfieldRamp('success')
   let density: Channel = { from: 0, start, ...idleRamp.density, to: 0 }
   let speed: Channel = { from: 0.05, start, ...idleRamp.speed, to: 0.05 }
 
+  let clientWidth = -1
+  let clientHeight = -1
   const resize = () => {
+    clientWidth = canvas.clientWidth
+    clientHeight = canvas.clientHeight
     const rect = canvas.getBoundingClientRect()
     dpr = Math.min(2, window.devicePixelRatio || 1)
     width = Math.max(1, rect.width)
@@ -116,6 +132,14 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
     speed = { from: channelValue(speed, now), start: now, ...ramp.speed }
     if (next === 'success' && previous === 'running') flash = 1
     if (reduceMotion) draw(now, 0)
+  }
+
+  const setLifted = (lifted: boolean) => {
+    liftTarget = lifted ? 1 : 0
+    if (reduceMotion) {
+      lift = liftTarget
+      draw(performance.now(), 0)
+    }
   }
 
   const drawBeams = (cx: number, cy: number, orbRadius: number, reach: number, stretch: number) => {
@@ -162,12 +186,13 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
     const r = radius * (1 + breathe + absorb * 0.05 + flash * 0.08)
     const mix = failedMix
     const glowColor = mix > 0.5 ? ORB_FAILED.glow : ORB_CALM.glow
-    const halo = g.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * (2.4 + energy * 0.9 + flash * 1.2))
-    halo.addColorStop(0, `rgba(${glowColor}, ${0.42 + energy * 0.28 + flash * 0.3})`)
+    const halo = g.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * (1.9 + energy * 0.7 + flash * 1.1))
+    halo.addColorStop(0, `rgba(${glowColor}, ${0.3 + energy * 0.2 + flash * 0.3})`)
+    halo.addColorStop(0.45, `rgba(${glowColor}, ${0.08 + energy * 0.07 + flash * 0.1})`)
     halo.addColorStop(1, `rgba(${glowColor}, 0)`)
     g.fillStyle = halo
     g.beginPath()
-    g.arc(cx, cy, r * (2.4 + energy * 0.9 + flash * 1.2), 0, Math.PI * 2)
+    g.arc(cx, cy, r * (1.9 + energy * 0.7 + flash * 1.1), 0, Math.PI * 2)
     g.fill()
 
     g.save()
@@ -214,8 +239,9 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
     const d = channelValue(density, now)
     const s = channelValue(speed, now)
     const cx = width / 2
-    const cy = height * 0.44
-    const orbRadius = Math.min(width, height) * 0.15
+    if (!reduceMotion) lift += (liftTarget - lift) * Math.min(1, dt * 7)
+    const cy = height * (ANCHOR_REST + (ANCHOR_LIFTED - ANCHOR_REST) * lift)
+    const orbRadius = lightfieldOrbRadius(width, height) * (1 + (ORB_LIFTED_SCALE - 1) * lift)
     const reach = Math.hypot(Math.max(cx, width - cx), Math.max(cy, height - cy))
 
     if (reduceMotion) {
@@ -229,8 +255,10 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
         }
       }
     } else {
-      spawnCarry += dt * (d > 0.002 ? MIN_SPAWN + (MAX_SPAWN - MIN_SPAWN) * d : 0)
-      while (spawnCarry >= 1 && beams.length < MAX_BEAMS) {
+      // A full-window field needs more beams than a small stage to look as dense.
+      const areaScale = Math.max(1, Math.min(2.4, reach / 360))
+      spawnCarry += dt * (d > 0.002 ? MIN_SPAWN + (MAX_SPAWN - MIN_SPAWN) * d * areaScale : 0)
+      while (spawnCarry >= 1 && beams.length < MAX_BEAMS * areaScale) {
         spawnCarry -= 1
         beams.push(spawnBeam(reach, orbRadius, random))
       }
@@ -261,6 +289,7 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
   }
 
   const loop = (now: number) => {
+    if (canvas.clientWidth !== clientWidth || canvas.clientHeight !== clientHeight) resize()
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000))
     last = now
     draw(now, dt)
@@ -276,6 +305,7 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
 
   return {
     setMode,
+    setLifted,
     destroy() {
       observer?.disconnect()
       if (frame) window.cancelAnimationFrame(frame)
@@ -295,16 +325,18 @@ function mulberry(seed: number) {
   }
 }
 
-export function ControllerUpdateLightfield({ mode, reduceMotion, children }: { mode: LightfieldMode; reduceMotion?: boolean; children?: React.ReactNode }) {
+export function ControllerUpdateLightfield({ mode, reduceMotion, lifted = false, children }: { mode: LightfieldMode; reduceMotion?: boolean; lifted?: boolean; children?: React.ReactNode }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const engineRef = useRef<Engine | null>(null)
   const modeRef = useRef(mode)
   modeRef.current = mode
+  const liftedRef = useRef(lifted)
+  liftedRef.current = lifted
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const engine = createEngine(canvas, Boolean(reduceMotion), modeRef.current)
+    const engine = createEngine(canvas, Boolean(reduceMotion), modeRef.current, liftedRef.current)
     engineRef.current = engine
     return () => {
       engine?.destroy()
@@ -313,8 +345,9 @@ export function ControllerUpdateLightfield({ mode, reduceMotion, children }: { m
   }, [reduceMotion])
 
   useEffect(() => { engineRef.current?.setMode(mode) }, [mode])
+  useEffect(() => { engineRef.current?.setLifted(lifted) }, [lifted])
 
-  return <div className={`controller-update-lightfield ${mode}`}>
+  return <div className={`controller-update-lightfield ${mode}${lifted ? ' lifted' : ''}`}>
     <canvas ref={canvasRef} aria-hidden="true" />
     {children}
   </div>

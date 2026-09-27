@@ -19,7 +19,7 @@ import { useMobileNavigation } from './hooks/use-mobile-navigation'
 const ReturnLatencyPage = lazySurface(() => import('./components/server/ReturnLatencyPage').then(module => ({ default: module.ReturnLatencyPage })))
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createPopoverPortal } from './components/ui/modal-layer'
+import { createPopoverPortal, ModalSurface } from './components/ui/modal-layer'
 import { createRoot } from 'react-dom/client'
 import {
   type ThemeName,
@@ -4836,28 +4836,33 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const animationMode = controllerUpdateAnimationMode(phase)
   const statusTone = animationMode === 'success' ? 'success' : animationMode === 'failed' ? 'failed' : phase === 'cancelled' ? 'muted' : 'running'
   const statusLine = controllerUpdateStatusLine({ phase, connectionInterrupted, downloadPercent, backupPercent: backupShown, targetVersion, failure: failure ? localizeErrorMessage(failure) : '' })
-  return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog" surfaceMotion={phase === 'confirm' ? 'compact' : 'form'}>
+  if (phase === 'confirm') return <MotionDialogPanel onCancel={onCancel} className="controller-update-install-dialog" surfaceMotion="compact">
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
-      {phase === 'confirm' && <>
-        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先检查并下载更新，默认跳过备份后安装新版本并重新启动主控。主控更新成功后，Agent 版本同步会在后台滚动进行。</p></div></div>
-        <div className="controller-update-install-notice"><strong>更新期间暂时无法访问面板是正常现象</strong><span>主控停止和重新启动期间，连接可能短暂中断，刷新时也可能看到 502 或“页面暂时无法访问”的提示。这不代表更新失败。</span></div>
-        <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。没有其他可用备份时，建议选择备份并更新。</p>
-      </>}
-      {phase !== 'confirm' && <>
-        <ControllerUpdateLightfield mode={animationMode} reduceMotion={Boolean(reduceMotion)}>
-          <button type="button" className={`controller-update-lightfield-status ${statusTone}`} aria-expanded={detailsOpen} aria-controls={detailsId} title={detailsOpen ? '收起详情' : '查看详情和日志'} onClick={() => setDetailsOpen(open => !open)}>
-            <span className="controller-update-lightfield-dot" aria-hidden="true" />
-            <span className="controller-update-lightfield-text" aria-live="polite">{statusLine}</span>
-            <ChevronDown size={14} aria-hidden="true" className={detailsOpen ? 'open' : ''} />
-          </button>
-        </ControllerUpdateLightfield>
+      <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先检查并下载更新，默认跳过备份后安装新版本并重新启动主控。主控更新成功后，Agent 版本同步会在后台滚动进行。</p></div></div>
+      <div className="controller-update-install-notice"><strong>更新期间暂时无法访问面板是正常现象</strong><span>主控停止和重新启动期间，连接可能短暂中断，刷新时也可能看到 502 或“页面暂时无法访问”的提示。这不代表更新失败。</span></div>
+      <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。没有其他可用备份时，建议选择备份并更新。</p>
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></footer>
+  </MotionDialogPanel>
+  return <ModalSurface onClose={waiting ? onHide : onCancel} rootClassName="controller-update-immersive-layer" panelClassName="controller-update-immersive" ariaLabel={title}>
+    <ControllerUpdateLightfield mode={animationMode} reduceMotion={Boolean(reduceMotion)} lifted={detailsOpen}>
+      <header className="controller-update-immersive-head">
+        <div><h2>{title}</h2><p>{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>
+        {!waiting && <button type="button" className="controller-update-immersive-close" onClick={onCancel} aria-label="关闭" title="关闭"><X size={18} /></button>}
+      </header>
+      <div className="controller-update-immersive-dock">
+        <button type="button" className={`controller-update-lightfield-status ${statusTone}`} aria-expanded={detailsOpen} aria-controls={detailsId} title={detailsOpen ? '收起详情' : '查看详情、日志和操作'} onClick={() => setDetailsOpen(open => !open)}>
+          <span className="controller-update-lightfield-dot" aria-hidden="true" />
+          <span className="controller-update-lightfield-text" aria-live="polite">{statusLine}</span>
+          <ChevronDown size={14} aria-hidden="true" className={detailsOpen ? 'open' : ''} />
+        </button>
         <AnimatePresence initial={false}>{detailsOpen && <m.div
           id={detailsId}
           className="controller-update-details"
-          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
-          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
+          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.98 }}
           transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className="controller-update-details-inner">
@@ -4885,19 +4890,18 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
             {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
             {diagnosticsSection}
           </div>
+          <footer className="controller-update-details-actions">
+            {waiting && <>{onForceFinish && <button type="button" className="ghost danger-text" onClick={onForceFinish} disabled={Boolean(forceFinishing)}><X size={14} aria-hidden="true" />{forceFinishing ? '正在强制结束...' : '强制结束任务'}</button>}{canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}><X size={14} aria-hidden="true" />{cancelling ? '正在中断...' : '中断更新'}</button>}<button type="button" className="ghost" onClick={onHide}>在后台继续</button></>}
+            {phase === 'cancelled' && <button type="button" onClick={onCancel}>关闭</button>}
+            {phase === 'stopped' && <button type="button" onClick={onCancel}>关闭</button>}
+            {phase === 'force_finished' && <button type="button" onClick={onCancel}>关闭</button>}
+            {phase === 'complete' && <button type="button" onClick={onReload}>重新加载面板</button>}
+            {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
+          </footer>
         </m.div>}</AnimatePresence>
-      </>}
-    </div>
-    <footer className="dialog-actions">
-      {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></>}
-      {waiting && <>{onForceFinish && <button type="button" className="ghost danger-text" onClick={onForceFinish} disabled={Boolean(forceFinishing)}><X size={14} aria-hidden="true" />{forceFinishing ? '正在强制结束...' : '强制结束任务'}</button>}{canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}><X size={14} aria-hidden="true" />{cancelling ? '正在中断...' : '中断更新'}</button>}<button type="button" className="ghost" onClick={onHide}>在后台继续</button></>}
-      {phase === 'cancelled' && <button type="button" onClick={onCancel}>关闭</button>}
-      {phase === 'stopped' && <button type="button" onClick={onCancel}>关闭</button>}
-      {phase === 'force_finished' && <button type="button" onClick={onCancel}>关闭</button>}
-      {phase === 'complete' && <button type="button" onClick={onReload}>重新加载面板</button>}
-      {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
-    </footer>
-  </MotionDialogPanel>
+      </div>
+    </ControllerUpdateLightfield>
+  </ModalSurface>
 }
 
 function StorageDiagnosticsCard({ settings }: { settings?: any }) {

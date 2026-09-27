@@ -9751,15 +9751,37 @@ body:has(.dialog-layer) .main {
   .controller-update-install-progress span { transition: none; }
 }
 
+.dialog-layer.controller-update-immersive-layer {
+  padding: 0;
+}
+
+.dialog-layer.controller-update-immersive-layer > .dialog-backdrop {
+  background: #05071a;
+  backdrop-filter: none;
+}
+
+.dialog-layer .dialog-panel.controller-update-immersive {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border-radius: 0;
+  color: #eef1ff;
+  outline: none;
+}
+
 .controller-update-lightfield {
-  position: relative;
-  height: 272px;
+  --lf-anchor: 42%;
+  --lf-orb: clamp(44px, 11vmin, 108px);
+  position: absolute;
+  inset: 0;
   overflow: hidden;
-  border-radius: var(--radius-lg);
-  background:
-    radial-gradient(120% 90% at 50% 44%, #141a44 0%, #0a0e2a 48%, #05071a 100%);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 -40px 60px -30px rgba(0, 0, 0, 0.55);
+  background: radial-gradient(120% 90% at 50% 42%, #141a44 0%, #0a0e2a 48%, #05071a 100%);
   isolation: isolate;
+}
+
+.controller-update-lightfield.lifted {
+  --lf-anchor: 20%;
+  --lf-orb: calc(clamp(44px, 11vmin, 108px) * 0.62);
 }
 
 .controller-update-lightfield canvas {
@@ -9770,12 +9792,78 @@ body:has(.dialog-layer) .main {
   display: block;
 }
 
-.controller-update-lightfield-status {
+.controller-update-immersive-head {
   position: absolute;
-  left: 50%;
-  bottom: 16px;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 1;
-  max-width: calc(100% - 32px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: max(20px, env(safe-area-inset-top)) 24px 0;
+  pointer-events: none;
+}
+
+.controller-update-immersive-head > * { pointer-events: auto; }
+
+.controller-update-immersive-head h2 {
+  margin: 0;
+  color: #f4f6ff;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.controller-update-immersive-head p {
+  margin: 2px 0 0;
+  color: rgba(222, 228, 255, 0.62);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.dialog-panel .controller-update-immersive-close {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-full);
+  background: rgba(12, 16, 44, 0.46);
+  color: #eef1ff;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: background var(--duration-menu) var(--ease-standard), transform var(--duration-menu) cubic-bezier(0.175, 0.885, 0.32, 1.5);
+}
+
+.dialog-panel .controller-update-immersive-close:hover { background: rgba(24, 30, 72, 0.6); }
+.dialog-panel .controller-update-immersive-close:active { transform: scale(0.97) translateY(1px); }
+
+.controller-update-immersive-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--lf-anchor) + var(--lf-orb) + 36px);
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  pointer-events: none;
+  transition: top 320ms var(--ease-standard);
+}
+
+.controller-update-immersive-dock > * { pointer-events: auto; }
+
+.dialog-panel .controller-update-lightfield-status {
+  flex: 0 0 auto;
+  max-width: min(560px, 100%);
   min-height: 34px;
   display: inline-flex;
   align-items: center;
@@ -9790,18 +9878,17 @@ body:has(.dialog-layer) .main {
   line-height: 1.3;
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
-  transform: translateX(-50%);
   cursor: pointer;
   transition: background var(--duration-menu) var(--ease-standard), border-color var(--duration-menu) var(--ease-standard), transform var(--duration-menu) cubic-bezier(0.175, 0.885, 0.32, 1.5);
 }
 
-.controller-update-lightfield-status:hover {
+.dialog-panel .controller-update-lightfield-status:hover {
   background: rgba(24, 30, 72, 0.6);
   border-color: rgba(255, 255, 255, 0.24);
 }
 
-.controller-update-lightfield-status:active {
-  transform: translateX(-50%) scale(0.97) translateY(1px);
+.dialog-panel .controller-update-lightfield-status:active {
+  transform: scale(0.97) translateY(1px);
 }
 
 .controller-update-lightfield-status:focus-visible {
@@ -9865,13 +9952,40 @@ body:has(.dialog-layer) .main {
 }
 
 .controller-update-details {
+  width: min(600px, 100%);
+  min-height: 0;
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-solid) 92%, transparent);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  transform-origin: top center;
 }
 
 .controller-update-details-inner {
+  min-height: 0;
   display: grid;
+  align-content: start;
   gap: 12px;
-  padding-top: 2px;
+  padding: 14px 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.controller-update-details-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -9880,9 +9994,14 @@ body:has(.dialog-layer) .main {
   .controller-update-lightfield-status > svg { transition: none; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .controller-update-immersive-dock { transition: none; }
+}
+
 @media (max-width: 640px) {
-  .controller-update-lightfield { height: 228px; }
-  .controller-update-lightfield-status { font-size: 12px; bottom: 12px; }
+  .controller-update-immersive-head { padding: max(14px, env(safe-area-inset-top)) 16px 0; }
+  .dialog-panel .controller-update-lightfield-status { font-size: 12px; }
+  .controller-update-details-actions > button { flex: 1 1 auto; }
 }
 
 .controller-update-install-result.success > svg {
