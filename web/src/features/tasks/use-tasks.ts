@@ -9,9 +9,7 @@ export function useTasks(tasks: Task[] | undefined, client: APIClient) {
   const [rows, setRows] = useState<Task[]>(tasks || [])
   const [category, setCategory] = useState<TaskCategory>('deployment')
   const [manualRefreshing, setManualRefreshing] = useState(false)
-  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
-  const [refreshFailed, setRefreshFailed] = useState(false)
   const requestInFlightRef = useRef(false)
   const mountedRef = useRef(false)
   const hasActiveTasks = useMemo(() => rows.some(task => ['pending', 'running'].includes(String(task.status || ''))), [rows])
@@ -28,21 +26,17 @@ export function useTasks(tasks: Task[] | undefined, client: APIClient) {
     if (mode === 'background' && requestInFlightRef.current) return
     requestInFlightRef.current = true
     if (mode === 'manual') setManualRefreshing(true)
-    else setBackgroundRefreshing(true)
     try {
       const nextRows = await fetchTasks(client)
       if (!mountedRef.current) return
       setRows(nextRows)
       setLastRefreshedAt(new Date())
-      setRefreshFailed(false)
     } catch (error) {
-      if (mountedRef.current) setRefreshFailed(true)
       console.warn('Task refresh failed:', error)
     } finally {
       requestInFlightRef.current = false
       if (mountedRef.current) {
         if (mode === 'manual') setManualRefreshing(false)
-        else setBackgroundRefreshing(false)
       }
     }
   }, [client])
@@ -76,5 +70,5 @@ export function useTasks(tasks: Task[] | undefined, client: APIClient) {
     }
   }, [loadTasks])
 
-  return { rows, category, setCategory, manualRefreshing, backgroundRefreshing, lastRefreshedAt, refreshFailed, hasActiveTasks }
+  return { rows, category, setCategory, manualRefreshing, lastRefreshedAt }
 }

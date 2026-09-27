@@ -16,20 +16,9 @@ type TaskData = { servers?: TaskServer[] }
 
 export function Tasks({ tasks, servers, client, loading: pageLoading }: TasksProps) {
   const data = { servers }
-  const { rows, category, setCategory, manualRefreshing, backgroundRefreshing, lastRefreshedAt, refreshFailed, hasActiveTasks } = useTasks(tasks, client)
+  const { rows, category, setCategory, manualRefreshing, lastRefreshedAt } = useTasks(tasks, client)
   const busy = manualRefreshing || pageLoading
-  const refreshing = manualRefreshing || backgroundRefreshing
-  const refreshedTime = lastRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-  return <Panel title="任务与部署">
-    <div className="section-toolbar">
-      <div className="section-actions">
-        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : 'is-active'}`} title={hasActiveTasks ? '每 3 秒更新' : '每 15 秒更新'}>
-          <span className="live-refresh-dot" aria-hidden="true" />
-          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : '自动更新'}</span>
-          {refreshedTime ? <time dateTime={lastRefreshedAt?.toISOString()}>更新于 {refreshedTime}</time> : null}
-        </div>
-      </div>
-    </div>
+  return <Panel>
     <DeploymentTaskOverview rows={rows} data={data} />
     <TaskOperationHistory client={client} refreshedAt={lastRefreshedAt} data={data} />
     <div className="task-category-filter" role="group" aria-label="任务分类">
@@ -100,7 +89,7 @@ function DeploymentTaskOverview({ rows, data }: { rows: Task[]; data: TaskData }
   const succeeded = count('succeeded')
   const attention = servers.filter(item => item.status !== 'succeeded')
   return <section className="task-deployment-overview" aria-label="最新部署状态">
-    <div><h3>最新部署状态</h3><p className="muted">按当前已加载记录中，各服务器最新配置版本汇总；执行成功不代表实时在线。</p></div>
+    <h3>最新部署状态</h3>
     <SegmentedProgress
       label="最新部署进度"
       done={succeeded}
