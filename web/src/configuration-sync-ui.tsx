@@ -115,7 +115,7 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
         <Info size={15} aria-hidden="true" />
         <span>需要处理</span>
       </button>
-      <Dialog isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} title="需要处理" size="lg" className="configuration-sync-dialog">
+      <Dialog isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} title="需要处理" size="sm" className="configuration-sync-dialog dialog-host-compact">
         <div className="configuration-sync-dialog-body">
           <p>当前没有需要处理的配置同步问题。</p>
           {rows.length === 0 && <p className="muted">尚无配置同步记录，这不代表所有服务均已验证可用。</p>}

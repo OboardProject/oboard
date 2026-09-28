@@ -33,12 +33,26 @@ describe('ConfigurationSyncStatus', () => {
     expect(container.querySelector('[aria-live]')).toBeNull()
   })
 
+  it('opens the empty task state as a compact dialog on phones', () => {
+    const navigate = vi.fn()
+    act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'synced' }]} onNavigate={navigate} />))
+    act(() => container.querySelector('button')?.click())
+
+    const dialog = document.body.querySelector('.configuration-sync-dialog')
+    expect(dialog?.classList.contains('dialog-host-compact')).toBe(true)
+    expect(dialog?.closest('.dialog-layer')?.getAttribute('data-surface-kind')).toBe('compact')
+    expect(dialog?.textContent).toContain('当前没有需要处理的配置同步问题。')
+    act(() => (Array.from(dialog?.querySelectorAll('button') || []).find(button => button.textContent === '查看任务') as HTMLButtonElement).click())
+    expect(navigate).toHaveBeenCalledWith('tasks')
+  })
+
   it('renders only failed retry action and clears it after the failed state is reconciled', () => {
     const retry = vi.fn()
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'failed', error: 'prepare failed' }, { server_id: 2, state: 'synced' }]} onRetry={retry} />))
     const button = container.querySelector('button') as HTMLButtonElement | null
     expect(button?.textContent).toContain('需要处理 · 1')
     act(() => button?.click())
+    expect(document.body.querySelector('.configuration-sync-dialog')?.classList.contains('dialog-host-compact')).toBe(false)
     const retryButton = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent?.includes('重新尝试 1 个同步任务'))
     act(() => retryButton?.click())
     expect(retry).toHaveBeenCalledTimes(1)
