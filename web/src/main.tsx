@@ -2520,7 +2520,7 @@ export function App() {
 
   if (restoringSession) return <PortalLoader loading={false} />
 
-  if (!token) return <Login theme={theme} onThemeChange={changeTheme} initialError={restoreError} onToken={(v, user, csrfToken) => {
+  if (!token) return <><TopToast toast={toast} onClose={id => setToast(current => current?.id === id ? null : current)} /><Login theme={theme} onThemeChange={changeTheme} initialError={restoreError} onToast={(message, kind) => showToast(setToast, message, kind)} onToken={(v, user, csrfToken) => {
     clearLatencyWindowCache()
     advanceSession()
     activeTokenRef.current = v
@@ -2538,7 +2538,7 @@ export function App() {
     setToast(null)
     setShowPortalLoader(true)
     setToken(v)
-  }} />
+  }} /></>
 
   const tabTitles: { [key: string]: string } = {
     dashboard: '总览',
@@ -2748,7 +2748,7 @@ export function App() {
   )
 }
 
-function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePreference; onThemeChange: (theme: ThemePreference, origin: ThemeOrigin) => void; initialError?: string; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
+function Login({ theme, onThemeChange, initialError, onToast, onToken }: { theme: ThemePreference; onThemeChange: (theme: ThemePreference, origin: ThemeOrigin) => void; initialError?: string; onToast: (message: string, kind: ToastKind) => void; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
@@ -2846,7 +2846,9 @@ function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePr
       onToken('cookie', result.user, result.csrf_token)
     } catch (e: any) {
       const name = String(e?.name || '')
-      setError(name === 'NotAllowedError' ? '未完成通行密钥验证' : localizeErrorMessage(e?.message || e))
+      const message = name === 'NotAllowedError' ? '未完成通行密钥验证' : localizeErrorMessage(e?.message || e)
+      if (message === '未完成通行密钥验证') onToast(message, 'warning')
+      else setError(message)
     } finally {
       setIsLoading(false)
     }
@@ -2942,7 +2944,7 @@ $ _`}</pre>
         >
           <div className="login-panel-kicker">{loginStep === 'totp' ? '双重认证' : registerMode ? '注册' : '登录'}</div>
           <h2>{loginStep === 'totp' ? '确认是你本人' : registerMode ? '创建账号' : '欢迎回来'}</h2>
-          <p className="login-panel-desc">{loginStep === 'totp' ? '输入认证器中的六位验证码，也可以使用一枚恢复码。' : registerMode ? '注册后需管理员分配访问权限。' : '请输入账号信息以访问控制台。'}</p>
+          {(loginStep === 'totp' || registerMode) && <p className="login-panel-desc">{loginStep === 'totp' ? '输入认证器中的六位验证码，也可以使用一枚恢复码。' : '注册后需管理员分配访问权限。'}</p>}
 
           <form className="login-form-hyvps" onSubmit={registerMode ? handleRegister : handleSubmit}>
             {loginStep === 'password' ? <><label className="login-field">
