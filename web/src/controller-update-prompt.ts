@@ -4,7 +4,6 @@ export const CONTROLLER_UPDATE_PROMPT_AUTO_DISMISS_MS = 10_000
 
 export function useControllerUpdatePromptAutoDismiss(
   visible: boolean,
-  autoUpdateEnabled: boolean,
   dialogOpen: boolean,
   onDismiss: () => void,
 ) {
@@ -12,8 +11,8 @@ export function useControllerUpdatePromptAutoDismiss(
   onDismissRef.current = onDismiss
 
   useEffect(() => {
-    if (!visible || !autoUpdateEnabled || dialogOpen) return
+    if (!visible || dialogOpen) return
     const timer = window.setTimeout(() => onDismissRef.current(), CONTROLLER_UPDATE_PROMPT_AUTO_DISMISS_MS)
     return () => window.clearTimeout(timer)
-  }, [visible, autoUpdateEnabled, dialogOpen])
+  }, [visible, dialogOpen])
 }

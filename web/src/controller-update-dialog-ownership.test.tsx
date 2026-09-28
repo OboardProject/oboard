@@ -51,6 +51,18 @@ async function click(label: string) {
   const button = [...container.querySelectorAll('button')].find(button => button.textContent?.includes(label))!
   await act(async () => button.click())
 }
+it('automatically closes the reminder when automatic updates are disabled', async () => {
+  vi.useFakeTimers()
+  try {
+    status = { ...status, auto_update_enabled: false }
+    await render()
+    expect(container.querySelector('.controller-update-prompt')).not.toBeNull()
+    act(() => vi.advanceTimersByTime(10_000))
+    expect(container.querySelector('.controller-update-prompt')).toBeNull()
+  } finally {
+    vi.useRealTimers()
+  }
+})
 it('does not open a second result dialog for an update tracked by settings', async () => {
   props.tab = 'settings'
   await render()

@@ -11,16 +11,14 @@ import {
 
 function Harness({
   visible = true,
-  autoUpdateEnabled = true,
   dialogOpen = false,
   onDismiss,
 }: {
   visible?: boolean
-  autoUpdateEnabled?: boolean
   dialogOpen?: boolean
   onDismiss: () => void
 }) {
-  useControllerUpdatePromptAutoDismiss(visible, autoUpdateEnabled, dialogOpen, onDismiss)
+  useControllerUpdatePromptAutoDismiss(visible, dialogOpen, onDismiss)
   return null
 }
 
@@ -43,7 +41,7 @@ describe('controller update prompt auto-dismiss', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
-  it('dismisses an automatic-update prompt after ten seconds', () => {
+  it('dismisses an update prompt after ten seconds', () => {
     const onDismiss = vi.fn()
     act(() => root.render(<Harness onDismiss={onDismiss} />))
 
@@ -54,12 +52,8 @@ describe('controller update prompt auto-dismiss', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 
-  it('stays visible for manual updates and restarts the timer after the confirmation dialog closes', () => {
+  it('restarts the timer after the confirmation dialog closes', () => {
     const onDismiss = vi.fn()
-    act(() => root.render(<Harness autoUpdateEnabled={false} onDismiss={onDismiss} />))
-    act(() => vi.advanceTimersByTime(CONTROLLER_UPDATE_PROMPT_AUTO_DISMISS_MS))
-    expect(onDismiss).not.toHaveBeenCalled()
-
     act(() => root.render(<Harness onDismiss={onDismiss} />))
     act(() => vi.advanceTimersByTime(5_000))
     act(() => root.render(<Harness dialogOpen onDismiss={onDismiss} />))
