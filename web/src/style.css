@@ -1393,6 +1393,10 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   margin-bottom: 12px;
 }
 
+@media (max-width: 720px) {
+  .server-list-navigation { display: none; }
+}
+
 .server-list-search {
   width: 260px;
   max-width: 100%;
