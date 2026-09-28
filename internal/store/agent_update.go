@@ -192,6 +192,12 @@ func (s *Store) ListManualRollAgentCandidates(ctx context.Context, targetBuild s
 	return items, rows.Err()
 }
 
+func (s *Store) CountOfflineManualRollCandidates(ctx context.Context, targetBuild string, taskFloor int64) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `select count(*) from servers where status<>? and agent_id is not null and agent_id<>'' and coalesce(agent_build,'')<>? and not exists (select 1 from agent_tasks t where t.server_id=servers.id and t.type=? and t.id>? and json_extract(t.payload_json,'$.auto_update')=0)`, model.ServerOnline, strings.TrimSpace(targetBuild), model.AgentTaskTypeUpdateAgent, taskFloor).Scan(&count)
+	return count, err
+}
+
 // CountAgentUpdateFleet returns fleet-wide counters without loading telemetry.
 func (s *Store) CountAgentUpdateFleet(ctx context.Context, targetBuild string) (AgentFleetCounts, error) {
 	targetBuild = strings.TrimSpace(targetBuild)

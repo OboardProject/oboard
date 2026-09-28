@@ -268,7 +268,12 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 	}
 	dirty := false
 	if state.TargetBuild != targetBuild {
+		previous := state
 		state = store.AgentFleetState{TargetBuild: targetBuild, Rolling: manual}
+		if manual {
+			state.Paused = previous.Paused
+			state.LastPauseReason = previous.LastPauseReason
+		}
 		dirty = true
 	}
 	if manual {
@@ -288,15 +293,22 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 		}
 	}
 	finish := func(counts store.AgentFleetCounts, created int, counted bool) agentFleetFillResult {
-		if counted && state.Rolling && counts.Running == 0 && (counts.Outdated == 0 || state.ManualRollTaskFloor != nil && created == 0) {
-			state.Rolling = false
-			state.ManualRollTaskFloor = nil
-			dirty = true
+		if counted && state.Rolling && counts.Running == 0 {
+			finished := counts.Outdated == 0
+			if !finished && state.ManualRollTaskFloor != nil && created == 0 {
+				offline, err := c.server.store.CountOfflineManualRollCandidates(ctx, targetBuild, *state.ManualRollTaskFloor)
+				finished = err == nil && offline == 0
+			}
+			if finished {
+				state.Rolling = false
+				state.ManualRollTaskFloor = nil
+				dirty = true
+			}
 		}
 		persist()
 		return agentFleetFillResult{AgentFleetCounts: counts, Created: created, Limit: limit, Rolling: state.Rolling}
 	}
-	if !manual && state.Paused {
+	if !manual && state.Paused && state.ManualRollTaskFloor == nil {
 		counts, countErr := c.server.store.CountAgentUpdateFleet(ctx, targetBuild)
 		return finish(counts, 0, countErr == nil)
 	}
@@ -543,6 +555,7 @@ func (s *Server) agentFleetStatus(ctx context.Context) (map[string]any, error) {
 		"target_version":        version.AgentVersion,
 		"paused":                state.Paused,
 		"rolling":               state.Rolling,
+		"manual_rolling":        state.Rolling && state.ManualRollTaskFloor != nil,
 		"pause_reason":          state.LastPauseReason,
 		"attempted":             state.Attempted,
 		"succeeded":             state.Succeeded,

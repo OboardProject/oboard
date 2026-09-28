@@ -395,6 +395,7 @@ type AgentFleetUpdateStatus = {
   target_version: string
   paused: boolean
   rolling: boolean
+  manual_rolling: boolean
   pause_reason: string
   attempted: number
   succeeded: number
@@ -4738,7 +4739,21 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
     try {
       const result = await client.request(path, { method: 'POST' }) as AgentFleetUpdateStatus
       setStatus(result)
-      notify?.(path === '/agent-updates/retry-failed' ? `已创建 ${result.manual_created || 0} 个一次性手动更新任务` : label, 'success')
+      notify?.(label, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+  const retryAll = async () => {
+    setBusy('/agents/update-all')
+    try {
+      const result = await client.request('/agents/update-all', { method: 'POST', body: '{}' }) as { summary?: { created?: number }; running?: number }
+      await refresh()
+      const created = Number(result.summary?.created || 0)
+      const running = Number(result.running || 0)
+      notify?.(created || running ? '已开始手动重试全部待更新服务器，每台本轮仅尝试一次' : '已记录手动重试；在线服务器暂无可创建的更新任务', 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -4747,9 +4762,9 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
   }
   if (!status) return null
   return <section className="settings-card controller-update-card">
-    <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.rolling && !status.paused ? '正在滚动更新全部已接入 Agent。' : status.message}</p></div>
+    <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.manual_rolling ? '正在手动更新全部待更新 Agent，每台本轮仅尝试一次。' : status.rolling && !status.paused ? '正在滚动更新全部已接入 Agent。' : status.message}</p></div>
     <AgentFleetProgress status={status} />
-    {status.paused && <div className="controller-update-error" role="status">{status.pause_reason || 'Agent 滚动更新已暂停'}</div>}
+    {status.paused && <div className="controller-update-error" role="status">自动更新已暂停：{status.pause_reason || '等待管理员恢复'}</div>}
     {status.failure_count > 0 && <details className="controller-update-warning">
       <summary>更新失败 {status.failure_count} 台{status.auto_stopped_count > 0 ? `，${status.auto_stopped_count} 台已停止自动更新` : status.exhausted_count > 0 ? `，${status.exhausted_count} 台本版自动次数已用完` : ''}</summary>
       <ul>{status.failed_servers.map(item => <li key={item.server_id}>
@@ -4764,7 +4779,7 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
       {status.paused
         ? <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/resume', '已恢复 Agent 滚动更新')}>{busy === '/agent-updates/resume' ? '处理中...' : '恢复'}</button>
         : <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/pause', '已暂停 Agent 滚动更新')}>{busy === '/agent-updates/pause' ? '处理中...' : '暂停'}</button>}
-      <button type="button" className="ghost" disabled={Boolean(busy) || status.failure_count === 0} onClick={() => void act('/agent-updates/retry-failed', '已对可执行的失败 Agent 各请求一次手动更新')}>手动重试一次</button>
+      <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void retryAll()}>手动重试</button>
       <button type="button" className="ghost" onClick={() => setAdvancedOpen(true)}>高级</button>
     </div>
     <Dialog isOpen={advancedOpen} onClose={() => setAdvancedOpen(false)} title="Agent 滚动更新" size="default">
@@ -6469,7 +6484,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number; latency_probe_interval_seconds?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',  expiry_notify_enabled: true, display_tags: [] }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: true, renewal_cycle: '' as '' | 'monthly' | 'quarterly', expiry_notify_enabled: true, display_tags: [] }
 }
 
 const serverSettingTabs = [
@@ -8109,9 +8124,15 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [cycleMissing, setCycleMissing] = useState(false)
   const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
   const submit = async () => {
     if (saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid) return
+    if (draft.auto_renew_enabled && !draft.renewal_cycle) {
+      setCycleMissing(true)
+      setTab('billing')
+      return
+    }
     setSaving(true)
     try {
       await onSubmit()
@@ -8155,12 +8176,14 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </FormField>
           {Boolean(draft.auto_renew_enabled) && (
             <FormField label="续期周期" hint="月付顺延到下月同日，季付顺延到三个月后的同日，月底日期自动取当月最后一天。">
-              <Select value={draft.renewal_cycle || 'monthly'} onChange={e => update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' })} aria-label="续期周期">
+              <Select value={draft.renewal_cycle || ''} onChange={e => { update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' }); setCycleMissing(false) }} aria-label="续期周期" aria-invalid={cycleMissing} aria-describedby={cycleMissing ? 'server-renewal-cycle-error' : undefined}>
+                <option value="" disabled>请选择续期周期</option>
                 <option value="monthly">月付（下月同日）</option>
                 <option value="quarterly">季付（三个月后同日）</option>
               </Select>
             </FormField>
           )}
+          {cycleMissing && draft.auto_renew_enabled && <p id="server-renewal-cycle-error" role="alert">开启自动续期时必须选择续期周期。</p>}
           <FormField label="到期提醒" hint="在系统通知设置中配置提前天数和发送时间，需要 Bark/TG 频道勾选“服务器到期”事件。">
             <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
           </FormField>

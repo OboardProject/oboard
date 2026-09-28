@@ -293,6 +293,58 @@ func TestManualFleetUpdateAttemptsEachNodeOnceWithoutUsingAutoBudget(t *testing.
 	}
 }
 
+func TestManualFleetUpdateWaitsForOfflineNodeWhileAutoIsPaused(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.SetSettings(ctx, map[string]string{"controller_url": "https://controller.example"}); err != nil {
+		t.Fatal(err)
+	}
+	oldBuild := version.AgentBuild
+	version.AgentBuild = "20260929000000"
+	t.Cleanup(func() { version.AgentBuild = oldBuild })
+	server := &model.Server{Name: "offline-manual-node", Status: model.ServerOffline, AgentID: "agent-offline", AgentBuild: "20260901000000"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveAgentFleetState(ctx, store.AgentFleetState{Paused: true, LastPauseReason: "automatic updates paused", TargetBuild: version.AgentBuild}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(db, "test-secret", "")
+	if got := s.agentUpdates.Fill(ctx, true); got.Created != 0 || !got.Rolling {
+		t.Fatalf("offline manual roll = %#v", got)
+	}
+	state, err := db.GetAgentFleetState(ctx)
+	if err != nil || !state.Paused || state.ManualRollTaskFloor == nil {
+		t.Fatalf("manual roll changed automatic pause: %#v err=%v", state, err)
+	}
+	server.Status = model.ServerOnline
+	if err := db.UpdateServerRuntimeState(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.agentUpdates.Fill(ctx, false); got.Created != 1 {
+		t.Fatalf("reconnected manual roll = %#v", got)
+	}
+	tasks, err := db.ListTasksByServer(ctx, server.ID, 10)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("reconnected tasks = %#v err=%v", tasks, err)
+	}
+	var payload model.UpdateAgentTaskPayload
+	if err := json.Unmarshal([]byte(tasks[0].PayloadJSON), &payload); err != nil || payload.AutoUpdate {
+		t.Fatalf("reconnected task is not manual: %#v err=%v", payload, err)
+	}
+	if err := db.CompleteTask(ctx, tasks[0].ID, "failed", `{"error":"one attempt"}`); err != nil {
+		t.Fatal(err)
+	}
+	s.recordAgentUpdateTaskOutcome(ctx, tasks[0], "failed", "one attempt")
+	if got := s.agentUpdates.Fill(ctx, false); got.Created != 0 || got.Rolling {
+		t.Fatalf("manual roll retried or remained active: %#v", got)
+	}
+}
+
 func TestControllerUpdateRunRecoversOnNewBuild(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
 	if err != nil {
