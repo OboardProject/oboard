@@ -11072,6 +11072,18 @@ body:has(.controller-update-immersive-layer) {
   white-space: nowrap;
 }
 
+.dns-record-entry .record-main > strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.dns-record-entry .record-main > span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .record-main code {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -11303,6 +11315,56 @@ button.server-related-jump-pill {
   .record-actions {
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .dns-record-entry {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 5px 8px;
+    padding: 10px 12px;
+  }
+
+  .dns-record-entry .record-type {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    padding-top: 2px;
+  }
+
+  .dns-record-entry .record-main {
+    grid-column: 2 / 4;
+    grid-row: 1;
+    gap: 2px;
+  }
+
+  .dns-record-entry .record-main > strong,
+  .dns-record-entry .record-main > span {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .dns-record-entry .record-main > strong { font-size: 16px; }
+  .dns-record-entry .record-main > span { font-size: 14px; }
+  .dns-record-entry .record-main > small { font-size: 11px; }
+
+  .dns-record-entry .record-badges {
+    grid-column: 2;
+    grid-row: 2;
+    gap: 4px;
+  }
+
+  .dns-record-entry .record-badges .status-pill {
+    padding: 2px 5px;
+    font-size: 10px;
+  }
+
+  .dns-record-entry .record-actions {
+    grid-column: 3;
+    grid-row: 2;
+    flex-wrap: nowrap;
+    justify-self: end;
   }
 }
 
