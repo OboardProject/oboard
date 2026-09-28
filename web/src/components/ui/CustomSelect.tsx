@@ -19,6 +19,7 @@ export interface CustomSelectProps {
   id?: string
   ariaLabel?: string
   ariaDescribedBy?: string
+  ariaInvalid?: React.AriaAttributes['aria-invalid']
   required?: boolean
   selectedLabel?: React.ReactNode
   menuHeader?: React.ReactNode
@@ -44,6 +45,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   id,
   ariaLabel,
   ariaDescribedBy,
+  ariaInvalid,
   required = false,
   selectedLabel,
   menuHeader,
@@ -206,6 +208,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         aria-activedescendant={isOpen && highlightedIndex >= 0 ? `${listId}-option-${highlightedIndex}` : undefined}
         aria-label={ariaLabel}
         aria-describedby={ariaDescribedBy}
+        aria-invalid={ariaInvalid}
         aria-required={required || undefined}
         disabled={disabled}
         onKeyDown={handleTriggerKeyDown}

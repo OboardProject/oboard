@@ -3992,7 +3992,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.ExpiresAt = nil
 		}
 		if input.AutoRenewEnabled == nil {
-			v.AutoRenewEnabled = false
+			v.AutoRenewEnabled = true
 		} else {
 			v.AutoRenewEnabled = *input.AutoRenewEnabled
 		}
@@ -4002,8 +4002,16 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.ExpiryNotifyEnabled = *input.ExpiryNotifyEnabled
 		}
 		if input.RenewalCycle == nil {
+			if v.AutoRenewEnabled {
+				fail(w, errors.New("开启自动续期时必须明确填写 renewal_cycle（monthly 或 quarterly）"), http.StatusBadRequest)
+				return
+			}
 			v.RenewalCycle = model.ServerRenewalCycleMonthly
 		} else {
+			if v.AutoRenewEnabled && *input.RenewalCycle != model.ServerRenewalCycleMonthly && *input.RenewalCycle != model.ServerRenewalCycleQuarterly {
+				fail(w, errors.New("renewal_cycle 必须为 monthly 或 quarterly"), http.StatusBadRequest)
+				return
+			}
 			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
 		}
 		// Server traffic reset day is derived from billing dates when the caller

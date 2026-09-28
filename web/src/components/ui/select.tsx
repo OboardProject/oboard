@@ -56,6 +56,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(({
   const emitChange = (nextValue: string) => onChange?.(syntheticSelectEvent(nextValue, name))
   const ariaLabel = ariaProps['aria-label']
   const ariaDescribedBy = ariaProps['aria-describedby']
+  const ariaInvalid = ariaProps['aria-invalid']
 
   if (variant === 'segmented') {
     return (
@@ -109,6 +110,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(({
       id={id}
       ariaLabel={ariaLabel}
       ariaDescribedBy={ariaDescribedBy}
+      ariaInvalid={ariaInvalid}
       required={required}
     />
   )

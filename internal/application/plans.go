@@ -25,22 +25,24 @@ type PlanResult struct {
 
 func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal, raw json.RawMessage) (PlanResult, error) {
 	var input struct {
-		Name                        string                     `json:"name"`
-		RegionCode                  string                     `json:"region_code"`
-		IPStack                     string                     `json:"ip_stack"`
-		EntryAddress                string                     `json:"entry_address"`
-		EntryIPMode                 string                     `json:"entry_ip_mode"`
-		PortRangeStart              int                        `json:"port_range_start"`
-		PortRangeEnd                int                        `json:"port_range_end"`
-		InternalPortRangeStart      int                        `json:"internal_port_range_start"`
-		InternalPortRangeEnd        int                        `json:"internal_port_range_end"`
-		ExpiresAt                   string                     `json:"expires_at"`
-		LatencyProbeEnabled         *bool                      `json:"latency_probe_enabled"`
-		LatencyProbeMode            model.LatencyProbeMode     `json:"latency_probe_mode"`
-		LatencyProbePublicTarget    model.ConnectivityTarget   `json:"latency_probe_public_target"`
-		LatencyProbeIntervalSeconds int                        `json:"latency_probe_interval_seconds"`
-		LatencyProbeSampleCount     int                        `json:"latency_probe_sample_count"`
-		LatencyProbeMaxTargets      int                        `json:"latency_probe_max_targets"`
+		Name                        string                   `json:"name"`
+		RegionCode                  string                   `json:"region_code"`
+		IPStack                     string                   `json:"ip_stack"`
+		EntryAddress                string                   `json:"entry_address"`
+		EntryIPMode                 string                   `json:"entry_ip_mode"`
+		PortRangeStart              int                      `json:"port_range_start"`
+		PortRangeEnd                int                      `json:"port_range_end"`
+		InternalPortRangeStart      int                      `json:"internal_port_range_start"`
+		InternalPortRangeEnd        int                      `json:"internal_port_range_end"`
+		ExpiresAt                   string                   `json:"expires_at"`
+		AutoRenewEnabled            *bool                    `json:"auto_renew_enabled"`
+		RenewalCycle                model.ServerRenewalCycle `json:"renewal_cycle"`
+		LatencyProbeEnabled         *bool                    `json:"latency_probe_enabled"`
+		LatencyProbeMode            model.LatencyProbeMode   `json:"latency_probe_mode"`
+		LatencyProbePublicTarget    model.ConnectivityTarget `json:"latency_probe_public_target"`
+		LatencyProbeIntervalSeconds int                      `json:"latency_probe_interval_seconds"`
+		LatencyProbeSampleCount     int                      `json:"latency_probe_sample_count"`
+		LatencyProbeMaxTargets      int                      `json:"latency_probe_max_targets"`
 	}
 	if err := strictUnmarshal(raw, &input); err != nil {
 		return PlanResult{}, err
@@ -89,6 +91,12 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 			Candidates:         candidates,
 			SuggestedChangeset: suggested,
 		}, nil
+	}
+	if input.AutoRenewEnabled == nil {
+		return PlanResult{Kind: "server_onboarding", Valid: false, Warnings: []string{"必须明确提供 auto_renew_enabled；新服务器默认开启自动续期。"}}, nil
+	}
+	if *input.AutoRenewEnabled && input.RenewalCycle != model.ServerRenewalCycleMonthly && input.RenewalCycle != model.ServerRenewalCycleQuarterly {
+		return PlanResult{Kind: "server_onboarding", Valid: false, Warnings: []string{"开启自动续期时必须明确提供 renewal_cycle：monthly 或 quarterly。"}}, nil
 	}
 	if input.IPStack == "" {
 		input.IPStack = string(model.IPStackAuto)
@@ -165,11 +173,15 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	}
 	server := map[string]any{
 		"name": input.Name, "region_code": strings.ToUpper(strings.TrimSpace(input.RegionCode)), "ip_stack": input.IPStack,
+		"auto_renew_enabled":    *input.AutoRenewEnabled,
 		"latency_probe_enabled": latencyEnabled, "latency_probe_mode": input.LatencyProbeMode, "latency_probe_public_target": input.LatencyProbePublicTarget,
 		"latency_probe_interval_seconds": input.LatencyProbeIntervalSeconds, "latency_probe_sample_count": input.LatencyProbeSampleCount,
 		"latency_probe_max_targets": input.LatencyProbeMaxTargets,
-		"listen_ip": "0.0.0.0", "port_range_start": publicStart, "port_range_end": publicEnd,
+		"listen_ip":                 "0.0.0.0", "port_range_start": publicStart, "port_range_end": publicEnd,
 		"internal_port_range_start": internalStart, "internal_port_range_end": internalEnd,
+	}
+	if *input.AutoRenewEnabled {
+		server["renewal_cycle"] = input.RenewalCycle
 	}
 	if strings.TrimSpace(input.EntryIPMode) != "" {
 		server["entry_ip_mode"] = normalizedEntryMode

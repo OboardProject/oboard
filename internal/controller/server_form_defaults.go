@@ -77,6 +77,7 @@ func (s *Server) panelServerFormDefaults(ctx context.Context) (panelServerFormDe
 		LatencyProbeMaxTargets:      64,
 		ConnectionAuditEnabled:      settingBool(settings, settingConnectionAuditEnabled, true),
 		OfflineNotifyEnabled:        true,
+		AutoRenewEnabled:            true,
 		RenewalCycle:                model.ServerRenewalCycleMonthly,
 		ExpiryNotifyEnabled:         true,
 		IssueEnrollmentToken:        true,
@@ -113,7 +114,6 @@ func (d panelServerFormDefaults) asMap() map[string]any {
 		"offline_notify_enabled":         d.OfflineNotifyEnabled,
 		"offline_after_seconds":          d.OfflineAfterSeconds,
 		"auto_renew_enabled":             d.AutoRenewEnabled,
-		"renewal_cycle":                  string(d.RenewalCycle),
 		"expiry_notify_enabled":          d.ExpiryNotifyEnabled,
 	}
 }
@@ -124,6 +124,7 @@ func (d panelServerFormDefaults) defaultOnBoolFields() map[string]bool {
 		"latency_probe_enabled":    d.LatencyProbeEnabled,
 		"connection_audit_enabled": d.ConnectionAuditEnabled,
 		"offline_notify_enabled":   d.OfflineNotifyEnabled,
+		"auto_renew_enabled":       d.AutoRenewEnabled,
 		"expiry_notify_enabled":    d.ExpiryNotifyEnabled,
 		"issue_enrollment_token":   d.IssueEnrollmentToken,
 	}
@@ -196,6 +197,13 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	}
 	envelope := jsonObjectKeys(input)
 	serverKeys := jsonObjectKeys(envelope["server"])
+	if _, ok := serverKeys["auto_renew_enabled"]; !ok {
+		return fmt.Errorf("MCP 创建服务器必须明确传入 auto_renew_enabled；开启时还必须传入 renewal_cycle")
+	}
+	applyDefaultBool(serverKeys, "auto_renew_enabled", &request.Server.AutoRenewEnabled, defaults.AutoRenewEnabled)
+	if err := requireServerRenewalCycle(request.Server.AutoRenewEnabled, serverKeys["renewal_cycle"]); err != nil {
+		return err
+	}
 	applyDefaultString(serverKeys, "listen_ip", &request.Server.ListenIP, defaults.ListenIP)
 	if _, ok := serverKeys["listen_mode"]; !ok {
 		request.Server.ListenMode = defaults.ListenMode
@@ -274,6 +282,17 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	return nil
 }
 
+func requireServerRenewalCycle(enabled bool, raw json.RawMessage) error {
+	if !enabled {
+		return nil
+	}
+	var cycle model.ServerRenewalCycle
+	if len(raw) == 0 || json.Unmarshal(raw, &cycle) != nil || (cycle != model.ServerRenewalCycleMonthly && cycle != model.ServerRenewalCycleQuarterly) {
+		return fmt.Errorf("开启自动续期时必须明确填写 renewal_cycle（monthly 或 quarterly）")
+	}
+	return nil
+}
+
 func (s *Server) materializeServerOnboardForm(ctx context.Context, input json.RawMessage) (map[string]any, []map[string]any, []string, error) {
 	defaults, err := s.panelServerFormDefaults(ctx)
 	if err != nil {
@@ -328,13 +347,13 @@ func (s *Server) materializeServerOnboardForm(ctx context.Context, input json.Ra
 func panelServerFormResource(defaults panelServerFormDefaults) map[string]any {
 	return map[string]any{
 		"name":     "OBoard server create form",
-		"summary":  "The panel 添加服务器 dialog is the source of create defaults. MCP and automation must omit unspecified fields instead of sending false or zero. Controller fills the same defaults before validate and apply.",
-		"rule":     "Omitted fields use these defaults. Explicit values win, including explicit false. Sending false for an unspecified default-on switch disables a feature the panel would leave on.",
-		"required": []string{"server.name"},
+		"summary":  "新服务器默认开启自动续期。MCP 必须明确传入 auto_renew_enabled；为 true 时还必须明确传入 renewal_cycle。",
+		"rule":     "其他省略字段使用面板默认值。auto_renew_enabled=false 时可省略 renewal_cycle。",
+		"required": []string{"server.name", "server.auto_renew_enabled", "server.renewal_cycle（自动续期启用时）"},
 		"defaults": defaults.asMap(),
 		"default_on_switches": []string{
 			"resource_history_enabled", "latency_probe_enabled",
-			"connection_audit_enabled", "offline_notify_enabled", "expiry_notify_enabled", "issue_enrollment_token",
+			"connection_audit_enabled", "offline_notify_enabled", "auto_renew_enabled", "expiry_notify_enabled", "issue_enrollment_token",
 		},
 		"tabs": []map[string]any{
 			{"id": "basic", "label": "基础", "fields": []string{"name", "region_mode", "region_code", "entry_ip_mode", "entry_address", "listen_mode", "listen_ip", "display_tags"}},

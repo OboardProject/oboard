@@ -92,12 +92,32 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	s := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
 
-	request, err := decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-01"}}`))
+	request, err := decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-01","auto_renew_enabled":true,"renewal_cycle":"monthly"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-01"}}`), &request); err != nil {
+	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-01","auto_renew_enabled":true,"renewal_cycle":"monthly"}}`), &request); err != nil {
 		t.Fatal(err)
+	}
+	if !request.Server.AutoRenewEnabled || request.Server.RenewalCycle != model.ServerRenewalCycleMonthly {
+		t.Fatalf("renewal settings = %v/%s", request.Server.AutoRenewEnabled, request.Server.RenewalCycle)
+	}
+	for _, raw := range []string{`{"server":{"name":"missing-switch"}}`, `{"server":{"name":"missing-cycle","auto_renew_enabled":true}}`, `{"server":{"name":"bad-cycle","auto_renew_enabled":true,"renewal_cycle":"yearly"}}`} {
+		candidate, err := decodeServerOnboardingOperation(json.RawMessage(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(raw), &candidate); err == nil {
+			t.Fatalf("accepted incomplete renewal settings: %s", raw)
+		}
+	}
+	bareDisabled := json.RawMessage(`{"server":{"name":"disabled","auto_renew_enabled":false}}`)
+	disabled, err := decodeServerOnboardingOperation(bareDisabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyServerOnboardingDefaults(ctx, bareDisabled, &disabled); err != nil || disabled.Server.AutoRenewEnabled {
+		t.Fatalf("explicit disable rejected: server=%+v err=%v", disabled.Server, err)
 	}
 	if !request.Server.LatencyProbeEnabled || !request.Server.ConnectionAuditEnabled {
 		t.Fatalf("missing controller defaults: latency_probe_enabled=%v connection_audit_enabled=%v", request.Server.LatencyProbeEnabled, request.Server.ConnectionAuditEnabled)
@@ -109,18 +129,18 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 		t.Fatalf("missing addressing defaults: listen_ip=%q monitoring=%q udp=%q", request.Server.ListenIP, request.Server.MonitoringMode, request.Server.UDPInboundMode)
 	}
 
-	request, err = decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-02","latency_probe_enabled":false,"connection_audit_enabled":false}}`))
+	request, err = decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-02","auto_renew_enabled":false,"latency_probe_enabled":false,"connection_audit_enabled":false}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-02","latency_probe_enabled":false,"connection_audit_enabled":false}}`), &request); err != nil {
+	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-02","auto_renew_enabled":false,"latency_probe_enabled":false,"connection_audit_enabled":false}}`), &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.Server.LatencyProbeEnabled || request.Server.ConnectionAuditEnabled {
 		t.Fatalf("explicit false values were replaced: latency_probe_enabled=%v connection_audit_enabled=%v", request.Server.LatencyProbeEnabled, request.Server.ConnectionAuditEnabled)
 	}
 
-	normalized, applied, warnings, err := s.materializeServerOnboardForm(ctx, json.RawMessage(`{"server":{"name":"Tokyo-form"}}`))
+	normalized, applied, warnings, err := s.materializeServerOnboardForm(ctx, json.RawMessage(`{"server":{"name":"Tokyo-form","auto_renew_enabled":true,"renewal_cycle":"quarterly"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +157,7 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings for omitted fields: %#v", warnings)
 	}
-	_, _, explicitWarnings, err := s.materializeServerOnboardForm(ctx, json.RawMessage(`{"server":{"name":"Tokyo-off","latency_probe_enabled":false}}`))
+	_, _, explicitWarnings, err := s.materializeServerOnboardForm(ctx, json.RawMessage(`{"server":{"name":"Tokyo-off","auto_renew_enabled":false,"latency_probe_enabled":false}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +165,11 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 		t.Fatal("expected a warning when explicit false disables a panel default")
 	}
 
-	nameOnly, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-defaults-only"}})
+	needsRenewal, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-needs-renewal"}})
+	if err != nil || needsRenewal.Status != "needs_input" {
+		t.Fatalf("missing renewal response=%#v err=%v", needsRenewal, err)
+	}
+	nameOnly, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-defaults-only", "auto_renew_enabled": false}})
 	if err != nil || nameOnly == nil || len(nameOnly.Operations) != 1 {
 		t.Fatalf("name-only prepared=%#v err=%v", nameOnly, err)
 	}

@@ -317,6 +317,27 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 	if len(existing) > 0 {
 		return s.prepareExistingServerEnrollmentRecipe(ctx, principal, input, existing)
 	}
+	renewEnabled, hasRenewEnabled := input.Params["auto_renew_enabled"]
+	if !hasRenewEnabled {
+		renewEnabled, hasRenewEnabled = input.Params["server.auto_renew_enabled"]
+	}
+	if nested, ok := input.Params["server"].(map[string]any); ok && !hasRenewEnabled {
+		renewEnabled, hasRenewEnabled = nested["auto_renew_enabled"]
+	}
+	if !hasRenewEnabled {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.onboard", Questions: []map[string]any{{"field": "server.auto_renew_enabled", "type": "boolean", "reason": "请明确是否开启自动续期；新服务器默认开启。"}}}, nil
+	}
+	enabled, ok := renewEnabled.(bool)
+	if !ok {
+		return nil, fmt.Errorf("auto_renew_enabled 必须为布尔值")
+	}
+	cycle := taskStringParam(input.Params, "server.renewal_cycle", "renewal_cycle")
+	if nested, ok := input.Params["server"].(map[string]any); ok && cycle == "" {
+		cycle, _ = nested["renewal_cycle"].(string)
+	}
+	if enabled && cycle != string(model.ServerRenewalCycleMonthly) && cycle != string(model.ServerRenewalCycleQuarterly) {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.onboard", Questions: []map[string]any{{"field": "server.renewal_cycle", "type": "string", "reason": "开启自动续期必须选择 monthly（月付）或 quarterly（季付）。"}}}, nil
+	}
 	ipStack := taskStringParam(input.Params, "server.ip_stack", "ip_stack")
 	if ipStack == "" {
 		ipStack = inferredIPStack(input.Goal)
@@ -418,6 +439,7 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 	if region != "" {
 		server["region_code"] = region
 	}
+	server["auto_renew_enabled"] = enabled
 	defaults, err := s.panelServerFormDefaults(ctx)
 	if err != nil {
 		return nil, err
@@ -425,7 +447,7 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 	fillServerMapDefaults(server, defaults)
 	issueToken := taskBoolParam(input.Params, defaults.IssueEnrollmentToken, "issue_enrollment_token")
 	operation := mcpOperationRef{Capability: "servers.onboard", Input: map[string]any{"server": server, "issue_enrollment_token": issueToken}}
-	return &mcpPreparedRecipe{Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "onboard_server", "server_name": name, "region_code": region, "ip_stack": ipStack, "requires_external_install": true}, Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}}}, nil
+	return &mcpPreparedRecipe{Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "onboard_server", "server_name": name, "region_code": region, "ip_stack": ipStack, "auto_renew_enabled": enabled, "renewal_cycle": server["renewal_cycle"], "requires_external_install": true}, Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}}}, nil
 }
 
 func (s *Server) prepareExistingServerEnrollmentRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput, existing []model.Server) (*mcpPreparedRecipe, error) {
