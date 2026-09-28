@@ -11572,7 +11572,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     const preset = inboundPreset(defaultInboundPreset('vless'))
     const stored = matchingNodePreset(preset.id, data.node_presets || [])
     const port = nextAvailableInboundPort(data, server, preset.protocol, stored?.default_port || preset.defaultPort)
-    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, server_id: server.id, name: autoInboundName(server, preset.protocol, port), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id, data.node_presets), enabled: true })
+    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, server_id: server.id, name: autoInboundName(data, preset.protocol), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id, data.node_presets), enabled: true })
   }
   const submitEntryDraft = async () => {
     if (!entryDraft) return
@@ -14428,8 +14428,18 @@ function serverName(servers: Server[], id: number) {
   return servers.find(s => s.id === id)?.name || `server-${id || 0}`
 }
 
-function autoInboundName(server: Server | undefined, protocol: Protocol, port: number) {
-  return `${server?.name || 'server'}-${protocol}-${port || 443}`
+function autoInboundName(data: any, protocol: Protocol, excludeID = 0) {
+  const base = labelProtocol(protocol)
+  const names = new Set(((data.inbounds || []) as Inbound[]).filter(inbound => inbound.id !== excludeID).map(inbound => inbound.name))
+  if (!names.has(base)) return base
+  let number = 2
+  while (names.has(`${base} ${number}`)) number++
+  return `${base} ${number}`
+}
+
+function isAutoInboundName(name: string, server: Server | undefined, protocol: Protocol, port: number) {
+  const base = labelProtocol(protocol)
+  return name === base || new RegExp(`^${base} [2-9][0-9]*$`).test(name) || name === `${server?.name || 'server'}-${protocol}-${port || 443}`
 }
 
 function inboundDisplayPort(inbound: any): number {
@@ -14743,8 +14753,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       const currentPort = Number(old.port) || stored?.default_port || preset.defaultPort
       const keepManualPort = mode === 'edit' || old.__port_manual === true
       const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, server, preset.protocol, stored?.default_port || preset.defaultPort, old.id)
-      const oldAutoName = autoInboundName(server, old.protocol || protocol, currentPort)
-      const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(old.name))
+      const shouldRename = !old.name || isAutoInboundName(old.name, server, old.protocol || protocol, currentPort)
       const previous = parseConfig(old.config_json) || {}
       let nextConfig = buildInboundPresetConfig(preset.id, data.node_presets)
       if (old.protocol === 'snell' && preset.protocol === 'snell') { const next = parseConfig(nextConfig) || {}; next.listener_mode = previous.listener_mode || (mode === 'create' ? 'shared_port' : 'per_identity_port'); nextConfig = JSON.stringify(next, null, 2) }
@@ -14769,7 +14778,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
         ...old,
         protocol: preset.protocol,
         port: nextPort,
-        name: shouldRename ? autoInboundName(server, preset.protocol, nextPort) : old.name,
+        name: shouldRename ? autoInboundName(data, preset.protocol, old.id) : old.name,
         config_json: nextConfig,
         tls: presetRequiresCertificate(preset.id),
         certificate_mode: presetRequiresCertificate(preset.id) ? (previousRequiresCertificate ? (old.certificate_mode || 'auto') : 'auto') : 'external',
@@ -14785,20 +14794,19 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const currentPort = Number(draft.port) || 443
     const keepManualPort = mode === 'edit' || draft.__port_manual === true
     const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, nextServer, protocol, currentPort, draft.id)
-    const oldName = autoInboundName(server, protocol, currentPort)
-    const shouldRename = !draft.name || draft.name === oldName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(draft.name))
+    const shouldRename = !draft.name || isAutoInboundName(draft.name, server, protocol, currentPort)
     const nextZones = (selectedDNSCredential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === serverID)
     const nextZone = nextZones.find(zone => zone.server_id === serverID) || nextZones.find(zone => zone.zone_name === selectedDNSZoneName) || nextZones[0]
     const dnsDomain = draft.dns_sync_enabled ? domainWithZone(dnsPrefix, nextZone?.zone_name || '') : draft.dns_domain
-    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(nextServer, protocol, nextPort) : draft.name, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(dnsDomain, draft.external_ip) : draft.certificate_domain, certificate_id: certificateIDForDomain(dnsDomain) })
+    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(data, protocol, draft.id) : draft.name, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(dnsDomain, draft.external_ip) : draft.certificate_domain, certificate_id: certificateIDForDomain(dnsDomain) })
   }
   const chooseAutoPort = () => {
     const nextPort = autoPortFor(server, protocol, inboundPreset(presetID).defaultPort)
     changePort(nextPort, false)
   }
   const changePort = (nextPort: number, manual = true) => {
-    const oldName = autoInboundName(server, protocol, Number(draft.port) || 443)
-    update({ port: nextPort, __port_manual: manual, name: draft.name === oldName ? autoInboundName(server, protocol, nextPort) : draft.name })
+    const wasAutoNamed = isAutoInboundName(draft.name, server, protocol, Number(draft.port) || 443)
+    update({ port: nextPort, __port_manual: manual, name: wasAutoNamed ? autoInboundName(data, protocol, draft.id) : draft.name })
   }
   const changeEntryMode = (nextMode: EntryIPMode) => update(nextMode === 'custom' ? { entry_ip_mode: nextMode, ddns_enabled: false } : { entry_ip_mode: nextMode })
   const changeExternalIP = (externalIP: string) => update({ external_ip: externalIP, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(draft.dns_domain, externalIP) : draft.certificate_domain })
@@ -14906,7 +14914,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 <Select value={draft.server_id} onChange={e => changeServer(Number(e.target.value))}><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>
                 <ServerRelatedJumps serverID={Number(draft.server_id || 0)} />
               </FormField>
-              <FormField label="入口名称" required hint="用于拓扑图、订阅和任务识别。留空时按服务器、协议和端口自动命名。" placement="bottom">
+              <FormField label="入口名称" required hint="用于拓扑图、订阅和任务识别。默认按协议命名，同协议多个入口会加序号。" placement="bottom">
                 <input value={draft.name} onChange={e => update({ name: e.target.value })} />
               </FormField>
             </div>
@@ -15505,8 +15513,7 @@ function planGrantedUserIDsForEntry(data: any, entry: Inbound): Set<number> {
 
 function inboundAccessSummary(data: any, entry: Inbound) {
   const count = planGrantedUserIDsForEntry(data, entry).size
-  if (!count) return '套餐未授权用户'
-  return `${count} 个套餐用户`
+  return `用户数：${count}`
 }
 
 function latestInboundProbeSummary(data: any, inboundID: number) {
@@ -15534,7 +15541,7 @@ function latestInboundProbeSummary(data: any, inboundID: number) {
   const totalSamples = external.reduce((sum, probe) => sum + Number(probe.sample_count || 0), 0)
   const totalSuccesses = external.reduce((sum, probe) => sum + Number(probe.success_count || 0), 0)
   if (external.length && external.every(probe => probe.available && probe.confirmed)) {
-    return { tone: 'ok', label: `公网 ${portCount} 个端口可用`, detail: `${totalSuccesses}/${totalSamples} 次成功 · 主端口 ${representative?.latency_ms || 0}ms`, probe: representative }
+    return { tone: 'ok', label: '入口端口正常', detail: `${totalSuccesses}/${totalSamples} 次成功 · 主端口 ${representative?.latency_ms || 0}ms`, probe: representative }
   }
   if (local.length && local.every(probe => probe.available) && local.some(probe => probe.transport === 'udp')) {
     return { tone: 'ok', label: `UDP ${portCount} 个端口监听正常`, detail: external.length ? '公网 UDP 信号已发送' : '等待公网 UDP 探测', probe: representative }
@@ -16971,16 +16978,14 @@ function GraphNode({
           <>
             <div className="rf-node-detail"><span>公网地址</span><code>{ipv4 || subtitle2 || '未检测'}</code></div>
             {isOnline && <div className="rf-node-metrics"><span>CPU {cpu || 0}%</span><span>内存 {memory || 0}%</span></div>}
-            <div className="graph-role-chips">
-              {role?.isRoot && <span className="role-chip role-gateway"><ServerIcon size={10} />一级接入</span>}
+            {Boolean(role?.foreignPaths?.length || role?.transparentPaths || role?.relayPaths) && <div className="graph-role-chips">
               {(role?.foreignPaths?.length || 0) > 0 && <span
                 className="role-chip role-foreign"
                 title={`来自其他入口服务器的链路也经过这里：\n${role!.foreignPaths.join('\n')}`}
               ><Workflow size={10} />其他入口 {role!.foreignPaths.length} 条</span>}
-              {(role?.processingPaths || 0) > 0 && <span className="role-chip role-processing"><Shield size={10} />在此处理加解密{role!.processingPaths > 1 ? ` ×${role!.processingPaths}` : ''}</span>}
               {(role?.transparentPaths || 0) > 0 && <span className="role-chip role-transparent"><ArrowLeftRight size={10} />透明传递{role!.transparentPaths > 1 ? ` ×${role!.transparentPaths}` : ''}</span>}
               {(role?.relayPaths || 0) > 0 && <span className="role-chip role-relay"><Workflow size={10} />中继{role!.relayPaths > 1 ? ` ×${role!.relayPaths}` : ''}</span>}
-            </div>
+            </div>}
           </>
         ) : isImported ? (
           <>

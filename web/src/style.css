@@ -21203,8 +21203,6 @@ button[aria-busy="true"] {
   line-height: 1;
   white-space: nowrap;
 }
-.role-gateway { color: var(--graph-gateway); border-color: color-mix(in srgb, var(--graph-gateway) 25%, var(--border)); background: color-mix(in srgb, var(--graph-gateway) 9%, var(--surface-solid)); }
-.role-processing { color: var(--graph-relay); border-color: color-mix(in srgb, var(--graph-relay) 28%, var(--border)); background: color-mix(in srgb, var(--graph-relay) 9%, var(--surface-solid)); }
 .role-transparent { color: var(--graph-forward); border-color: color-mix(in srgb, var(--graph-forward) 25%, var(--border)); background: color-mix(in srgb, var(--graph-forward) 9%, var(--surface-solid)); }
 .role-relay { color: var(--graph-relay); border-color: color-mix(in srgb, var(--graph-relay) 25%, var(--border)); background: color-mix(in srgb, var(--graph-relay) 8%, var(--surface-solid)); }
 /* Coupling the single-root canvas cannot draw: branches rooted elsewhere. */
