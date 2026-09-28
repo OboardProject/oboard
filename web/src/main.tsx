@@ -4808,7 +4808,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   if (phase === 'backing_up') backupShownRef.current = backupShown
   const downloadPercent = download && download.total_bytes > 0 ? Math.max(0, Math.min(100, download.bytes * 100 / download.total_bytes)) : undefined
   const flowPercent = controllerUpdateFlowPercent(phase, backupShown, downloadPercent)
-  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
+  const title = phase === 'confirm' ? '确认更新主控' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
   const backupLabel = phase === 'backing_up' ? `备份 ${backupShown}%` : ''
   const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
   const backupSkipped = Boolean(skipBackup) && phase !== 'backing_up'
@@ -4830,9 +4830,8 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   if (phase === 'confirm') return <MotionDialogPanel onCancel={onCancel} className="controller-update-install-dialog" surfaceMotion="compact">
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
-      <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先检查并下载更新，默认跳过备份后安装新版本并重新启动主控。主控更新成功后，Agent 版本同步会在后台滚动进行。</p></div></div>
-      <div className="controller-update-install-notice"><strong>更新期间暂时无法访问面板是正常现象</strong><span>主控停止和重新启动期间，连接可能短暂中断，刷新时也可能看到 502 或“页面暂时无法访问”的提示。这不代表更新失败。</span></div>
-      <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。没有其他可用备份时，建议选择备份并更新。</p>
+      <div className="controller-update-install-lead"><Info size={20} /><div><strong>更新约需几分钟</strong><p>期间面板会短暂断线，可能出现 502。请勿重复安装或手动重启，稍后再打开。Agent 会在后台逐台更新。</p></div></div>
+      <p className="muted controller-update-install-advice">没有可用备份？请选择“备份并更新”；“安装更新”会跳过备份。</p>
     </div>
     <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></footer>
   </MotionDialogPanel>

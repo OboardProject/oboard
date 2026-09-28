@@ -55,7 +55,7 @@ describe('backup and update localization', () => {
     expect(main).toContain('onClick={() => onInstall(true)}>安装更新')
     expect(main).toContain('onClick={() => onInstall(false)}>备份并更新')
     expect(main).toContain('body: JSON.stringify({ skip_backup: Boolean(skipBackup) })')
-    expect(main).toContain('没有其他可用备份时，建议选择备份并更新。')
+    expect(main).toContain('没有可用备份？请选择“备份并更新”；“安装更新”会跳过备份。')
     expect(main).toContain('默认不备份数据库')
   })
 })
