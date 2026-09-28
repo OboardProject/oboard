@@ -132,13 +132,14 @@
   --text-white: #ffffff;
   --border-color: #e2e4e8;
   --border-control: #717680;
-  --border-focus: #111827;
-  --color-primary: #111827;
-  --color-primary-hover: #1f242f;
-  --color-primary-light: rgba(17, 24, 39, 0.06);
-  --color-accent: #e05628;
-  --color-accent-hover: #c8451d;
-  --color-accent-soft: rgba(224, 86, 40, 0.09);
+  --focus-ring: var(--theme-accent-color, #007aff);
+  --border-focus: var(--theme-accent-color, #007aff);
+  --color-primary: var(--theme-accent-color, #007aff);
+  --color-primary-hover: var(--theme-accent-hover, #0068d9);
+  --color-primary-light: color-mix(in srgb, var(--theme-accent-color, #007aff) 12%, transparent);
+  --color-accent: var(--theme-accent-color, #007aff);
+  --color-accent-hover: var(--theme-accent-hover, #0068d9);
+  --color-accent-soft: color-mix(in srgb, var(--theme-accent-color, #007aff) 12%, transparent);
   --color-success: #077443;
   --color-success-bg: rgba(7, 116, 67, 0.06);
   --color-warning: #9a4c07;
@@ -173,9 +174,9 @@
   --muted-2: var(--text-muted);
   --primary: var(--color-primary);
   --primary-2: var(--color-primary-hover);
-  --primary-contrast: var(--text-white);
+  --primary-contrast: var(--theme-accent-contrast, #ffffff);
   --primary-soft: var(--color-primary-light);
-  --primary-softer: rgba(17, 24, 39, 0.04);
+  --primary-softer: color-mix(in srgb, var(--theme-accent-color, #007aff) 6%, transparent);
   --accent: var(--color-accent);
   --accent-soft: var(--color-accent-soft);
   --success: var(--color-success);
@@ -191,12 +192,12 @@
   --control-height: 40px;
   --control-height-compact: 34px;
   --accent-strong: #374151;
-  --graph-entry: #20242a;
-  --graph-gateway: #0f766e;
+  --graph-entry: var(--theme-accent-color, #007aff);
+  --graph-gateway: var(--theme-accent-color, #007aff);
   --graph-relay: #4e5158;
   --graph-imported: #c4552d;
   --graph-direct: #15683f;
-  --graph-chain: #20242a;
+  --graph-chain: var(--theme-accent-color, #007aff);
   --graph-forward: #8a500b;
   --graph-wireguard: #58458c;
   --graph-ssh: #0f766e;
@@ -208,7 +209,7 @@
 .dark,
 #oboard-theme-old-layer[data-theme="dark"],
 #oboard-theme-old-layer[data-theme="dark"] * {
-  --focus-ring: #007aff;
+  --focus-ring: var(--theme-accent-color, #60a5fa);
   --control-border: #7b8290;
   --color-processing: #93c5fd;
   --color-processing-bg: #18283f;
@@ -228,12 +229,13 @@
   --text-white: #ffffff;
   --border-color: #323846;
   --border-control: #7b8290;
-  --border-focus: #f5a383;
-  --color-primary: #f5a383;
-  --color-primary-hover: #ffb89d;
-  --color-primary-light: rgba(245, 163, 131, 0.06);
-  --color-accent: #d96b43;
-  --color-accent-hover: #e57d57;
+  --border-focus: var(--theme-accent-color, #60a5fa);
+  --color-primary: var(--theme-accent-color, #60a5fa);
+  --color-primary-hover: var(--theme-accent-hover, #78b4fb);
+  --color-primary-light: color-mix(in srgb, var(--theme-accent-color, #60a5fa) 12%, transparent);
+  --color-accent: var(--theme-accent-color, #60a5fa);
+  --color-accent-hover: var(--theme-accent-hover, #78b4fb);
+  --color-accent-soft: color-mix(in srgb, var(--theme-accent-color, #60a5fa) 12%, transparent);
   --color-success: #34d399;
   --color-success-bg: rgba(52, 211, 153, 0.1);
   --color-warning: #fbbf24;
@@ -271,9 +273,9 @@
   --muted-2: var(--text-muted);
   --primary: var(--color-primary);
   --primary-2: var(--color-primary-hover);
-  --primary-contrast: #16181d;
+  --primary-contrast: var(--theme-accent-contrast, #111827);
   --primary-soft: var(--color-primary-light);
-  --primary-softer: rgba(240, 154, 120, 0.06);
+  --primary-softer: color-mix(in srgb, var(--theme-accent-color, #60a5fa) 6%, transparent);
   --accent: var(--color-accent);
   --accent-soft: var(--color-accent-soft);
   --success: var(--color-success);
@@ -285,12 +287,12 @@
   --shadow: var(--shadow-md);
   --shadow-soft: var(--shadow-sm);
   --accent-strong: #dedee4;
-  --graph-entry: #f09a78;
-  --graph-gateway: #2dd4bf;
+  --graph-entry: var(--theme-accent-color, #60a5fa);
+  --graph-gateway: var(--theme-accent-color, #60a5fa);
   --graph-relay: #a8b2c3;
   --graph-imported: #fbbf24;
   --graph-direct: #4ade80;
-  --graph-chain: #f09a78;
+  --graph-chain: var(--theme-accent-color, #60a5fa);
   --graph-forward: #fbbf24;
   --graph-wireguard: #c4b5fd;
   --graph-ssh: #2dd4bf;
@@ -30652,6 +30654,19 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   color: var(--primary-contrast) !important;
 }
 
+.accent-theme-group + .accent-theme-group {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.accent-theme-group h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 650;
+}
+
 .accent-color-picker-wrap {
   display: flex;
   flex-direction: column;
@@ -30663,15 +30678,15 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   padding: 3px;
 }
 
 .accent-color-circle {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
   border-radius: 50% !important;
   border: 1px solid color-mix(in srgb, var(--text-strong) 16%, transparent) !important;
   cursor: pointer !important;
@@ -30716,8 +30731,8 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 }
 
 .accent-custom-preview {
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   border-radius: 7px;
   border: 1px solid color-mix(in srgb, var(--text-strong) 16%, transparent);
   position: relative;
@@ -30755,7 +30770,7 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   gap: 6px;
   font-size: 12.5px;
   padding: 5px 12px !important;
-  min-height: 30px !important;
+  min-height: 44px !important;
   border-radius: var(--radius-full) !important;
 }
 

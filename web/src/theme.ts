@@ -50,66 +50,98 @@ export function watchSystemTheme(preference: ThemePreference, onChange: (theme: 
   return () => media.removeEventListener('change', update)
 }
 
-export const DEFAULT_ACCENT_COLOR = '#007aff'
-const ACCENT_COLOR_STORAGE_KEY = 'oboard.accent_color'
+export const DEFAULT_ACCENT_COLORS: Record<ThemeName, string> = {
+  light: '#007aff',
+  dark: '#60a5fa',
+}
+const ACCENT_COLOR_STORAGE_KEYS: Record<ThemeName, string> = {
+  light: 'oboard.accent_color',
+  dark: 'oboard.accent_color.dark',
+}
 
-export const ACCENT_COLOR_PRESETS = [
-  { name: '经典蓝', color: '#007aff' },
-  { name: '极光青', color: '#0e7490' },
-  { name: '翡翠绿', color: '#047857' },
-  { name: '罗兰紫', color: '#7c3aed' },
-  { name: '晚霞橙', color: '#c2410c' },
-  { name: '热烈红', color: '#be123c' },
-  { name: '流光金', color: '#a16207' },
-] as const
+export const ACCENT_COLOR_PRESETS = {
+  light: [
+    { name: '经典蓝', color: '#007aff' },
+    { name: '极光青', color: '#0e7490' },
+    { name: '翡翠绿', color: '#047857' },
+    { name: '罗兰紫', color: '#7c3aed' },
+    { name: '晚霞橙', color: '#c2410c' },
+    { name: '热烈红', color: '#be123c' },
+    { name: '流光金', color: '#a16207' },
+  ],
+  dark: [
+    { name: '拓扑蓝', color: '#60a5fa' },
+    { name: '极光青', color: '#22d3ee' },
+    { name: '翡翠绿', color: '#34d399' },
+    { name: '罗兰紫', color: '#a78bfa' },
+    { name: '晚霞橙', color: '#fb923c' },
+    { name: '热烈红', color: '#fb7185' },
+    { name: '流光金', color: '#fbbf24' },
+  ],
+} as const
 
-export function normalizeAccentColor(value: string | null | undefined): string {
+export function normalizeAccentColor(value: string | null | undefined, theme: ThemeName): string {
   if (value && /^#[0-9a-fA-F]{6}$/.test(value)) {
     return value
   }
-  return DEFAULT_ACCENT_COLOR
+  return DEFAULT_ACCENT_COLORS[theme]
 }
 
-export function getAccentColor(): string {
+export function getAccentColor(theme: ThemeName): string {
   try {
-    const value = localStorage.getItem(ACCENT_COLOR_STORAGE_KEY)
-    return normalizeAccentColor(value)
+    const value = localStorage.getItem(ACCENT_COLOR_STORAGE_KEYS[theme])
+    return normalizeAccentColor(value, theme)
   } catch {
-    return DEFAULT_ACCENT_COLOR
+    return DEFAULT_ACCENT_COLORS[theme]
   }
 }
 
-export function saveAccentColor(color: string) {
+export function saveAccentColor(theme: ThemeName, color: string) {
   try {
-    localStorage.setItem(ACCENT_COLOR_STORAGE_KEY, normalizeAccentColor(color))
+    localStorage.setItem(ACCENT_COLOR_STORAGE_KEYS[theme], normalizeAccentColor(color, theme))
   } catch {
     // The choice still applies for this session when storage is unavailable.
   }
 }
 
-export function applyAccentColorToDocument(color: string) {
-  if (typeof document === 'undefined') return
-  const validColor = normalizeAccentColor(color)
-  const root = document.documentElement
+function applyAccentColorToElement(root: HTMLElement, color: string, theme: ThemeName) {
+  const validColor = normalizeAccentColor(color, theme)
+  const hoverColor = `color-mix(in srgb, ${validColor} 85%, ${theme === 'dark' ? '#fff' : '#111827'})`
+  const contrastColor = accentContrastColor(validColor)
+  root.style.setProperty('--theme-accent-color', validColor)
+  root.style.setProperty('--theme-accent-hover', hoverColor)
+  root.style.setProperty('--theme-accent-contrast', contrastColor)
   root.style.setProperty('--color-primary', validColor)
   root.style.setProperty('--primary', validColor)
   root.style.setProperty('--focus-ring', validColor)
   root.style.setProperty('--border-focus', validColor)
-  root.style.setProperty('--color-primary-hover', `color-mix(in srgb, ${validColor} 85%, #fff)`)
-  root.style.setProperty('--primary-2', `color-mix(in srgb, ${validColor} 85%, #fff)`)
+  root.style.setProperty('--color-primary-hover', hoverColor)
+  root.style.setProperty('--primary-2', hoverColor)
   root.style.setProperty('--color-primary-light', `color-mix(in srgb, ${validColor} 12%, transparent)`)
   root.style.setProperty('--primary-soft', `color-mix(in srgb, ${validColor} 14%, transparent)`)
   root.style.setProperty('--primary-softer', `color-mix(in srgb, ${validColor} 6%, transparent)`)
-  const contrastColor = accentContrastColor(validColor)
   root.style.setProperty('--accent-contrast', contrastColor)
   root.style.setProperty('--primary-contrast', contrastColor)
+  root.style.setProperty('--accent-color', validColor)
+  root.style.setProperty('--accent-color-hover', hoverColor)
+  root.style.setProperty('--accent-color-soft', `color-mix(in srgb, ${validColor} 12%, transparent)`)
+  root.style.setProperty('--color-accent', validColor)
+  root.style.setProperty('--color-accent-hover', hoverColor)
+  root.style.setProperty('--color-accent-soft', `color-mix(in srgb, ${validColor} 12%, transparent)`)
+  root.style.setProperty('--accent', validColor)
+  root.style.setProperty('--accent-soft', `color-mix(in srgb, ${validColor} 12%, transparent)`)
+}
+
+export function applyAccentColorToDocument(color: string) {
+  if (typeof document === 'undefined') return
+  applyAccentColorToElement(document.documentElement, color, normalizeTheme(document.documentElement.dataset.theme))
 }
 
 // White text needs about 3:1 against a filled control; light accents such as
 // the gold preset get dark text instead.
 export function accentContrastColor(color: string): string {
   const channel = (offset: number) => {
-    const value = Number.parseInt(normalizeAccentColor(color).slice(offset, offset + 2), 16) / 255
+    const value = Number.parseInt(color.slice(offset, offset + 2), 16) / 255
     return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
   }
   const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
@@ -131,7 +163,7 @@ export function applyThemeToDocument(theme: ThemeName) {
   if (document.body) {
     document.body.style.backgroundColor = pageBg
   }
-  applyAccentColorToDocument(getAccentColor())
+  applyAccentColorToDocument(getAccentColor(theme))
 }
 
 // Logical theme state for click coalescing (must track intended end-state).
@@ -389,6 +421,7 @@ export async function transitionThemeTo(
     oldLayer.className = targetEl.className
     oldLayer.dataset.theme = currentTheme
     oldLayer.classList.toggle('dark', currentTheme === 'dark')
+    applyAccentColorToElement(oldLayer, getAccentColor(currentTheme), currentTheme)
 
     // Copy scroll states from original elements
     const origEls = targetEl.querySelectorAll('*')

@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemeSelector } from './components/ui/ThemeSelector'
-import { applyAccentColorToDocument, applyThemeToDocument, getThemePreference, resolveTheme, saveThemePreference, watchSystemTheme, type ThemePreference } from './theme'
+import { applyAccentColorToDocument, applyThemeToDocument, getAccentColor, getThemePreference, resolveTheme, saveAccentColor, saveThemePreference, watchSystemTheme, type ThemePreference } from './theme'
 
 beforeEach(() => {
   localStorage.clear()
@@ -71,6 +71,23 @@ it('updates primary text contrast when the accent color changes', () => {
 
   applyAccentColorToDocument('#fbbf24')
   expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#111827')
+})
+
+it('keeps separate light and dark accent colors through theme changes', () => {
+  expect(getAccentColor('light')).toBe('#007aff')
+  expect(getAccentColor('dark')).toBe('#60a5fa')
+  saveAccentColor('light', '#7c3aed')
+  saveAccentColor('dark', '#22d3ee')
+
+  applyThemeToDocument('light')
+  expect(document.documentElement.style.getPropertyValue('--primary')).toBe('#7c3aed')
+  expect(document.documentElement.style.getPropertyValue('--theme-accent-color')).toBe('#7c3aed')
+  applyThemeToDocument('dark')
+  expect(document.documentElement.style.getPropertyValue('--primary')).toBe('#22d3ee')
+  expect(document.documentElement.style.getPropertyValue('--theme-accent-color')).toBe('#22d3ee')
+  expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#111827')
+  applyThemeToDocument('light')
+  expect(document.documentElement.style.getPropertyValue('--primary')).toBe('#7c3aed')
 })
 
 it('selects light, automatic and dark modes directly with icon-only buttons', async () => {
