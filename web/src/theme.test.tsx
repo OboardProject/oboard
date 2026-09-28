@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ThemeSelector } from './components/ui/ThemeSelector'
-import { applyAccentColorToDocument, applyThemeToDocument, getAccentColor, getThemePreference, resolveTheme, saveAccentColor, saveThemePreference, watchSystemTheme, type ThemePreference } from './theme'
+import { applyAccentColorToDocument, applyThemeToDocument, getAccentColor, getThemePreference, resolveTheme, saveAccentColor, saveThemePreference, transitionThemeTo, watchSystemTheme, type ThemePreference } from './theme'
 
 beforeEach(() => {
   localStorage.clear()
@@ -13,8 +13,30 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  delete (document as Document & { startViewTransition?: Document['startViewTransition'] }).startViewTransition
   localStorage.clear()
   applyThemeToDocument('light')
+})
+
+it('crossfades a theme change and applies the latest choice after a rapid second change', async () => {
+  let finish!: () => void
+  const finished = new Promise<void>(resolve => { finish = resolve })
+  const start = vi.fn((update: () => void) => {
+    update()
+    return { finished }
+  })
+  Object.defineProperty(document, 'startViewTransition', { configurable: true, value: start })
+  const onApplied = vi.fn()
+
+  const first = transitionThemeTo('dark', onApplied)
+  expect(start).toHaveBeenCalledTimes(1)
+  expect(document.documentElement.classList.contains('theme-crossfade')).toBe(true)
+  expect(document.documentElement.dataset.theme).toBe('dark')
+  await transitionThemeTo('light', onApplied)
+  finish()
+  await first
+  await vi.waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'))
+  expect(onApplied).toHaveBeenLastCalledWith('light')
 })
 
 function mockSystemTheme(dark: boolean) {

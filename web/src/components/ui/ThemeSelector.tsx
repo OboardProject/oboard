@@ -1,5 +1,5 @@
 import { Monitor, Moon, Sun } from 'lucide-react'
-import { type ThemeOrigin, type ThemePreference, resolveThemeOrigin } from '../../theme'
+import { type ThemePreference } from '../../theme'
 
 const themeOptions = [
   { value: 'light', label: '浅色模式', Icon: Sun },
@@ -9,7 +9,7 @@ const themeOptions = [
 
 export function ThemeSelector({ value, onChange, variant }: {
   value: ThemePreference
-  onChange: (value: ThemePreference, origin: ThemeOrigin) => void
+  onChange: (value: ThemePreference) => void
   variant: 'sidebar' | 'hero' | 'login'
 }) {
   return <div className={`theme-selector theme-selector--${variant}`} role="group" aria-label="主题模式" data-value={value}>
@@ -21,8 +21,8 @@ export function ThemeSelector({ value, onChange, variant }: {
         aria-label={label}
         title={label}
         aria-pressed={value === option}
-        onClick={event => {
-          if (value !== option) onChange(option, resolveThemeOrigin(event))
+        onClick={() => {
+          if (value !== option) onChange(option)
         }}
       >
         <Icon size={17} aria-hidden="true" />

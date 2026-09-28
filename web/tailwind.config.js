@@ -5,7 +5,7 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   // Theme is applied as both `class="dark"` and `data-theme="dark"` on <html>.
-  // Keep class mode so Tailwind `dark:` variants work reliably with the ripple toggle.
+  // Keep class mode so Tailwind `dark:` variants follow the theme choice.
   darkMode: "class",
   theme: {
     extend: {

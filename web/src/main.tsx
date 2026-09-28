@@ -24,11 +24,9 @@ import { createPopoverPortal, ModalSurface } from './components/ui/modal-layer'
 import { createRoot } from 'react-dom/client'
 import {
   type ThemeName,
-  type ThemeOrigin,
   type ThemePreference,
   getThemePreference,
   resolveTheme,
-  resolveThemeOrigin,
   saveThemePreference,
   transitionThemeTo,
   watchSystemTheme,
@@ -1886,7 +1884,6 @@ export function App() {
   const activeTabRef = useRef(tab)
   activeTabRef.current = tab
   const [theme, setTheme] = useState<ThemePreference>(getThemePreference)
-  const themeOriginRef = useRef<ThemeOrigin | null>(null)
   const [toast, setToast] = useState<ToastState>(null)
   const [controllerUpdateInProgress, setControllerUpdateInProgress] = useState(() => sessionStorage.getItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY) === '1')
   const controllerUpdateInProgressRef = useRef(controllerUpdateInProgress)
@@ -2402,13 +2399,11 @@ export function App() {
   }, [token, tab, realtimeStatus])
   useEffect(() => {
     const apply = (next: ThemeName) => {
-      const origin = themeOriginRef.current ?? resolveThemeOrigin()
-      themeOriginRef.current = null
-      void transitionThemeTo(next, origin, () => {})
+      void transitionThemeTo(next, () => {})
     }
     apply(resolveTheme(theme))
     return watchSystemTheme(theme, next => {
-      void transitionThemeTo(next, resolveThemeOrigin(), () => {})
+      void transitionThemeTo(next, () => {})
     })
   }, [theme])
   useEffect(() => {
@@ -2435,8 +2430,7 @@ export function App() {
     return () => window.removeEventListener('popstate', onPopState)
   }, [tab])
 
-  const changeTheme = (next: ThemePreference, origin: ThemeOrigin) => {
-    themeOriginRef.current = origin
+  const changeTheme = (next: ThemePreference) => {
     saveThemePreference(next)
     setTheme(next)
   }
@@ -2748,7 +2742,7 @@ export function App() {
   )
 }
 
-function Login({ theme, onThemeChange, initialError, onToast, onToken }: { theme: ThemePreference; onThemeChange: (theme: ThemePreference, origin: ThemeOrigin) => void; initialError?: string; onToast: (message: string, kind: ToastKind) => void; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
+function Login({ theme, onThemeChange, initialError, onToast, onToken }: { theme: ThemePreference; onThemeChange: (theme: ThemePreference) => void; initialError?: string; onToast: (message: string, kind: ToastKind) => void; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
@@ -3055,7 +3049,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify: (message: string, tone?: ToastKind) => void = () => {}, sessionUser?: SessionUser | null, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch, proxyInboundFocus?: ProxyInboundFocusRequest | null, theme?: ThemePreference, onThemeChange?: (theme: ThemePreference, origin: ThemeOrigin) => void) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify: (message: string, tone?: ToastKind) => void = () => {}, sessionUser?: SessionUser | null, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch, proxyInboundFocus?: ProxyInboundFocusRequest | null, theme?: ThemePreference, onThemeChange?: (theme: ThemePreference) => void) {
   if (tab === 'account') return (
     <AccountPage
       data={data}

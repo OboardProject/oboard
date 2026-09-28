@@ -99,7 +99,6 @@
   --z-dialog: 2000;
   --z-popover: 3000;
   --z-loading: 100000;
-  --z-theme-transition: 1000000;
   --z-toast: 2147483647;
 
   font-family: var(--font-sans);
@@ -115,10 +114,7 @@
   --accent-color-soft: rgba(0, 122, 255, 0.12);
 }
 
-/* The transition snapshot uses the same palette as the live document. */
-:root,
-#oboard-theme-old-layer[data-theme="light"],
-#oboard-theme-old-layer[data-theme="light"] * {
+:root {
   color-scheme: light;
   --bg-page: #f8f9fa;
   --bg-card: #ffffff;
@@ -206,9 +202,7 @@
 
 :root[data-theme="dark"],
 :root.dark,
-.dark,
-#oboard-theme-old-layer[data-theme="dark"],
-#oboard-theme-old-layer[data-theme="dark"] * {
+.dark {
   --focus-ring: var(--theme-accent-color, #60a5fa);
   --control-border: #7b8290;
   --color-processing: #93c5fd;
@@ -338,31 +332,10 @@ body {
   overflow-x: clip;
 }
 
-/* Custom DOM Circular Ripple Overlay */
-#oboard-theme-old-layer {
-  position: fixed !important;
-  z-index: var(--z-theme-transition) !important;
-  pointer-events: none !important;
-  user-select: none !important;
-  overflow: hidden !important;
-  will-change: mask-image, -webkit-mask-image;
-}
-
-.oboard-theme-ripple-ring {
-  position: fixed;
-  border-radius: 50%;
-  transform: translate(-50%, -50%) scale(0);
-  pointer-events: none;
-  z-index: var(--z-theme-transition);
-  will-change: transform, opacity;
-}
-
-/* Disable CSS transitions on real DOM during theme ripple so sub-element split is instant and sharp */
-html.theme-no-transitions,
-html.theme-no-transitions *,
-html.theme-no-transitions *::before,
-html.theme-no-transitions *::after {
-  transition: none !important;
+html.theme-crossfade::view-transition-old(root),
+html.theme-crossfade::view-transition-new(root) {
+  animation-duration: var(--duration-dialog);
+  animation-timing-function: var(--ease-standard);
 }
 
 button,
@@ -759,10 +732,8 @@ textarea:disabled {
   outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
-html.theme-no-transitions .theme-selector::before { transition: transform 180ms ease-out !important; }
 @media (prefers-reduced-motion: reduce) {
-  .theme-selector::before,
-  html.theme-no-transitions .theme-selector::before { transition: none !important; }
+  .theme-selector::before { transition: none !important; }
 }
 .theme-selector--sidebar { flex-shrink: 0; }
 .sidebar-footer-btn {
