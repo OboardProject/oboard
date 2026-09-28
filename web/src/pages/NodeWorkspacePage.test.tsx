@@ -68,6 +68,8 @@ describe('NodeWorkspacePage', () => {
     expect(tabs.map(tab => tab.textContent)).toEqual(['节点库', '节点组', '组合订阅'])
     expect(tabs[0].getAttribute('aria-selected')).toBe('true')
     expect(document.body.textContent).toContain('香港 01')
+    expect(Array.from(container.querySelectorAll('.node-library-table th'), header => header.textContent)).toEqual(['节点', '协议', '来源', ''])
+    expect(container.querySelector('.node-library-table tbody tr')?.children).toHaveLength(4)
 
     act(() => (tabs[1] as HTMLButtonElement).click())
     expect(tabs[1].getAttribute('aria-selected')).toBe('true')

@@ -28863,7 +28863,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .node-library-table th { color: var(--muted); font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.02em; }
 .node-library-table tbody tr:last-child td { border-bottom: 0; }
 .node-library-table tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
-.node-library-table td:last-child { min-width: 88px; text-align: right; white-space: nowrap; }
+.node-library-table td:last-child { width: 1%; text-align: left; white-space: nowrap; }
 .node-library-table td strong { font-weight: 600; color: var(--text-strong); }
 
 .node-protocol-chip {

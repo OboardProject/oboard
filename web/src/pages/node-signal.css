@@ -96,8 +96,15 @@
   .node-workspace .node-group-item { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .node-workspace .node-source-status { grid-column: 1 / -1; grid-row: 2; }
   .node-workspace .node-group-actions { grid-column: 2; grid-row: 1; }
-  .node-workspace .node-library-table { min-width: 560px; }
-  .node-workspace .node-library-table th:last-child, .node-workspace .node-library-table td:last-child { position: sticky; right: 0; background: var(--surface); box-shadow: -1px 0 var(--border); }
+  .node-workspace .node-library-table { min-width: 0; table-layout: fixed; }
+  .node-workspace .node-library-table th:nth-child(2) { width: 30%; }
+  .node-workspace .node-library-table th:nth-child(3) { width: 19%; }
+  .node-workspace .node-library-table th:last-child { width: 52px; }
+  .node-workspace .node-library-table.has-editable-actions th:last-child { width: 96px; }
+  .node-workspace .node-library-table th, .node-workspace .node-library-table td { padding: 8px 6px; overflow: hidden; text-overflow: ellipsis; }
+  .node-workspace .node-library-table td:last-child { padding-inline: 2px; overflow: visible; }
+  .node-workspace .node-library-table td:first-child strong { display: block; overflow: hidden; text-overflow: ellipsis; }
+  .node-workspace .node-protocol-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .node-signal-dialog .output-filter-row { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .node-signal-dialog .output-filter-row > :nth-child(3) { grid-column: 2; }
   .node-signal-dialog .output-group-row { grid-template-columns: 20px minmax(0, 1fr) auto; }
