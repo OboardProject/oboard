@@ -24992,6 +24992,8 @@ button.dns-policy-row-main:focus {
   .dns-settings-dialog, .dns-bulk-settings-dialog, .dns-list-dialog, .dns-benchmark-history-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
   .dns-settings-page .section-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dns-settings-page .section-actions button { min-width: 0; padding-inline: 8px; }
+  .dns-server-overview .section-actions { width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 8px; }
+  .dns-server-overview .section-actions button { flex: 0 0 auto; width: auto; min-height: 44px; padding: 7px 10px; font-size: 12px; white-space: nowrap; }
   .dns-policy-selection-toolbar { align-items: stretch; flex-direction: column; padding: 9px; }
   .dns-policy-selection-toolbar > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dns-policy-selection-toolbar > div > button:only-child { grid-column: 1 / -1; }

@@ -19255,7 +19255,7 @@ function DNS({ data, client, load, notify, patchPageData }: any) {
 
   return <div className="dns-settings-page">
     <DNSListSettings data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
-    <Panel title="服务器 DNS">
+    <Panel title="服务器 DNS" className="dns-server-overview">
       <div className="section-toolbar">
         <div><h3>解析状态</h3></div>
         <div className="section-actions">
