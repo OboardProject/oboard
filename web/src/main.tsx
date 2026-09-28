@@ -137,7 +137,7 @@ import {
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
-  ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
+  GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
   ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick,
   Clock, Power, WifiOff, Building2, MapPin, Code,
   Palette, Sparkles
@@ -1018,7 +1018,7 @@ function ServerFilterDropdown({
     if (left + width > window.innerWidth - viewportPadding) {
       left = window.innerWidth - viewportPadding - width
     }
-    const popoverHeight = 180
+    const popoverHeight = 242
     const below = window.innerHeight - rect.bottom - viewportPadding - gutter
     const above = rect.top - viewportPadding - gutter
     const top = below >= popoverHeight || below >= above
@@ -1035,7 +1035,6 @@ function ServerFilterDropdown({
       const target = event.target as HTMLElement
       if (triggerRef.current?.contains(target)) return
       if (panelRef.current?.contains(target)) return
-      if (target.closest?.('.custom-select-menu')) return
       setOpen(false)
     }
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -1110,26 +1109,26 @@ function ServerFilterDropdown({
               </button>
             )}
           </div>
-          <div className="server-filter-popover-field">
-            <label className="server-filter-popover-field-label">状态</label>
-            <Select value={statusFilter} onChange={event => onStatusFilterChange(event.target.value as ServerStatusFilter)} aria-label="按状态筛选">
-              <option value="all">全部状态</option>
-              <option value="online">在线</option>
-              <option value="offline">离线</option>
-              <option value="unenrolled">未接入</option>
-            </Select>
-          </div>
-          <div className="server-filter-popover-field">
-            <label className="server-filter-popover-field-label">
-              <ArrowUpDown size={13} aria-hidden="true" />
-              <span>排序</span>
-            </label>
-            <Select value={sortMode} onChange={event => onSortModeChange(event.target.value as ServerSortMode)} aria-label="服务器排序方式">
-              <option value="created">创建顺序</option>
-              <option value="country">按国家</option>
-              <option value="custom">自定义排序</option>
-            </Select>
-          </div>
+          <fieldset className="server-filter-popover-field">
+            <legend className="server-filter-popover-field-label">状态</legend>
+            <div className="server-filter-options server-filter-status-options">
+              {([['all', '全部状态'], ['online', '在线'], ['offline', '离线'], ['unenrolled', '未接入']] as const).map(([value, label]) => (
+                <button key={value} type="button" className="server-filter-option" aria-pressed={statusFilter === value} onClick={() => onStatusFilterChange(value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="server-filter-popover-field">
+            <legend className="server-filter-popover-field-label">排序</legend>
+            <div className="server-filter-options server-filter-sort-options">
+              {([['created', '创建顺序'], ['country', '按国家'], ['custom', '自定义排序']] as const).map(([value, label]) => (
+                <button key={value} type="button" className="server-filter-option" aria-pressed={sortMode === value} onClick={() => onSortModeChange(value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
         </div>,
         document.body,
       )}
