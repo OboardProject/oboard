@@ -8152,17 +8152,6 @@ body:has(.dialog-layer) .main {
 
 .install-action-select { margin-bottom: 16px; }
 
-.install-root-note {
-  margin: -4px 0 14px;
-  padding: 9px 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  background: var(--surface-2);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .setting-switch {
   position: relative;
   flex: 0 0 auto;

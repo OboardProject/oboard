@@ -7882,7 +7882,6 @@ function AgentInstallDialog({ server, installCommand, updateCommand, windowsInst
   const command = windows
     ? action === 'install' ? windowsInstallCommand || '' : agentWindowsScriptCommand(controllerURL, action)
     : action === 'install' ? installCommand : action === 'update' && stealthActive && updateCommand ? updateCommand : agentScriptCommand(controllerURL, action)
-  const runNote = windows ? '请在目标服务器“以管理员身份运行”的 PowerShell 中执行。' : '请在目标服务器的 root SSH 中执行。'
   const description = windows && action === 'install' ? '安装 Agent 和内核并注册为 Windows 服务。' : actionDescription
   return <MotionDialogPanel onCancel={onClose} className="install-dialog">
       <header className="dialog-head">
@@ -7899,7 +7898,7 @@ function AgentInstallDialog({ server, installCommand, updateCommand, windowsInst
           <option value="linux">Linux</option>
           <option value="windows">Windows</option>
         </Select>}
-        <p className="install-root-note">{showCommand ? `${runNote}组件经过签名校验。` : action === 'update' ? '请重新获取主控生成的更新命令。' : '安全进程请通过面板的服务器删除操作卸载。'}</p>
+        {!showCommand && action === 'uninstall' && <p className="muted">安全进程请通过面板的服务器删除操作卸载。</p>}
         <div className="install-command-current">
           {showCommand ? <InstallCommandCard title={actionTitle} desc={description} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} /> : action === 'update' && isOnline ? <button type="button" onClick={() => { onClose(); void onUpdate(server) }}>从面板更新 Agent</button> : action === 'update' ? <p>Agent 当前离线。请重新获取接入命令并选择“安装”。</p> : null}
         </div>
