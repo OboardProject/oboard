@@ -889,7 +889,7 @@ function ServerRegionFilterDropdown({
     scrollParents.forEach(element => element.addEventListener('scroll', reposition))
     document.addEventListener('mousedown', closeOnOutsideClick)
     document.addEventListener('keydown', closeOnEscape)
-    window.requestAnimationFrame(() => searchRef.current?.focus())
+    if (window.innerWidth > 720) window.requestAnimationFrame(() => searchRef.current?.focus())
     return () => {
       window.removeEventListener('resize', reposition)
       window.removeEventListener('scroll', reposition, true)
@@ -6708,6 +6708,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     }
   }
   const [serverQuery, setServerQuery] = useState('')
+  const [serverSearchOpen, setServerSearchOpen] = useState(false)
+  const serverSearchRef = useRef<HTMLInputElement>(null)
+  const serverSearchToggleRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (serverSearchOpen && window.innerWidth <= 720) window.requestAnimationFrame(() => serverSearchRef.current?.focus())
+  }, [serverSearchOpen])
   const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
   const [serverRegionFilter, setServerRegionFilter] = useState('all')
   const [listPreferences, setListPreferences] = useState<ServerListPreferences>(loadServerListPreferences)
@@ -7382,9 +7388,18 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     <div className="panel-body">
     <div className="section-toolbar server-management-toolbar">
       {servers.length > 0 && <div className="server-list-toolbar">
-        <div className="server-list-search">
+        <button
+          ref={serverSearchToggleRef}
+          type="button"
+          className={`ghost icon-button server-search-toggle${serverQuery ? ' has-query' : ''}`}
+          aria-label={serverSearchOpen ? '收起服务器搜索' : serverQuery ? '展开服务器搜索，当前有搜索条件' : '展开服务器搜索'}
+          aria-expanded={serverSearchOpen}
+          aria-controls="server-list-search-field"
+          onClick={() => setServerSearchOpen(open => !open)}
+        ><Search size={17} aria-hidden="true" /></button>
+        <div id="server-list-search-field" className={`server-list-search${serverSearchOpen ? ' is-open' : ''}`}>
           <Search size={15} aria-hidden="true" />
-          <input type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
+          <input ref={serverSearchRef} type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setServerSearchOpen(false); serverSearchToggleRef.current?.focus() } }} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
           {serverQuery && <button type="button" className="ghost icon-button" onClick={() => setServerQuery('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button>}
         </div>
         {serverRegions.length > 0 && (

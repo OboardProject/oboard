@@ -31,9 +31,11 @@ describe('Server list identity status row', () => {
   })
 
   it('keeps server list search input compact and prevents excessive stretching on desktop', () => {
-    expect(source).toMatch(/className="server-list-search"/)
+    expect(source).toContain('className={`server-list-search${serverSearchOpen')
+    expect(source).toContain('className={`ghost icon-button server-search-toggle')
     expect(stylesheet).toMatch(/\.server-list-search\s*\{[^}]*width:\s*260px/s)
     expect(stylesheet).toMatch(/\.server-list-search\s*\{[^}]*flex:\s*0\s+1\s+260px/s)
+    expect(stylesheet).toMatch(/\.server-list-search\.is-open\s*\{[^}]*display:\s*flex/s)
     expect(stylesheet).not.toMatch(/\.server-list-search\s*\{[^}]*flex:\s*1\s+1\s+240px/s)
   })
 })
