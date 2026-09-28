@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
-import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
+import { dnsRecordDetail, dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 
 describe('DNS display formatting', () => {
+  it('shows only the linked server for controller-generated record comments', () => {
+    const comment = 'OBoard: 入口 9929-anytls-10477 / 服务器 9929'
+    expect(dnsRecordDetail(comment, 300, '新名称')).toBe('服务器 新名称')
+    expect(dnsRecordDetail(comment, 300)).toBe('服务器 9929')
+  })
+
+  it('preserves custom comments and TTL details', () => {
+    expect(dnsRecordDetail('手动设置', 300, '东京')).toBe('手动设置 · 服务器 东京')
+    expect(dnsRecordDetail('', 1)).toBe('TTL 1')
+  })
+
   it('renders missing and empty selections as waiting for a test', () => {
     expect(dnsSelectionLabel(null)).toBe('等待测试')
     expect(dnsSelectionLabel(undefined)).toBe('等待测试')

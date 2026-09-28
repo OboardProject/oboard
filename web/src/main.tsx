@@ -251,7 +251,7 @@ import { dnsCandidateInput, parseDNSCandidate } from './dns-candidate'
 import { localizeDNSError } from './dns-errors'
 import { DNSResolverFields, dnsResolverDraft, dnsResolverPayload, isSharedDNSList } from './components/server/network/DNSResolverFields'
 import { latencyChartRequestPath, type LatencyChartResponse, type ConnectivityWindowKey } from './connectivity-sla'
-import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
+import { dnsRecordDetail, dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   compareDNSPolicyStatus,
   dnsPolicyErrorText,
@@ -5065,7 +5065,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
       const source = oboardManaged ? 'oboard' : 'other'
       const proxyState = record.proxied ? 'proxied' : 'dns-only'
       const server = record.server_id ? serverNames.get(record.server_id) || '' : ''
-      const searchable = [record.type, record.name, record.content, record.comment || '', server, oboardManaged ? 'OBoard 管理' : '其他来源'].join(' ').toLocaleLowerCase()
+      const searchable = [record.type, record.name, record.content, dnsRecordDetail(record.comment, record.ttl, server), oboardManaged ? 'OBoard 管理' : '其他来源'].join(' ').toLocaleLowerCase()
       return (!types.size || types.has(record.type.trim().toUpperCase()))
         && (!sources.size || sources.has(source))
         && (!serverIDs.size || Boolean(record.server_id && serverIDs.has(String(record.server_id))))
@@ -5265,9 +5265,9 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
       </div>}
       {visibleRecords.length ? <div className="dns-record-list">{visibleRecords.map(record => {
         const linkedServerName = record.server_id ? serverName(record.server_id) : ''
-        const detail = record.comment || `TTL ${record.ttl}`
+        const detail = dnsRecordDetail(record.comment, record.ttl, linkedServerName)
         const isDeleting = deleting === `record-${record.id}`
-        return <div className={`dns-record-row dns-record-entry${isDeleting ? ' is-pending-delete' : ''}`} key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small>{isDeleting && <small role="status">正在删除，请等待确认…</small>}</div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} disabled={Boolean(deleting)} title="编辑" aria-label={`编辑 ${record.name}`}><Edit3 size={14} aria-hidden="true" /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} disabled={Boolean(deleting)} aria-busy={isDeleting} title={isDeleting ? '删除中' : '删除'} aria-label={`${isDeleting ? '正在删除' : '删除'} ${record.name}`}>{isDeleting ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}</button></div></div>
+        return <div className={`dns-record-row dns-record-entry${isDeleting ? ' is-pending-delete' : ''}`} key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}</small>{isDeleting && <small role="status">正在删除，请等待确认…</small>}</div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} disabled={Boolean(deleting)} title="编辑" aria-label={`编辑 ${record.name}`}><Edit3 size={14} aria-hidden="true" /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} disabled={Boolean(deleting)} aria-busy={isDeleting} title={isDeleting ? '删除中' : '删除'} aria-label={`${isDeleting ? '正在删除' : '删除'} ${record.name}`}>{isDeleting ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Trash2 size={14} aria-hidden="true" />}</button></div></div>
       })}</div> : <div className="dns-credential-empty">{!selectedZoneID ? '请先选择一个域名或在“域名管理”中添加账号。' : records.length ? '没有符合条件的解析记录。' : '该域名当前没有解析记录。'}</div>}
     </section> : <section className="settings-card dns-management-card">
       <div className="settings-card-head"><div><h3>域名与解析服务商</h3></div><button className="ghost" onClick={openCreateCredential}><Plus size={14} />新建账号</button></div>
