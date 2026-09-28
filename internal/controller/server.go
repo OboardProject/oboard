@@ -4725,7 +4725,7 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 			// a server whose Agent never claims or finishes the task retried
 			// every coordinator pass forever, because the failure path that
 			// records attempts only runs for results the Agent reports.
-			s.noteAgentUpdateOutcome(ctx, task.ServerID, "failed", taskResultMessage(task), agentUpdatePayloadBuild(task))
+			s.recordAgentUpdateTaskOutcome(ctx, task, "failed", taskResultMessage(task))
 		}
 		s.notifyTaskFailure(ctx, task)
 	}
@@ -5026,6 +5026,9 @@ func taskResultMessage(task model.AgentTask) string {
 }
 
 func (s *Server) enqueueAgentUpdate(ctx context.Context, server *model.Server, req model.AgentUpdateRequest) (model.AgentTask, bool, error) {
+	if strings.EqualFold(strings.TrimSpace(req.Source), "auto") {
+		req.Source = "panel"
+	}
 	return s.enqueueAgentUpdateWithVersion(ctx, server, req, time.Now().Unix())
 }
 
@@ -5072,6 +5075,7 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 		ExpectedBuild: version.AgentBuild,
 		Source:        source,
 		GitHubRepo:    repo,
+		AutoUpdate:    strings.EqualFold(strings.TrimSpace(req.Source), "auto"),
 	})
 	if err != nil {
 		return model.AgentTask{}, false, err
@@ -14887,9 +14891,16 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 		server.AgentMemoryBytes = req.Health.AgentMemoryBytes
 		server.AgentVersion = req.Health.AgentVersion
 		server.AgentBuild = req.Health.AgentBuild
-		if err := s.store.UpdateServer(r.Context(), server); err != nil {
+		reset, err := s.store.UpdateServerReportedAgent(r.Context(), server)
+		if err != nil {
 			fail(w, err, 500)
 			return
+		}
+		if reset {
+			s.publishRealtime("agent-updates")
+			if s.agentUpdates != nil {
+				s.agentUpdates.Wake()
+			}
 		}
 	}
 	// A reinstalled server starts from empty local state. Push the current
@@ -15363,6 +15374,12 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				s.recordUsersApplied(ctx, server, h.AppliedUsers)
 				s.syncLanes.recordProbe(server.ID, h.AppliedLatencyProbe)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
+				if result.AgentUpdateRetryReset {
+					s.publishRealtime("agent-updates")
+					if s.agentUpdates != nil {
+						s.agentUpdates.Wake()
+					}
+				}
 				s.publishServerPatch(result)
 			}
 			if err == nil && result.StatusChanged && result.OldStatus == model.ServerOffline && result.NewStatus == model.ServerOnline {
@@ -15566,7 +15583,7 @@ func (s *Server) completeAgentUpdateAfterReconnect(ctx context.Context, serverID
 	}
 	log.Printf("agent update confirmed server=%d build=%s", task.ServerID, agentBuild)
 	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
-	s.noteAgentUpdateOutcome(ctx, serverID, "succeeded", "", payload.ExpectedBuild)
+	s.recordAgentUpdateTaskOutcome(ctx, *task, "succeeded", "")
 }
 
 func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
@@ -15700,7 +15717,7 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if task.Type == model.AgentTaskTypeUpdateAgent {
-			s.noteAgentUpdateOutcome(r.Context(), task.ServerID, req.Status, taskResultMessage(model.AgentTask{ResultJSON: req.ResultJSON}), agentUpdatePayloadBuild(*task))
+			s.recordAgentUpdateTaskOutcome(r.Context(), *task, req.Status, taskResultMessage(model.AgentTask{ResultJSON: req.ResultJSON}))
 		}
 	}
 	s.recordConfigurationTaskResult(r.Context(), *task, req.Status, req.ResultJSON)

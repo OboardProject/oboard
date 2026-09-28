@@ -194,9 +194,16 @@ func (s *Server) handleStealthEnroll(session *agentlink.Session, auth *agentlink
 		server.AgentMemoryBytes = health.AgentMemoryBytes
 		server.AgentVersion = health.AgentVersion
 		server.AgentBuild = health.AgentBuild
-		if err := s.store.UpdateServer(context.Background(), server); err != nil {
+		reset, err := s.store.UpdateServerReportedAgent(context.Background(), server)
+		if err != nil {
 			session.RejectAuth("enrollment failed")
 			return
+		}
+		if reset {
+			s.publishRealtime("agent-updates")
+			if s.agentUpdates != nil {
+				s.agentUpdates.Wake()
+			}
 		}
 	}
 	s.evictAgentSessions(server.ID)

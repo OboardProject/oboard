@@ -117,7 +117,7 @@ func (s *Server) expireStuckAgentUpdateRestartsBefore(ctx context.Context, cutof
 			log.Printf("fail stuck agent update task %d: %v", task.ID, err)
 			continue
 		}
-		s.noteAgentUpdateOutcome(ctx, task.ServerID, "failed", "新版本已安装但 Agent 未以目标 build 重新连接", expected)
+		s.recordAgentUpdateTaskOutcome(ctx, task, "failed", "新版本已安装但 Agent 未以目标 build 重新连接")
 		published = true
 	}
 	if published {
@@ -146,8 +146,10 @@ func agentUpdateAttemptLimit(failureRound int) int {
 		return 3
 	case 2:
 		return 2
-	default:
+	case 3, 4, 5:
 		return 1
+	default:
+		return 0
 	}
 }
 
@@ -266,10 +268,15 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 	}
 	dirty := false
 	if state.TargetBuild != targetBuild {
-		state = store.AgentFleetState{TargetBuild: targetBuild, Rolling: state.Rolling || manual}
+		state = store.AgentFleetState{TargetBuild: targetBuild, Rolling: manual}
 		dirty = true
 	}
-	if manual && !state.Rolling {
+	if manual {
+		floor, floorErr := c.server.store.LatestAgentUpdateTaskID(ctx)
+		if floorErr != nil {
+			return empty
+		}
+		state.ManualRollTaskFloor = &floor
 		state.Rolling = true
 		dirty = true
 	}
@@ -281,8 +288,9 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 		}
 	}
 	finish := func(counts store.AgentFleetCounts, created int, counted bool) agentFleetFillResult {
-		if counted && state.Rolling && counts.Running == 0 && counts.Outdated == 0 {
+		if counted && state.Rolling && counts.Running == 0 && (counts.Outdated == 0 || state.ManualRollTaskFloor != nil && created == 0) {
 			state.Rolling = false
+			state.ManualRollTaskFloor = nil
 			dirty = true
 		}
 		persist()
@@ -302,7 +310,12 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 		counts, countErr := c.server.store.CountAgentUpdateFleet(ctx, targetBuild)
 		return finish(counts, 0, countErr == nil)
 	}
-	candidates, err := c.server.store.ListAgentUpdateCandidates(ctx, targetBuild, free*4)
+	var candidates []store.AgentUpdateCandidate
+	if state.ManualRollTaskFloor != nil {
+		candidates, err = c.server.store.ListManualRollAgentCandidates(ctx, targetBuild, *state.ManualRollTaskFloor, free*4)
+	} else {
+		candidates, err = c.server.store.ListAgentUpdateCandidates(ctx, targetBuild, free*4)
+	}
 	if err != nil {
 		persist()
 		return empty
@@ -318,18 +331,18 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 		if !buildNeedsUpdate(item.AgentBuild, targetBuild) {
 			continue
 		}
-		retry, retryErr := c.server.store.GetAgentUpdateRetry(ctx, item.ServerID, targetBuild)
-		if retryErr != nil {
-			continue
-		}
-		if retry.Attempts >= agentUpdateAttemptLimit(retry.FailureRound) {
-			continue
-		}
-		if retry.NextRetryAt != nil && retry.NextRetryAt.After(now) {
-			continue
+		if state.ManualRollTaskFloor == nil {
+			retry, retryErr := c.server.store.GetAgentUpdateRetry(ctx, item.ServerID, targetBuild)
+			if retryErr != nil || retry.Attempts >= agentUpdateAttemptLimit(retry.FailureRound) || retry.NextRetryAt != nil && retry.NextRetryAt.After(now) {
+				continue
+			}
 		}
 		server := &model.Server{ID: item.ServerID, AgentID: item.AgentID, AgentBuild: item.AgentBuild, Status: item.Status}
-		task, existing, err := c.server.enqueueAgentUpdateWithVersion(ctx, server, model.AgentUpdateRequest{Source: "auto"}, versionStamp)
+		source := "auto"
+		if state.ManualRollTaskFloor != nil {
+			source = "panel"
+		}
+		task, existing, err := c.server.enqueueAgentUpdateWithVersion(ctx, server, model.AgentUpdateRequest{Source: source}, versionStamp)
 		if err != nil {
 			continue
 		}
@@ -425,6 +438,76 @@ func (s *Server) noteAgentUpdateOutcome(ctx context.Context, serverID int64, sta
 	}
 }
 
+func (s *Server) recordAgentUpdateTaskOutcome(ctx context.Context, task model.AgentTask, status, errorText string) {
+	var payload model.UpdateAgentTaskPayload
+	_ = json.Unmarshal([]byte(task.PayloadJSON), &payload)
+	if status == "failed" || status == "rollback_failed" {
+		if server, err := s.store.GetServer(ctx, task.ServerID); err == nil && !buildNeedsUpdate(server.AgentBuild, payload.ExpectedBuild) {
+			return
+		}
+	}
+	if payload.AutoUpdate {
+		s.noteAgentUpdateOutcome(ctx, task.ServerID, status, errorText, payload.ExpectedBuild)
+		return
+	}
+	switch status {
+	case "succeeded":
+		return
+	case "failed", "rollback_failed":
+		_ = s.store.RecordManualAgentUpdateFailure(ctx, task.ServerID, payload.ExpectedBuild, errorText)
+	default:
+		return
+	}
+	s.publishRealtime("agent-updates")
+	if s.agentUpdates != nil {
+		s.agentUpdates.Wake()
+	}
+}
+
+func (c *agentUpdateCoordinator) ManualRetryFailed(ctx context.Context) (int, error) {
+	if c == nil {
+		return 0, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	target := strings.TrimSpace(version.AgentBuild)
+	settings, err := c.server.store.ListSettings(ctx)
+	if err != nil {
+		return 0, err
+	}
+	active, err := c.server.store.CountActiveAgentUpdates(ctx)
+	if err != nil {
+		return 0, err
+	}
+	free := c.concurrency(ctx, settings) - active
+	if free <= 0 {
+		return 0, nil
+	}
+	candidates, err := c.server.store.ListFailedAgentUpdateCandidates(ctx, target, free*4)
+	if err != nil {
+		return 0, err
+	}
+	created := 0
+	for _, item := range candidates {
+		if created >= free {
+			break
+		}
+		if !buildNeedsUpdate(item.AgentBuild, target) {
+			continue
+		}
+		server := &model.Server{ID: item.ServerID, AgentID: item.AgentID, AgentBuild: item.AgentBuild, Status: item.Status}
+		task, existing, err := c.server.enqueueAgentUpdateWithVersion(ctx, server, model.AgentUpdateRequest{Source: "panel"}, time.Now().Unix())
+		if err != nil || existing || task.ID == 0 || task.Status == "failed" {
+			continue
+		}
+		created++
+	}
+	if created > 0 {
+		c.server.publishRealtime("agent-updates")
+	}
+	return created, nil
+}
+
 func (s *Server) agentFleetStatus(ctx context.Context) (map[string]any, error) {
 	targetBuild := strings.TrimSpace(version.AgentBuild)
 	counts, err := s.store.CountAgentUpdateFleet(ctx, targetBuild)
@@ -444,6 +527,10 @@ func (s *Server) agentFleetStatus(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	exhausted, err := s.store.CountExhaustedAgentUpdates(ctx, targetBuild)
+	if err != nil {
+		return nil, err
+	}
+	stopped, err := s.store.CountStoppedAgentUpdates(ctx, targetBuild)
 	if err != nil {
 		return nil, err
 	}
@@ -472,6 +559,7 @@ func (s *Server) agentFleetStatus(ctx context.Context) (map[string]any, error) {
 		"auto_update_enabled":   settingBool(settings, agentAutoUpdateSetting, false),
 		"failure_count":         failureCount,
 		"exhausted_count":       exhausted,
+		"auto_stopped_count":    stopped,
 		"failed_servers":        failures,
 		"message":               "Controller 更新成功后，Agent 版本同步将在后台滚动进行。",
 	}, nil

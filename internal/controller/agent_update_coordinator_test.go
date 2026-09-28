@@ -175,10 +175,10 @@ func TestAgentUpdateRetryBudgetShrinksAcrossBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := newTestServer(db, "test-secret", "")
-	builds := []string{"build-1", "build-2", "build-3", "build-4", "build-5"}
-	limits := []int{5, 3, 2, 1, 1}
+	builds := []string{"build-1", "build-2", "build-3", "build-4", "build-5", "build-6"}
+	limits := []int{5, 3, 2, 1, 1, 1}
 	previousBuild := version.AgentBuild
-	version.AgentBuild = builds[len(builds)-1]
+	version.AgentBuild = "build-7"
 	t.Cleanup(func() { version.AgentBuild = previousBuild })
 	for round, build := range builds {
 		retry, err := db.GetAgentUpdateRetry(ctx, server.ID, build)
@@ -203,18 +203,93 @@ func TestAgentUpdateRetryBudgetShrinksAcrossBuilds(t *testing.T) {
 			t.Fatalf("exhausted build %s candidates = %#v err=%v", build, candidates, err)
 		}
 	}
+	retry, err := db.GetAgentUpdateRetry(ctx, server.ID, "build-7")
+	if err != nil || retry.FailureRound != 6 || agentUpdateAttemptLimit(retry.FailureRound) != 0 {
+		t.Fatalf("seventh build should be stopped: %#v err=%v", retry, err)
+	}
+	candidates, err := db.ListAgentUpdateCandidates(ctx, "build-7", 1)
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("stopped build candidates = %#v err=%v", candidates, err)
+	}
 	status, err := s.agentFleetStatus(ctx)
-	if err != nil || status["failure_count"] != 1 || status["exhausted_count"] != 1 {
+	if err != nil || status["failure_count"] != 1 || status["exhausted_count"] != 1 || status["auto_stopped_count"] != 1 {
 		t.Fatalf("failed update status = %#v err=%v", status, err)
 	}
 	failures, ok := status["failed_servers"].([]store.AgentUpdateFailure)
-	if !ok || len(failures) != 1 || failures[0].MaxAttempts != 1 || failures[0].LastError != "download interrupted" {
+	if !ok || len(failures) != 1 || failures[0].MaxAttempts != 0 || !failures[0].AutoStopped || failures[0].LastError != "download interrupted" {
 		t.Fatalf("failed server status = %#v", status["failed_servers"])
 	}
-	s.noteAgentUpdateOutcome(ctx, server.ID, "succeeded", "", builds[len(builds)-1])
-	retry, err := db.GetAgentUpdateRetry(ctx, server.ID, "build-6")
-	if err != nil || retry.FailureRound != 0 || retry.Attempts != 0 {
-		t.Fatalf("successful update did not reset retry history: %#v err=%v", retry, err)
+	task := model.AgentTask{ServerID: server.ID, PayloadJSON: `{"expected_build":"build-7","auto_update":false}`}
+	s.recordAgentUpdateTaskOutcome(ctx, task, "failed", "manual download interrupted")
+	retry, err = db.GetAgentUpdateRetry(ctx, server.ID, "build-7")
+	if err != nil || retry.FailureRound != 6 || retry.Attempts != 0 || retry.LastError != "manual download interrupted" {
+		t.Fatalf("manual failure changed auto budget: %#v err=%v", retry, err)
+	}
+	s.recordAgentUpdateTaskOutcome(ctx, task, "succeeded", "")
+	retry, err = db.GetAgentUpdateRetry(ctx, server.ID, "build-7")
+	if err != nil || retry.FailureRound != 6 {
+		t.Fatalf("task result reset history without a new build report: %#v err=%v", retry, err)
+	}
+}
+
+func TestManualFleetUpdateAttemptsEachNodeOnceWithoutUsingAutoBudget(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.SetSettings(ctx, map[string]string{"controller_url": "https://controller.example"}); err != nil {
+		t.Fatal(err)
+	}
+	oldBuild := version.AgentBuild
+	version.AgentBuild = "20260929000000"
+	t.Cleanup(func() { version.AgentBuild = oldBuild })
+	server := &model.Server{Name: "manual-node", Status: model.ServerOnline, AgentID: "agent-manual", AgentBuild: "20260901000000"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(db, "test-secret", "")
+	if got := s.agentUpdates.Fill(ctx, true); got.Created != 1 {
+		t.Fatalf("manual roll created %d tasks", got.Created)
+	}
+	tasks, err := db.ListTasksByServer(ctx, server.ID, 10)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("manual tasks = %#v err=%v", tasks, err)
+	}
+	var payload model.UpdateAgentTaskPayload
+	if err := json.Unmarshal([]byte(tasks[0].PayloadJSON), &payload); err != nil || payload.AutoUpdate {
+		t.Fatalf("manual payload = %#v err=%v", payload, err)
+	}
+	if err := db.CompleteTask(ctx, tasks[0].ID, "failed", `{"error":"failed once"}`); err != nil {
+		t.Fatal(err)
+	}
+	s.recordAgentUpdateTaskOutcome(ctx, tasks[0], "failed", "failed once")
+	if got := s.agentUpdates.Fill(ctx, false); got.Created != 0 {
+		t.Fatalf("manual roll retried failed node: %#v", got)
+	}
+	retry, err := db.GetAgentUpdateRetry(ctx, server.ID, version.AgentBuild)
+	if err != nil || retry.Attempts != 0 || retry.FailureRound != 0 {
+		t.Fatalf("manual roll consumed auto budget: %#v err=%v", retry, err)
+	}
+	created, err := s.agentUpdates.ManualRetryFailed(ctx)
+	if err != nil || created != 1 {
+		t.Fatalf("manual failed retry created %d tasks: %v", created, err)
+	}
+	tasks, err = db.ListTasksByServer(ctx, server.ID, 10)
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("retry tasks = %#v err=%v", tasks, err)
+	}
+	if err := db.CompleteTask(ctx, tasks[0].ID, "failed", `{"error":"failed again"}`); err != nil {
+		t.Fatal(err)
+	}
+	s.recordAgentUpdateTaskOutcome(ctx, tasks[0], "failed", "failed again")
+	retry, err = db.GetAgentUpdateRetry(ctx, server.ID, version.AgentBuild)
+	if err != nil || retry.Attempts != 0 || retry.FailureRound != 0 {
+		t.Fatalf("manual failed retry consumed auto budget: %#v err=%v", retry, err)
+	}
+	if got := s.agentUpdates.Fill(ctx, true); got.Created != 1 {
+		t.Fatalf("new manual click created %d tasks", got.Created)
 	}
 }
 

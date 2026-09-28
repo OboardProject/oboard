@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -65,13 +66,14 @@ type ServerRuntimeState struct {
 // report already owning the transition yields StatusChanged=false so recovery
 // handling stays idempotent.
 type HealthApplyResult struct {
-	OldStatus      model.ServerStatus
-	NewStatus      model.ServerStatus
-	StatusChanged  bool
-	Prev           ServerRuntimeState
-	Curr           ServerRuntimeState
-	SampleInserted bool
-	Coalesced      bool
+	AgentUpdateRetryReset bool
+	OldStatus             model.ServerStatus
+	NewStatus             model.ServerStatus
+	StatusChanged         bool
+	Prev                  ServerRuntimeState
+	Curr                  ServerRuntimeState
+	SampleInserted        bool
+	Coalesced             bool
 }
 
 // ApplyHealthReport persists one Agent health report. Unlike
@@ -170,6 +172,9 @@ func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64
 	curr.ProcessCount = report.ProcessCount
 	curr.AgentVersion = report.AgentVersion
 	curr.AgentBuild = report.AgentBuild
+	if strings.TrimSpace(curr.AgentBuild) == "" {
+		curr.AgentBuild = prev.AgentBuild
+	}
 	curr.SingBoxVersion = report.SingBoxVersion
 	curr.KernelCapabilities = append([]string(nil), report.KernelCapabilities...)
 	// An Agent that reports no TFO state keeps the last known one instead of
@@ -183,7 +188,7 @@ func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64
 	coalesced := shouldCoalesceHealthRuntime(prev, curr, seenAt)
 	if !coalesced {
 		res, err := tx.ExecContext(ctx, `update servers set status=?,os=?,distro_id=?,distro_version=?,distro_name=?,libc=?,service_manager=?,package_manager=?,arch=?,kernel=?,cpu=?,cpu_cores=?,memory_bytes=?,cpu_usage_percent=?,memory_used_bytes=?,memory_total_bytes=?,agent_memory_bytes=?,disk_bytes=?,disk_total_bytes=?,tcp_connection_count=?,udp_connection_count=?,process_count=?,agent_version=?,agent_build=?,sing_box_version=?,kernel_capabilities_json=?,tcp_fastopen_state=?,tcp_fastopen_value=?,public_ipv4=?,public_ipv6=?,interface_ipv6=?,detected_region_code=?,last_seen_at=? where id=? and status=?`,
-			newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, curr.CPUCores, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, report.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
+			newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, curr.CPUCores, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, curr.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
 		if err != nil {
 			return HealthApplyResult{}, err
 		}
@@ -206,6 +211,18 @@ func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64
 			return HealthApplyResult{}, err
 		}
 	}
+	retryReset := false
+	if agentReportedNewBuild(prev.AgentBuild, curr.AgentBuild) {
+		res, err := tx.ExecContext(ctx, `delete from agent_update_retries where server_id=?`, serverID)
+		if err != nil {
+			return HealthApplyResult{}, err
+		}
+		count, err := res.RowsAffected()
+		if err != nil {
+			return HealthApplyResult{}, err
+		}
+		retryReset = count > 0
+	}
 	if err := tx.Commit(); err != nil {
 		return HealthApplyResult{}, err
 	}
@@ -217,7 +234,7 @@ func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64
 	} else if !sampleDue {
 		s.noteMetricSampleSuppressed(serverID)
 	}
-	result := HealthApplyResult{OldStatus: prev.Status, NewStatus: newStatus, StatusChanged: !coalesced && prev.Status != newStatus, Prev: prev, Curr: curr, SampleInserted: sampleInserted, Coalesced: coalesced}
+	result := HealthApplyResult{OldStatus: prev.Status, NewStatus: newStatus, StatusChanged: !coalesced && prev.Status != newStatus, Prev: prev, Curr: curr, SampleInserted: sampleInserted, Coalesced: coalesced, AgentUpdateRetryReset: retryReset}
 	return result, nil
 }
 

@@ -2819,7 +2819,8 @@ func (s *Store) UpdateServerWithTraffic(ctx context.Context, v *model.Server, us
 var ErrServerRevisionConflict = errors.New("server revision conflict: reload the server before saving")
 
 type ServerUpdateOptions struct {
-	ConfigurationIntent *ServerConfigurationIntent
+	ResetAgentUpdateOnNewBuild *bool
+	ConfigurationIntent        *ServerConfigurationIntent
 	// RejectWhenDeleting makes a management save fail once the server's
 	// deletion has been claimed. Agent-driven health updates deliberately do
 	// not set it: they only refresh state that is about to be removed anyway,
@@ -2831,6 +2832,12 @@ type ServerUpdateOptions struct {
 	TrafficWindow         model.ServerTrafficWindow
 	AuthorizationFastLane *bool
 	RuntimeUsersEnabled   *bool
+}
+
+func (s *Store) UpdateServerReportedAgent(ctx context.Context, server *model.Server) (bool, error) {
+	reset := false
+	err := s.UpdateServerSettings(ctx, server, ServerUpdateOptions{ResetAgentUpdateOnNewBuild: &reset})
+	return reset, err
 }
 
 func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, options ServerUpdateOptions) error {
@@ -2852,6 +2859,12 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 		return err
 	}
 	defer tx.Rollback()
+	var previousAgentBuild string
+	if options.ResetAgentUpdateOnNewBuild != nil {
+		if err := tx.QueryRowContext(ctx, `select coalesce(agent_build,'') from servers where id=?`, v.ID).Scan(&previousAgentBuild); err != nil {
+			return err
+		}
+	}
 	if options.RejectWhenDeleting {
 		claimed, err := serverDeletionClaimedTx(ctx, tx, v.ID)
 		if err != nil {
@@ -2926,8 +2939,23 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 	if err != nil {
 		return err
 	}
+	retryReset := false
+	if options.ResetAgentUpdateOnNewBuild != nil && agentReportedNewBuild(previousAgentBuild, v.AgentBuild) {
+		res, err := tx.ExecContext(ctx, `delete from agent_update_retries where server_id=?`, v.ID)
+		if err != nil {
+			return err
+		}
+		count, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		retryReset = count > 0
+	}
 	if err := tx.Commit(); err != nil {
 		return err
+	}
+	if options.ResetAgentUpdateOnNewBuild != nil {
+		*options.ResetAgentUpdateOnNewBuild = retryReset
 	}
 	if options.ConfigurationIntent != nil {
 		options.ConfigurationIntent.OperationID = operationID

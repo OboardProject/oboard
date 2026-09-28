@@ -60,31 +60,17 @@ func (s *Server) agentUpdatesRetryFailed(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	target := strings.TrimSpace(version.AgentBuild)
-	if err := s.store.ReleaseAgentUpdateRetryDelays(r.Context(), target); err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	state, err := s.store.GetAgentFleetState(r.Context())
+	created, err := s.agentUpdates.ManualRetryFailed(r.Context())
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
-	}
-	state.Paused = false
-	state.LastPauseReason = ""
-	state.TargetBuild = target
-	if err := s.store.SaveAgentFleetState(r.Context(), state); err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	if s.agentUpdates != nil {
-		s.agentUpdates.Fill(r.Context(), true)
-		s.agentUpdates.Wake()
 	}
 	status, err := s.agentFleetStatus(r.Context())
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
+	status["manual_created"] = created
 	auditReq(s, r, "retry_failed", "agent_updates", target)
 	write(w, http.StatusOK, status)
 }
@@ -153,7 +139,7 @@ func (s *Server) registerAgentUpdateOperations() {
 		if err := strictAutomationInput(input, &request); err != nil {
 			return nil, err
 		}
-		return map[string]any{"retry": true}, nil
+		return map[string]any{"manual_once": true}, nil
 	})
 	s.automation.RegisterRevisionResolver("agent_updates.retry_failed", func(context.Context, application.Principal, json.RawMessage) (map[string]string, error) {
 		return map[string]string{"agent_updates:singleton": "fleet"}, nil
@@ -163,24 +149,15 @@ func (s *Server) registerAgentUpdateOperations() {
 		if err := strictAutomationInput(input, &request); err != nil {
 			return nil, err
 		}
-		target := strings.TrimSpace(version.AgentBuild)
-		if err := s.store.ReleaseAgentUpdateRetryDelays(ctx, target); err != nil {
-			return nil, err
-		}
-		state, err := s.store.GetAgentFleetState(ctx)
+		created, err := s.agentUpdates.ManualRetryFailed(ctx)
 		if err != nil {
 			return nil, err
 		}
-		state.Paused = false
-		state.LastPauseReason = ""
-		state.TargetBuild = target
-		if err := s.store.SaveAgentFleetState(ctx, state); err != nil {
+		status, err := s.agentFleetStatus(ctx)
+		if err != nil {
 			return nil, err
 		}
-		if s.agentUpdates != nil {
-			s.agentUpdates.Fill(ctx, true)
-			s.agentUpdates.Wake()
-		}
-		return s.agentFleetStatus(ctx)
+		status["manual_created"] = created
+		return status, nil
 	})
 }

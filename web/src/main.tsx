@@ -411,7 +411,9 @@ type AgentFleetUpdateStatus = {
   auto_update_enabled: boolean
   failure_count: number
   exhausted_count: number
-  failed_servers: { server_id: number; server_name: string; attempts: number; max_attempts: number; last_error: string; next_retry_at?: string }[]
+  auto_stopped_count: number
+  manual_created?: number
+  failed_servers: { server_id: number; server_name: string; attempts: number; max_attempts: number; auto_stopped: boolean; last_error: string; next_retry_at?: string }[]
   message: string
 }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; resource_recorded: boolean; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
@@ -4736,7 +4738,7 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
     try {
       const result = await client.request(path, { method: 'POST' }) as AgentFleetUpdateStatus
       setStatus(result)
-      notify?.(label, 'success')
+      notify?.(path === '/agent-updates/retry-failed' ? `已创建 ${result.manual_created || 0} 个一次性手动更新任务` : label, 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -4749,10 +4751,10 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
     <AgentFleetProgress status={status} />
     {status.paused && <div className="controller-update-error" role="status">{status.pause_reason || 'Agent 滚动更新已暂停'}</div>}
     {status.failure_count > 0 && <details className="controller-update-warning">
-      <summary>更新失败 {status.failure_count} 台{status.exhausted_count > 0 ? `，${status.exhausted_count} 台已停止自动重试` : ''}</summary>
+      <summary>更新失败 {status.failure_count} 台{status.auto_stopped_count > 0 ? `，${status.auto_stopped_count} 台已停止自动更新` : status.exhausted_count > 0 ? `，${status.exhausted_count} 台本版自动次数已用完` : ''}</summary>
       <ul>{status.failed_servers.map(item => <li key={item.server_id}>
-        <strong>{item.server_name}</strong>：已尝试 {item.attempts}/{item.max_attempts} 次
-        {item.next_retry_at ? `，下次 ${new Date(item.next_retry_at).toLocaleString()}` : item.attempts >= item.max_attempts ? '，等待主控下一次更新' : ''}
+        <strong>{item.server_name}</strong>：{item.auto_stopped ? '自动更新已停止，需手动更新' : `本版自动尝试 ${item.attempts}/${item.max_attempts} 次`}
+        {!item.auto_stopped && (item.next_retry_at ? `，下次 ${new Date(item.next_retry_at).toLocaleString()}` : item.attempts >= item.max_attempts ? '，等待主控下一次更新' : '')}
         {item.last_error && <div>{item.last_error}</div>}
       </li>)}</ul>
       {status.failure_count > status.failed_servers.length && <p>仅显示最近 {status.failed_servers.length} 台，请到任务中心查看其余失败记录。</p>}
@@ -4762,7 +4764,7 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
       {status.paused
         ? <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/resume', '已恢复 Agent 滚动更新')}>{busy === '/agent-updates/resume' ? '处理中...' : '恢复'}</button>
         : <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/pause', '已暂停 Agent 滚动更新')}>{busy === '/agent-updates/pause' ? '处理中...' : '暂停'}</button>}
-      <button type="button" className="ghost" disabled={Boolean(busy) || status.failure_count === 0 || status.exhausted_count >= status.failure_count} onClick={() => void act('/agent-updates/retry-failed', '已请求重试仍有可用次数的 Agent 更新')}>重试可用次数</button>
+      <button type="button" className="ghost" disabled={Boolean(busy) || status.failure_count === 0} onClick={() => void act('/agent-updates/retry-failed', '已对可执行的失败 Agent 各请求一次手动更新')}>手动重试一次</button>
       <button type="button" className="ghost" onClick={() => setAdvancedOpen(true)}>高级</button>
     </div>
     <Dialog isOpen={advancedOpen} onClose={() => setAdvancedOpen(false)} title="Agent 滚动更新" size="default">

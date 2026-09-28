@@ -2425,6 +2425,7 @@ type UpdateAgentTaskPayload struct {
 	ExpectedBuild string `json:"expected_build"`
 	Source        string `json:"source"`
 	GitHubRepo    string `json:"github_repo"`
+	AutoUpdate    bool   `json:"auto_update"`
 }
 
 type UninstallAgentTaskPayload struct {

@@ -167,6 +167,9 @@ func TestAgentUpdateFailureRoundMigratesFromPreviousSchema(t *testing.T) {
 	if _, err := raw.Exec(`alter table agent_update_retries drop column failure_round`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := raw.Exec(`alter table agent_fleet_update_state drop column manual_roll_task_floor`); err != nil {
+		t.Fatal(err)
+	}
 	if err := raw.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -188,6 +191,92 @@ func TestAgentUpdateFailureRoundMigratesFromPreviousSchema(t *testing.T) {
 	}
 }
 
+func TestAgentUpdatePreviouslyPersistedOneShotRoundStopsAfterThreeVersions(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "retry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "previous-policy-node", Status: model.ServerOnline, AgentID: "agent-old", AgentBuild: "old"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveAgentUpdateRetry(ctx, AgentUpdateRetry{ServerID: server.ID, TargetBuild: "build-4", Attempts: 1, FailureRound: 3, LastError: "failed"}); err != nil {
+		t.Fatal(err)
+	}
+	for round, build := range []string{"build-5", "build-6", "build-7"} {
+		retry, err := db.GetAgentUpdateRetry(ctx, server.ID, build)
+		if err != nil || retry.FailureRound != round+4 || retry.Attempts != 0 {
+			t.Fatalf("build %s retry = %#v err=%v", build, retry, err)
+		}
+		candidates, err := db.ListAgentUpdateCandidates(ctx, build, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (len(candidates) == 1) != (round < 2) {
+			t.Fatalf("build %s candidates = %#v", build, candidates)
+		}
+		if round < 2 {
+			retry.Attempts = 1
+			if err := db.SaveAgentUpdateRetry(ctx, retry); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestAgentUpdateRetryResetsOnlyAfterNewerAgentBuildReport(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "retry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "reported-node", Status: model.ServerOnline, AgentID: "agent-reported", AgentBuild: "20260901000000"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	saveFailure := func() {
+		t.Helper()
+		if err := db.SaveAgentUpdateRetry(ctx, AgentUpdateRetry{ServerID: server.ID, TargetBuild: "20260910000000", Attempts: 1, FailureRound: 5, LastError: "failed"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saveFailure()
+	at := time.Now().UTC()
+	for _, build := range []string{"", "20260901000000", "20260801000000", "20260902000000"} {
+		report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, AgentBuild: build, Timestamp: at}
+		result, err := db.ApplyHealthReport(ctx, server.ID, report, healthWindow(at))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantReset := build == "20260902000000"
+		if result.AgentUpdateRetryReset != wantReset {
+			t.Fatalf("report %s reset = %t, want %t", build, result.AgentUpdateRetryReset, wantReset)
+		}
+		at = at.Add(time.Minute)
+	}
+	retry, err := db.GetAgentUpdateRetry(ctx, server.ID, "20260911000000")
+	if err != nil || retry.FailureRound != 0 || retry.Attempts != 0 {
+		t.Fatalf("new build did not reset history: %#v err=%v", retry, err)
+	}
+	saveFailure()
+	reported, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reported.AgentBuild = "20260903000000"
+	reset, err := db.UpdateServerReportedAgent(ctx, reported)
+	if err != nil || !reset {
+		t.Fatalf("enrollment report reset = %t err=%v", reset, err)
+	}
+	retry, err = db.GetAgentUpdateRetry(ctx, server.ID, "20260911000000")
+	if err != nil || retry.FailureRound != 0 || retry.Attempts != 0 {
+		t.Fatalf("enrollment report did not reset history: %#v err=%v", retry, err)
+	}
+}
+
 func TestAgentFleetStatePersistsRolling(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -195,11 +284,12 @@ func TestAgentFleetStatePersistsRolling(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
-	if err := db.SaveAgentFleetState(ctx, AgentFleetState{Rolling: true, TargetBuild: "20260828010101", Attempted: 4}); err != nil {
+	floor := int64(42)
+	if err := db.SaveAgentFleetState(ctx, AgentFleetState{Rolling: true, ManualRollTaskFloor: &floor, TargetBuild: "20260828010101", Attempted: 4}); err != nil {
 		t.Fatal(err)
 	}
 	state, err := db.GetAgentFleetState(ctx)
-	if err != nil || !state.Rolling || state.TargetBuild != "20260828010101" || state.Attempted != 4 {
+	if err != nil || !state.Rolling || state.ManualRollTaskFloor == nil || *state.ManualRollTaskFloor != floor || state.TargetBuild != "20260828010101" || state.Attempted != 4 {
 		t.Fatalf("fleet state = %#v err=%v", state, err)
 	}
 }
