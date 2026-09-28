@@ -9686,8 +9686,8 @@ body:has(.dialog-layer) .main {
 }
 
 .controller-update-install-dialog {
-  width: min(580px, calc(100vw - 28px));
-  max-height: min(94vh, 760px);
+  width: min(460px, calc(100vw - 28px));
+  max-height: min(94dvh, 760px);
 }
 
 .dialog.controller-update-install-dialog .dialog-head {
@@ -9697,11 +9697,10 @@ body:has(.dialog-layer) .main {
 .controller-update-install-body {
   display: grid;
   align-content: start;
-  gap: 12px;
-  padding: 14px 18px;
+  gap: 20px;
+  padding: 16px 18px;
 }
 
-.controller-update-install-lead,
 .controller-update-install-state,
 .controller-update-install-result {
   display: grid;
@@ -9710,7 +9709,6 @@ body:has(.dialog-layer) .main {
   align-items: start;
 }
 
-.controller-update-install-lead > svg,
 .controller-update-install-state > svg,
 .controller-update-install-result > svg {
   margin-top: 2px;
@@ -9721,7 +9719,6 @@ body:has(.dialog-layer) .main {
   color: var(--primary);
 }
 
-.controller-update-install-lead > div,
 .controller-update-install-state > div,
 .controller-update-install-result > div {
   min-width: 0;
@@ -9729,7 +9726,6 @@ body:has(.dialog-layer) .main {
   gap: 3px;
 }
 
-.controller-update-install-lead strong,
 .controller-update-install-state strong,
 .controller-update-install-result strong,
 .controller-update-install-notice strong {
@@ -9737,7 +9733,6 @@ body:has(.dialog-layer) .main {
   font-size: 14px;
 }
 
-.controller-update-install-lead p,
 .controller-update-install-state p,
 .controller-update-install-result p {
   margin: 0;
@@ -9788,16 +9783,27 @@ body:has(.dialog-layer) .main {
   line-height: 1.5;
 }
 
-.controller-update-install-notice.compact {
-  padding: 8px 12px;
-  font-size: 12px;
-  line-height: 1.45;
+.controller-update-install-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
-.controller-update-install-advice {
-  font-size: 12px;
-  line-height: 1.5;
+.controller-update-install-backup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
+
+.controller-update-install-backup > div { min-width: 0; }
+.controller-update-install-backup strong { color: var(--text-strong); font-size: 14px; font-weight: 600; }
+.controller-update-install-backup p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.controller-update-install-backup .ui-switch { flex: 0 0 auto; }
+
+.dialog.controller-update-install-dialog .controller-update-install-actions { border-top: 0; padding-top: 2px; }
+.dialog.controller-update-install-dialog .controller-update-install-actions > .primary { min-width: 160px; }
 
 .controller-update-diagnostics {
   display: grid;
@@ -10235,18 +10241,15 @@ body:has(.controller-update-immersive-layer) {
 @media (max-width: 640px) {
   .dialog.controller-update-install-dialog {
     width: calc(100vw - 16px);
-    max-height: 100dvh;
+    max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   }
   .dialog.controller-update-install-dialog .dialog-head {
     padding: 10px 12px;
   }
   .dialog.controller-update-install-dialog .dialog-head h2 { font-size: 16px; }
   .dialog.controller-update-install-dialog .controller-update-install-body {
-    gap: 8px;
-    padding: 8px 12px 10px;
-  }
-  .dialog.controller-update-install-dialog .controller-update-install-notice.compact {
-    display: none;
+    gap: 16px;
+    padding: 14px 16px;
   }
   .controller-update-stages {
     grid-template-columns: 1fr 1fr;
@@ -10266,14 +10269,11 @@ body:has(.controller-update-immersive-layer) {
   }
   .dialog.controller-update-install-dialog .dialog-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    grid-template-columns: 1fr;
+    gap: 2px;
+    padding: 2px 16px calc(12px + env(safe-area-inset-bottom));
   }
-  .dialog.controller-update-install-dialog .dialog-actions > button:only-child,
-  .dialog.controller-update-install-dialog .dialog-actions > button:last-child:nth-child(n + 3) {
-    grid-column: 1 / -1;
-  }
+  .dialog.controller-update-install-dialog .controller-update-install-actions > button { width: 100%; min-height: 44px; }
 }
 
 .controller-backup-card { gap: 18px; }

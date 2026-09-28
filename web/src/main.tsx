@@ -4117,7 +4117,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   usePausedInterval(() => { void refresh() }, 3000, (working || ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)) && realtimeStatus === 'fallback')
 
   const install = async (skipBackup = true) => {
-    if (working || !snapshot?.update_available) return
+    if (working || ownsInstallRef.current || !snapshot?.update_available) return
     ownsInstallRef.current = true
     statusRequestGuardRef.current.invalidate()
     targetBuildRef.current = snapshot.available?.build || ''
@@ -4378,7 +4378,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       setInstallDialogOpen(true)
       return
     }
-    if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
+    if (working || installExpectedRef.current || snapshot.channel === 'pinned' || !snapshot.update_available) return
     setInstallFailure('')
     setInstallConnectionInterrupted(false)
     setInstallSkipBackup(true)
@@ -4386,7 +4386,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     setInstallDialogOpen(true)
   }
   const install = async (skipBackup = true) => {
-    if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
+    if (working || installExpectedRef.current || snapshot.channel === 'pinned' || !snapshot.update_available) return
     statusRequestGuardRef.current.invalidate()
     installTargetBuildRef.current = snapshot.available?.build || ''
     cancelExpectedRef.current = false
@@ -4803,6 +4803,15 @@ function ControllerUpdateDiagnosticsSection({ reason, diagnostics, onRetry }: { 
 const rejectControllerUpdateDiagnostics = () => Promise.reject(new Error('unavailable'))
 
 function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, download, elapsedLabel, diagnostics, diagnosticsReason, onRetryDiagnostics, fetchDiagnostics, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; download?: ControllerUpdateStatus['download']; elapsedLabel?: string; diagnostics?: ControllerUpdateDiagnosticsState; diagnosticsReason?: '' | 'failed' | 'timeout'; onRetryDiagnostics?: () => void; fetchDiagnostics?: () => Promise<ControllerUpdateDiagnostics>; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
+  const [createBackup, setCreateBackup] = useState(false)
+  const closeConfirm = () => { setCreateBackup(false); onCancel() }
+  const reloadRef = useRef(onReload)
+  reloadRef.current = onReload
+  useEffect(() => {
+    if (phase !== 'complete') return
+    const timer = window.setTimeout(() => reloadRef.current(), 1500)
+    return () => window.clearTimeout(timer)
+  }, [phase])
   const waiting = ['starting', 'checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(phase)
   const backupShownRef = useRef(0)
   if (phase !== 'backing_up') backupShownRef.current = 0
@@ -4810,7 +4819,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   if (phase === 'backing_up') backupShownRef.current = backupShown
   const downloadPercent = download && download.total_bytes > 0 ? Math.max(0, Math.min(100, download.bytes * 100 / download.total_bytes)) : undefined
   const flowPercent = controllerUpdateFlowPercent(phase, backupShown, downloadPercent)
-  const title = phase === 'confirm' ? '确认更新主控' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
+  const title = phase === 'confirm' ? '更新主控' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
   const backupLabel = phase === 'backing_up' ? `备份 ${backupShown}%` : ''
   const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
   const backupSkipped = Boolean(skipBackup) && phase !== 'backing_up'
@@ -4829,19 +4838,19 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const animationMode = controllerUpdateAnimationMode(phase)
   const statusTone = animationMode === 'success' ? 'success' : animationMode === 'failed' ? 'failed' : phase === 'cancelled' ? 'muted' : 'running'
   const statusLine = controllerUpdateStatusLine({ phase, connectionInterrupted, downloadPercent, backupPercent: backupShown, targetVersion, failure: failure ? localizeErrorMessage(failure) : '' })
-  if (phase === 'confirm') return <MotionDialogPanel onCancel={onCancel} className="controller-update-install-dialog" surfaceMotion="compact">
-    <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
+  if (phase === 'confirm') return <MotionDialogPanel onCancel={closeConfirm} className="controller-update-install-dialog" surfaceMotion="compact">
+    <header className="dialog-head"><div><h2>{title}</h2>{targetVersion && <p className="muted">更新至 {targetVersion}</p>}</div><button type="button" className="ghost dialog-close icon-button" onClick={closeConfirm} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body controller-update-install-body">
-      <div className="controller-update-install-lead"><Info size={20} /><div><strong>更新约需几分钟</strong><p>期间面板会短暂断线，可能出现 502。请勿重复安装或手动重启，稍后再打开。Agent 会在后台逐台更新。</p></div></div>
-      <p className="muted controller-update-install-advice">没有可用备份？请选择“备份并更新”；“安装更新”会跳过备份。</p>
+      <p className="controller-update-install-summary">更新预计耗时 2–5 分钟。<br />更新期间面板服务将短暂中断，Agent 将在后台依次更新。</p>
+      <div className="controller-update-install-backup"><div><strong>更新前创建备份</strong><p>开启后将先备份当前数据，以便恢复。</p></div><Switch checked={createBackup} onChange={setCreateBackup} ariaLabel="更新前创建备份" /></div>
     </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></footer>
+    <footer className="dialog-actions controller-update-install-actions"><button type="button" className="ghost" onClick={closeConfirm}>取消</button><button type="button" className="primary" onClick={() => onInstall(!createBackup)}>{createBackup ? '备份并更新' : '安装更新'}</button></footer>
   </MotionDialogPanel>
-  return <ModalSurface onClose={waiting ? onHide : onCancel} rootClassName="controller-update-immersive-layer" panelClassName="controller-update-immersive" ariaLabel={title}>
+  return <ModalSurface onClose={waiting || phase === 'complete' ? () => {} : onCancel} rootClassName="controller-update-immersive-layer" panelClassName="controller-update-immersive" ariaLabel={title}>
     <ControllerUpdateLightfield mode={animationMode} reduceMotion={Boolean(reduceMotion)} lifted={detailsOpen}>
       <header className="controller-update-immersive-head">
         <div><h2>{title}</h2><p>{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>
-        {!waiting && <button type="button" className="controller-update-immersive-close" onClick={onCancel} aria-label="关闭" title="关闭"><X size={18} /></button>}
+        {!waiting && phase !== 'complete' && <button type="button" className="controller-update-immersive-close" onClick={onCancel} aria-label="关闭" title="关闭"><X size={18} /></button>}
       </header>
       <div className="controller-update-immersive-dock">
         <button type="button" className={`controller-update-lightfield-status ${statusTone}`} aria-expanded={detailsOpen} aria-controls={detailsId} title={detailsOpen ? '收起详情' : '查看详情、日志和操作'} onClick={() => setDetailsOpen(open => !open)}>
@@ -4873,7 +4882,6 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
                 <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'verifying', [])}`}><span>7</span><div><strong>验证</strong><small>{phase === 'verifying' ? '正在确认新版本可用' : '等待重启完成'}</small></div></div>
               </div>
               <div className="controller-update-install-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(flowPercent)} aria-label="主控更新进度"><span style={{ transform: `scaleX(${Math.max(0.04, flowPercent / 100)})` }} /></div>
-              <div className="controller-update-install-notice compact"><span>期间出现连接中断、短暂白屏或 502 提示都是正常现象。</span></div>
             </>}
             {phase === 'cancelled' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>更新已安全中断</strong><p>当前版本没有被改动，可以稍后重新开始更新。</p></div></div>}
             {phase === 'stopped' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>本次更新不会继续进行</strong><p>请重新检查当前版本，再决定是否重新更新。</p></div></div>}
@@ -4887,7 +4895,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
             {phase === 'cancelled' && <button type="button" onClick={onCancel}>关闭</button>}
             {phase === 'stopped' && <button type="button" onClick={onCancel}>关闭</button>}
             {phase === 'force_finished' && <button type="button" onClick={onCancel}>关闭</button>}
-            {phase === 'complete' && <button type="button" onClick={onReload}>重新加载面板</button>}
+            {phase === 'complete' && <span role="status">正在自动刷新面板…</span>}
             {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
           </footer>
         </m.div>}</AnimatePresence>

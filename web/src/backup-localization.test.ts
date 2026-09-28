@@ -52,10 +52,13 @@ describe('backup and update localization', () => {
   })
 
   it('defaults controller update confirm to install without backup', () => {
-    expect(main).toContain('onClick={() => onInstall(true)}>安装更新')
-    expect(main).toContain('onClick={() => onInstall(false)}>备份并更新')
+    expect(main).toContain('const [createBackup, setCreateBackup] = useState(false)')
+    expect(main).toContain('const closeConfirm = () => { setCreateBackup(false); onCancel() }')
+    expect(main).toContain('onClick={() => onInstall(!createBackup)}')
+    expect(main).toContain("{createBackup ? '备份并更新' : '安装更新'}")
     expect(main).toContain('body: JSON.stringify({ skip_backup: Boolean(skipBackup) })')
-    expect(main).toContain('没有可用备份？请选择“备份并更新”；“安装更新”会跳过备份。')
+    expect(main).not.toContain('没有可用备份？请选择“备份并更新”；“安装更新”会跳过备份。')
+    expect(main).not.toContain('重新加载面板')
     expect(main).toContain('默认不备份数据库')
   })
 })
