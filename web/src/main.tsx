@@ -5019,6 +5019,102 @@ function isOBoardDNSRecord(record: DNSRecord) {
   return Boolean(record.server_id || record.inbound_id || record.comment?.trim().toLocaleLowerCase().startsWith('oboard:'))
 }
 
+type DNSRecordFilterGroup = {
+  label: string
+  value: string[]
+  onChange: (value: string[]) => void
+  options: { value: string; label: string }[]
+  searchable?: boolean
+}
+
+function DNSRecordFilterDropdown({ groups, active, onReset }: { groups: DNSRecordFilterGroup[]; active: boolean; onReset: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [serverQuery, setServerQuery] = useState('')
+  const [position, setPosition] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const padding = 10
+      const gutter = 6
+      const width = Math.min(320, window.innerWidth - padding * 2)
+      const left = Math.max(padding, Math.min(rect.right - width, window.innerWidth - padding - width))
+      const below = window.innerHeight - rect.bottom - padding - gutter
+      const above = rect.top - padding - gutter
+      const placeAbove = below < 380 && above > below
+      setPosition({
+        top: placeAbove ? undefined : rect.bottom + gutter,
+        bottom: placeAbove ? window.innerHeight - rect.top + gutter : undefined,
+        left,
+        width,
+        maxHeight: Math.max(0, placeAbove ? above : below),
+      })
+    }
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (triggerRef.current?.contains(event.target as HTMLElement) || panelRef.current?.contains(event.target as HTMLElement)) return
+      setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    document.addEventListener('scroll', updatePosition, true)
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      document.removeEventListener('scroll', updatePosition, true)
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  return <div className="server-filter-dropdown dns-record-filter-dropdown">
+    <button
+      ref={triggerRef}
+      type="button"
+      className={`ghost icon-button server-filter-toggle-btn${open || active ? ' is-active' : ''}`}
+      onClick={() => { setPosition(null); setOpen(current => !current) }}
+      aria-label={open ? '收起解析筛选' : '展开解析筛选'}
+      title={open ? '收起解析筛选' : '展开解析筛选'}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+    >
+      <SlidersHorizontal size={15} aria-hidden="true" />
+      {active && <span className="server-filter-badge" />}
+    </button>
+    {open && position && createPopoverPortal(
+      <div ref={panelRef} data-popover="true" className="server-filter-popover dns-record-filter-popover" style={position} role="dialog" aria-label="解析记录筛选">
+        <div className="server-filter-popover-head">
+          <span className="server-filter-popover-title">筛选记录</span>
+          {active && <button type="button" className="ghost server-filter-popover-reset" onClick={onReset} aria-label="重置解析筛选"><Eraser size={13} aria-hidden="true" />重置</button>}
+        </div>
+        {groups.map(group => {
+          const selected = new Set(group.value)
+          const options = group.searchable && group.options.length > 6 && serverQuery.trim()
+            ? group.options.filter(option => option.label.toLocaleLowerCase().includes(serverQuery.trim().toLocaleLowerCase()))
+            : group.options
+          return <fieldset className="server-filter-popover-field" key={group.label}>
+            <legend className="server-filter-popover-field-label">{group.label}</legend>
+            {group.searchable && group.options.length > 6 && <label className="dns-filter-server-search"><Search size={14} aria-hidden="true" /><input value={serverQuery} onChange={event => setServerQuery(event.target.value)} placeholder="搜索服务器" aria-label="搜索筛选服务器" /></label>}
+            <div className={`server-filter-options dns-filter-options${group.searchable ? ' dns-filter-server-options' : ''}`}>
+              {options.length ? options.map(option => <button key={option.value} type="button" className="server-filter-option" aria-pressed={selected.has(option.value)} onClick={() => group.onChange(selected.has(option.value) ? group.value.filter(value => value !== option.value) : [...group.value, option.value])}>{option.label}</button>) : <span className="dns-filter-empty">没有匹配的服务器</span>}
+            </div>
+          </fieldset>
+        })}
+      </div>,
+      document.body,
+    )}
+  </div>
+}
+
 function ManagedDNSSettings({ data, client, load, notify }: any) {
   // One coordinator for this panel: it orders operations per object, rolls back
   // only what the server refused, and keeps an operation whose answer was lost
@@ -5245,22 +5341,22 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
           </div>
           {selectedOption && <div className="dns-zone-badges">
             <span className="status-pill dns-provider-pill"><DNSProviderIcon provider={selectedOption.credential.provider} size={14} />{dnsProviderLabels[selectedOption.credential.provider]}</span>
-            {selectedOption.credential.name && selectedOption.credential.name !== selectedOption.zone.zone_name && <span className="status-pill">{selectedOption.credential.name}</span>}
             {selectedOption.zone.server_id && <button type="button" className="status-pill ok server-related-jump-pill" onClick={() => openServerPanel(Number(selectedOption.zone.server_id), 'network', 'dns')}>关联服务器: {serverName(selectedOption.zone.server_id)}</button>}
           </div>}
         </div>
         <div className="dns-zone-actions settings-card-actions">
-          <button type="button" onClick={openCreateRecord} disabled={!zoneOptions.length}><Plus size={14} />添加记录</button>
+          <button type="button" className="dns-add-record-btn" onClick={openCreateRecord} disabled={!zoneOptions.length}><Plus size={14} />添加记录</button>
           <button type="button" className="ghost icon-button" onClick={() => void loadRecords()} disabled={!selectedZoneID || working === 'records-load'} aria-label="刷新记录" title="刷新记录"><RefreshCw size={15} className={working === 'records-load' ? 'spin' : ''} /></button>
         </div>
       </div>
       {records.length > 0 && <div className="dns-record-filter-toolbar">
-        <label className="dns-record-search"><Search size={15} /><input value={recordQuery} onChange={event => setRecordQuery(event.target.value)} placeholder="搜索域名、记录值或服务器" aria-label="搜索解析记录" /></label>
-        <SearchableMultiSelect value={recordTypeFilters} onChange={setRecordTypeFilters} options={recordTypeOptions} placeholder="记录类型" searchPlaceholder="搜索记录类型" />
-        <SearchableMultiSelect value={recordSourceFilters} onChange={setRecordSourceFilters} options={[{ value: 'oboard', label: 'OBoard 管理' }, { value: 'other', label: '其他来源' }]} placeholder="记录来源" searchPlaceholder="搜索记录来源" />
-        <SearchableMultiSelect value={recordServerFilters} onChange={setRecordServerFilters} options={recordServerOptions} placeholder="关联服务器" searchPlaceholder="搜索服务器" />
-        <SearchableMultiSelect value={recordProxyFilters} onChange={setRecordProxyFilters} options={[{ value: 'proxied', label: '已开启代理' }, { value: 'dns-only', label: '仅域名解析' }]} placeholder="代理状态" searchPlaceholder="搜索代理状态" />
-        {hasRecordFilters && <button type="button" className="ghost icon-button dns-record-filter-clear" onClick={clearRecordFilters} aria-label="清除筛选" title="清除筛选"><Eraser size={15} /></button>}
+        <label className="dns-record-search"><Search size={15} /><input value={recordQuery} onChange={event => setRecordQuery(event.target.value)} placeholder="搜索记录" aria-label="搜索域名、记录值或服务器" /></label>
+        <DNSRecordFilterDropdown active={hasRecordFilters} onReset={clearRecordFilters} groups={[
+          { label: '记录类型', value: recordTypeFilters, onChange: setRecordTypeFilters, options: recordTypeOptions },
+          { label: '记录来源', value: recordSourceFilters, onChange: setRecordSourceFilters, options: [{ value: 'oboard', label: 'OBoard 管理' }, { value: 'other', label: '其他来源' }] },
+          { label: '关联服务器', value: recordServerFilters, onChange: setRecordServerFilters, options: recordServerOptions, searchable: true },
+          { label: '代理状态', value: recordProxyFilters, onChange: setRecordProxyFilters, options: [{ value: 'proxied', label: '已开启代理' }, { value: 'dns-only', label: '仅域名解析' }] },
+        ]} />
         <span className="dns-record-filter-count">{visibleRecords.length} / {records.length}</span>
       </div>}
       {visibleRecords.length ? <div className="dns-record-list">{visibleRecords.map(record => {

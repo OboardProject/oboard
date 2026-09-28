@@ -15,11 +15,11 @@ describe('DNS zone bar toolbar layout', () => {
     expect(source).toMatch(/className="dns-zone-bar"/)
     expect(source).toMatch(/className="dns-zone-main"/)
     expect(source).toMatch(/className="dns-zone-actions settings-card-actions"/)
-    expect(source).toMatch(/<button type="button" onClick=\{openCreateRecord\}[^>]*><Plus size=\{14\} \/>添加记录<\/button>/)
+    expect(source).toMatch(/<button type="button" className="dns-add-record-btn" onClick=\{openCreateRecord\}[^>]*><Plus size=\{14\} \/>添加记录<\/button>/)
   })
 
   it('defines flex layout and padding for dns-zone-bar and its actions', () => {
-    expect(stylesheet).toMatch(/\.dns-management-card\s*>\s*\.dns-zone-bar\s*\{[^}]*padding-top:\s*18px/s)
+    expect(stylesheet).toMatch(/\.dns-management-card\s*>\s*\.dns-zone-bar\s*\{[^}]*padding-top:\s*12px/s)
     expect(stylesheet).toMatch(/\.dns-zone-main\s*\{[^}]*display:\s*flex/s)
     expect(stylesheet).toMatch(/\.dns-zone-actions\s*\{[^}]*display:\s*inline-flex/s)
   })
