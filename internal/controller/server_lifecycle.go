@@ -161,11 +161,11 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serve
 		if len(serverID) != 1 {
 			return "", nil, fmt.Errorf("server ID is required for security-process layout")
 		}
-		layout, err := s.serverStealthLayout(ctx, serverID[0])
+		addr, pin, err := s.agentStealthInstallEnv()
 		if err != nil {
 			return "", nil, err
 		}
-		addr, pin, err := s.agentStealthInstallEnv()
+		layout, err := s.issueServerStealthLayout(ctx, serverID[0])
 		if err != nil {
 			return "", nil, err
 		}
@@ -185,6 +185,9 @@ func (s *Server) agentStealthUpdateCommand(ctx context.Context, serverID int64) 
 	layout, err := s.serverStealthLayout(ctx, serverID)
 	if err != nil {
 		return "", err
+	}
+	if layout == "" {
+		return "", nil
 	}
 	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(base, "/")+"/install/agent.sh") + " | env OBOARD_ACTION=update OBOARD_INSTALL_STEALTH=1 OBOARD_STEALTH_LAYOUT=" + shellSingleQuote(layout) + " sh", nil
 }
@@ -232,7 +235,9 @@ func (s *Server) registerServerLifecycleOperations() {
 			if err != nil {
 				return nil, err
 			}
-			oneTime["update_command"] = update
+			if update != "" {
+				oneTime["update_command"] = update
+			}
 		}
 		return automation.MutationResult{Public: public, OneTime: oneTime}, nil
 	})

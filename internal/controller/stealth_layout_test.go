@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -27,8 +29,29 @@ func TestControllerStealthLayoutSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller := newTestServer(db, "test-secret", "")
-	first, err := controller.serverStealthLayout(ctx, server.ID)
+	first, err := controller.issueServerStealthLayout(ctx, server.ID)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetServerEnrollmentHash(ctx, server.ID, security.HashSecret("discarded-token"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := controller.issueServerStealthLayout(ctx, server.ID)
+	if err != nil || retry == first {
+		t.Fatalf("retry reused the failed installation layout: %v", err)
+	}
+	first = retry
+	active, err := controller.serverStealthLayout(ctx, server.ID)
+	if err != nil || active != "" {
+		t.Fatalf("layout became active before enrollment: %v", err)
+	}
+	if err := db.SetServerEnrollmentHash(ctx, server.ID, security.HashSecret("first-token"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimServerEnrollment(ctx, security.HashSecret("discarded-token"), "discarded-agent", security.HashSecret("discarded-secret")); err == nil {
+		t.Fatal("reissued enrollment left old token valid")
+	}
+	if _, err := db.ClaimServerEnrollment(ctx, security.HashSecret("first-token"), "first-agent", security.HashSecret("first-agent-token")); err != nil {
 		t.Fatal(err)
 	}
 	settings, err := db.ListSettings(ctx)
@@ -37,6 +60,9 @@ func TestControllerStealthLayoutSurvivesRestart(t *testing.T) {
 	}
 	if _, exposed := controller.publicSettingsValues(ctx, settings)["server_stealth_layout."+fmt.Sprint(server.ID)]; exposed {
 		t.Fatal("security-process layout leaked through public settings")
+	}
+	if _, exposed := controller.publicSettingsValues(ctx, settings)["server_stealth_pending."+fmt.Sprint(server.ID)]; exposed {
+		t.Fatal("pending layout leaked through public settings")
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -53,12 +79,34 @@ func TestControllerStealthLayoutSurvivesRestart(t *testing.T) {
 	if first != second {
 		t.Fatal("Controller changed the recorded layout after restart")
 	}
+	third, err := newTestServer(db, "test-secret", "").issueServerStealthLayout(ctx, server.ID)
+	if err != nil || third == second {
+		t.Fatalf("new enrollment must rotate pending layout: %v", err)
+	}
+	stillActive, err := newTestServer(db, "test-secret", "").serverStealthLayout(ctx, server.ID)
+	if err != nil || stillActive != second {
+		t.Fatalf("pending enrollment replaced active layout: %v", err)
+	}
+	if err := db.SetServerEnrollmentHash(ctx, server.ID, security.HashSecret("second-token"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimServerEnrollment(ctx, security.HashSecret("second-token"), "second-agent", security.HashSecret("second-agent-token")); err != nil {
+		t.Fatal(err)
+	}
+	promoted, err := newTestServer(db, "test-secret", "").serverStealthLayout(ctx, server.ID)
+	if err != nil || promoted != third {
+		t.Fatalf("successful enrollment did not promote pending layout: %v", err)
+	}
 	if err := db.DeleteServer(ctx, server.ID); err != nil {
 		t.Fatal(err)
 	}
 	remaining, err := db.GetSetting(ctx, "server_stealth_layout."+fmt.Sprint(server.ID))
 	if err != nil || remaining != "" {
 		t.Fatalf("deleted server retained security-process layout: %v", err)
+	}
+	remaining, err = db.GetSetting(ctx, "server_stealth_pending."+fmt.Sprint(server.ID))
+	if err != nil || remaining != "" {
+		t.Fatalf("deleted server retained pending layout: %v", err)
 	}
 }
 

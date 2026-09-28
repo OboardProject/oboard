@@ -1730,7 +1730,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_stealth_pending.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
 			continue
 		}
 		out[key] = value
@@ -6223,7 +6223,9 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 			fail(w, err, 500)
 			return
 		}
-		response["update_command"] = update
+		if update != "" {
+			response["update_command"] = update
+		}
 	}
 	// The security-process layout is Linux-only, so a stealth server gets no
 	// Windows command.
@@ -16555,6 +16557,31 @@ restart_managed_service() {
   fi
 }
 
+stop_managed_service() {
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl stop "$1" >> "$INSTALL_LOG" 2>&1 9>&-
+  elif [ "$SERVICE_MANAGER" = openrc ]; then
+    rc-service "$1" stop >> "$INSTALL_LOG" 2>&1 9>&-
+  else
+    return 1
+  fi
+}
+
+restore_previous_services() {
+  if service_active "$STEALTH_AGENT_SERVICE"; then
+    stop_managed_service "$STEALTH_AGENT_SERVICE" || return 1
+  fi
+  if service_active "$STEALTH_CORE_SERVICE"; then
+    stop_managed_service "$STEALTH_CORE_SERVICE" || return 1
+  fi
+  if service_active "$STEALTH_AGENT_SERVICE" || service_active "$STEALTH_CORE_SERVICE"; then
+    return 1
+  fi
+  for previous_service in $OLD_ACTIVE_SERVICES; do
+    restart_managed_service "$previous_service" || return 1
+  done
+}
+
 # A service that comes up and immediately exits is a failed update, not a
 # successful one. Restart exit codes alone do not catch that.
 wait_service_stable() {
@@ -17797,22 +17824,50 @@ case "$ACTION" in
       if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$STEALTH_AGENT_BIN" \
         -config "$STEALTH_CONFIG_PATH" \
         -key "$STEALTH_KEY_PATH" \
-        -enroll-only >> "$INSTALL_LOG" 2>&1; then
+        -enroll-only >> "$INSTALL_LOG" 2>"$tmp/stealth-enroll.err"; then
+        cat "$tmp/stealth-enroll.err" >> "$INSTALL_LOG"
+        if grep -qi 'invalid enrollment token' "$tmp/stealth-enroll.err"; then
+          echo "接入令牌无效或已被重新签发；请从面板复制最新安装命令并重新执行。" >&2
+          exit 1
+        fi
         echo "Agent 未能通过安全进程端口完成注册，请确认 OBOARD_STEALTH_ADDR 与端口可达后重试。" >&2
         exit 1
       fi
+      cat "$tmp/stealth-enroll.err" >> "$INSTALL_LOG"
       unset OBOARD_ENROLL_TOKEN
+      if ! old_services=$("$STEALTH_AGENT_BIN" -stealth-bootstrap -list-existing \
+        -keep-config "$STEALTH_CONFIG_PATH" -manager "$SERVICE_MANAGER" 2>> "$INSTALL_LOG"); then
+        echo "无法确认旧安装所属服务，未启动新 Agent；请检查日志：$INSTALL_LOG。" >&2
+        exit 1
+      fi
+      OLD_ACTIVE_SERVICES=
+      for previous_service in $old_services; do
+        if service_active "$previous_service"; then
+          OLD_ACTIVE_SERVICES="$OLD_ACTIVE_SERVICES $previous_service"
+          if ! stop_managed_service "$previous_service" || service_active "$previous_service"; then
+            restore_previous_services || true
+            echo "旧 Agent 或内核未能停止，已取消新服务启动；请检查日志：$INSTALL_LOG。" >&2
+            exit 1
+          fi
+        fi
+      done
       release_core_lifecycle_lock
       if [ "$SERVICE_MANAGER" = systemd ]; then
-        systemctl restart "$STEALTH_AGENT_SERVICE" >> "$INSTALL_LOG" 2>&1 9>&-
+        start_ok=0
+        systemctl restart "$STEALTH_AGENT_SERVICE" >> "$INSTALL_LOG" 2>&1 9>&- || start_ok=1
       elif [ "$SERVICE_MANAGER" = openrc ]; then
-        rc-service "$STEALTH_AGENT_SERVICE" restart >> "$INSTALL_LOG" 2>&1 9>&-
+        start_ok=0
+        rc-service "$STEALTH_AGENT_SERVICE" restart >> "$INSTALL_LOG" 2>&1 9>&- || start_ok=1
       else
         echo "无法启动安全进程服务：未识别服务管理器。" >&2
         exit 1
       fi
-      if ! wait_service_stable "$STEALTH_AGENT_SERVICE" 15; then
-        echo "安全进程 Agent 未能保持运行，安装未完成，旧安装保留。" >&2
+      if [ "$start_ok" != 0 ] || ! wait_service_stable "$STEALTH_AGENT_SERVICE" 15; then
+        if ! restore_previous_services; then
+          echo "新 Agent 启动失败且旧服务未能全部恢复；请检查日志：$INSTALL_LOG。" >&2
+          exit 1
+        fi
+        echo "安全进程 Agent 未能保持运行，已尝试恢复旧服务；请检查日志：$INSTALL_LOG。" >&2
         exit 1
       fi
       if ! "$STEALTH_AGENT_BIN" -stealth-bootstrap -cleanup-existing \

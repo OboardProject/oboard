@@ -65,11 +65,11 @@ func (i stealthIdentity) valid() bool {
 	return true
 }
 
-func (s *Server) serverStealthLayout(ctx context.Context, serverID int64) (string, error) {
+func (s *Server) issueServerStealthLayout(ctx context.Context, serverID int64) (string, error) {
 	if serverID <= 0 {
 		return "", fmt.Errorf("server ID is required for security-process layout")
 	}
-	key := fmt.Sprintf("server_stealth_layout.%d", serverID)
+	key := fmt.Sprintf("server_stealth_pending.%d", serverID)
 	identity, err := newStealthIdentity()
 	if err != nil {
 		return "", err
@@ -78,10 +78,18 @@ func (s *Server) serverStealthLayout(ctx context.Context, serverID int64) (strin
 	if err != nil {
 		return "", err
 	}
-	stored, err := s.store.SetSettingIfAbsent(ctx, key, string(raw))
-	if err != nil {
+	if err := s.store.SetSetting(ctx, key, string(raw)); err != nil {
 		return "", err
 	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+func (s *Server) serverStealthLayout(ctx context.Context, serverID int64) (string, error) {
+	stored, err := s.store.GetSetting(ctx, fmt.Sprintf("server_stealth_layout.%d", serverID))
+	if err != nil || stored == "" {
+		return "", err
+	}
+	var identity stealthIdentity
 	if err := json.Unmarshal([]byte(stored), &identity); err != nil || !identity.valid() {
 		return "", fmt.Errorf("invalid saved security-process layout for server %d", serverID)
 	}

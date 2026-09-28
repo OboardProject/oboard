@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -279,16 +280,24 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 	srv.stealthTransport.Store(&stealthTransport{addr: "transport.example.com:443", pin: "test-pin"})
 	result := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)
 	command := result["install_command"].(string)
-	layout, err := srv.serverStealthLayout(ctx, node.ID)
+	pending, err := db.GetSetting(ctx, fmt.Sprintf("server_stealth_pending.%d", node.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(command, "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) || !strings.Contains(result["update_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) {
-		t.Fatal("installation and script update must use the same Controller-recorded layout")
+	layout := base64.StdEncoding.EncodeToString([]byte(pending))
+	if !strings.Contains(command, "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) || result["update_command"] != nil {
+		t.Fatal("new installation command must use a pending layout without an update command")
+	}
+	if _, err := db.ClaimServerEnrollment(ctx, security.HashSecret(result["enrollment_token"].(string)), "enrolled-agent", security.HashSecret("agent-token")); err != nil {
+		t.Fatal(err)
 	}
 	again := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)
 	if !strings.Contains(again["update_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) {
-		t.Fatal("reissuing the command changed the saved layout")
+		t.Fatal("reissuing the command changed the active update layout")
+	}
+	newPending, err := db.GetSetting(ctx, fmt.Sprintf("server_stealth_pending.%d", node.ID))
+	if err != nil || newPending == pending || !strings.Contains(again["install_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(base64.StdEncoding.EncodeToString([]byte(newPending)))) {
+		t.Fatal("reissued installation command did not rotate its pending layout")
 	}
 	for _, want := range []string{
 		"https://panel.example.com/install/agent.sh",
@@ -321,11 +330,14 @@ func TestStealthInstallerSkipsDirectoryPromptAndChecksStartup(t *testing.T) {
 	}
 	branch := shellCaseBranch(t, script, "install)", "update)")
 	enrolled := strings.Index(branch, "unset OBOARD_ENROLL_TOKEN")
+	listed := strings.Index(branch, "-list-existing")
+	stopped := strings.Index(branch, `stop_managed_service "$previous_service"`)
+	started := strings.Index(branch, `systemctl restart "$STEALTH_AGENT_SERVICE"`)
 	stable := strings.Index(branch, `wait_service_stable "$STEALTH_AGENT_SERVICE" 15`)
 	cleanup := strings.Index(branch, "-cleanup-existing")
 	success := strings.Index(branch, "安装完成：Agent 已重新安装")
-	if enrolled < 0 || stable < enrolled || cleanup < stable || success < cleanup {
-		t.Fatal("cleanup and success must follow enrollment and verified startup")
+	if enrolled < 0 || listed < enrolled || stopped < listed || started < stopped || stable < started || cleanup < stable || success < cleanup {
+		t.Fatal("old services must stop before new Agent startup, followed by verified cleanup")
 	}
 }
 
