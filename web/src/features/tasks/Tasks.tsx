@@ -18,10 +18,10 @@ export function Tasks({ tasks, servers, client, loading: pageLoading }: TasksPro
   const data = { servers }
   const { rows, category, setCategory, manualRefreshing, lastRefreshedAt } = useTasks(tasks, client)
   const busy = manualRefreshing || pageLoading
-  return <Panel>
+  return <Panel className="tasks-panel">
     <DeploymentTaskOverview rows={rows} data={data} />
     <TaskOperationHistory client={client} refreshedAt={lastRefreshedAt} data={data} />
-    <div className="task-category-filter" role="group" aria-label="任务分类">
+    <div className="task-category-filter task-kind-filter" role="group" aria-label="任务分类">
       {taskCategories.map(item => <button key={item.id} type="button" className={category === item.id ? '' : 'ghost'} aria-pressed={category === item.id} onClick={() => setCategory(item.id)}>{item.label}<span>{rows.filter(task => taskCategory(task) === item.id).length}</span></button>)}
     </div>
     {busy && !rows.length ? <TableSkeleton /> : <TaskTimeline rows={rows.filter(task => taskCategory(task) === category)} data={data} client={client} />}
@@ -40,10 +40,18 @@ function TaskOperationHistory({ client, refreshedAt, data }: { client?: APIClien
     return () => { active = false }
   }, [client, before, refreshedAt])
   if (!records.length && !failed && !before) return null
-  return <section className="task-attempt-history" aria-label="批量操作记录">
+  return <section className="task-attempt-history task-operation-history" aria-label="批量操作记录">
     <h3>批量操作记录</h3>
     {failed && <p className="muted">操作记录刷新失败，已显示的结果可能不是最新状态</p>}
-    {records.map(op => <TaskOperationDetails key={op.id} op={op} client={client} data={data} refreshedAt={refreshedAt} />)}
+    <div className="task-operation-list">
+      {records.slice(0, 3).map(op => <TaskOperationDetails key={op.id} op={op} client={client} data={data} refreshedAt={refreshedAt} />)}
+    </div>
+    {records.length > 3 && <details className="task-operation-older">
+      <summary>更早的批量操作 · {records.length - 3} 条</summary>
+      <div className="task-operation-list">
+        {records.slice(3).map(op => <TaskOperationDetails key={op.id} op={op} client={client} data={data} refreshedAt={refreshedAt} />)}
+      </div>
+    </details>}
     <div className="section-actions">
       {before && <button type="button" className="ghost" onClick={() => setBefore(undefined)}>返回最新</button>}
       {records.length === 25 && <button type="button" className="ghost" onClick={() => setBefore(records[records.length - 1])}>更早的操作</button>}
@@ -64,8 +72,13 @@ function TaskOperationDetails({ op, client, data, refreshedAt }: { op: TaskOpera
     return () => { active = false }
   }, [open, client, op.id, refreshedAt])
   const current = detail || op
-  return <details onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary>{op.kind === 'servers.update' ? '服务器配置变更' : op.kind === 'servers.dns_test_batch' ? 'DNS 测试' : '操作记录'} · {formatTableTime(op.created_at)} · {current.targets.length} 台 · {current.targets.filter(t => ['failed', 'rollback_failed'].includes(t.state)).length} 失败</summary>
+  const failedCount = current.targets.filter(t => ['failed', 'rollback_failed'].includes(t.state)).length
+  return <details className="task-operation-item" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>
+      <span className="task-operation-title"><strong>{op.kind === 'servers.update' ? '服务器配置变更' : op.kind === 'servers.dns_test_batch' ? 'DNS 测试' : '操作记录'}</strong><time dateTime={op.created_at}>{formatTableTime(op.created_at)}</time></span>
+      <span className={`task-operation-result${failedCount ? ' is-fail' : ''}`}>{current.targets.length} 台 · {failedCount} 失败</span>
+      <ChevronRight size={15} className="task-chevron" aria-hidden="true" />
+    </summary>
     {current.targets.map(target => <p key={`${target.target_type}:${target.target_id}`}>{taskServerLabel(data, Number(target.target_id))} · {target.state === 'no_change' ? '已满足，无需变更' : target.state === 'evidence_insufficient' ? '尚未确认生效' : target.state === 'superseded' ? '已被后续变更替代' : labelValue(target.state)}{op.kind === 'servers.update' ? (target.cause_code === 'local_saved' ? ' · 已保存；本地设置不以部署结果确认' : target.cause_code === 'partial_scope' ? ' · 仅追踪部分配置字段，不代表整次修改已生效' : '') : target.cause_code ? ' · 准备失败，未创建任务；请检查服务器 DNS 策略后重新测试' : ''}</p>)}
     {open && failed && <p className="muted">执行明细读取失败</p>}
     {open && client && !detail && !failed && <p className="muted">正在读取执行明细…</p>}
@@ -119,7 +132,7 @@ function TaskTimeline({ rows, data, client }: { rows: Task[]; data: TaskData; cl
   const visible = filtered.filter((group, index) => index < 5 || group.tasks.some(task => ['pending', 'running'].includes(task.status)))
   const history = filtered.filter(group => !visible.includes(group))
   return <>
-    <div className="task-category-filter" role="group" aria-label="任务状态筛选">
+    <div className="task-category-filter task-status-filter" role="group" aria-label="任务状态筛选">
       {[['all', '全部状态'], ['active', '进行中'], ['failed', '含失败结果']].map(([value, label]) => <button key={value} type="button" className="ghost" aria-pressed={statusFilter === value} onClick={() => setStatusFilter(value)}>{label}</button>)}
     </div>
     {!filtered.length && <p className="muted">暂无符合条件的任务</p>}

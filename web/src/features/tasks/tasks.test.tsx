@@ -31,6 +31,30 @@ describe('task module', () => {
       vi.unstubAllGlobals()
     }
   })
+  it('shows recent batch operations and folds older records', async () => {
+    const operations = Array.from({ length: 9 }, (_, index) => ({
+      id: `operation-${index}`,
+      kind: 'servers.update',
+      created_at: `2026-09-${String(28 - index).padStart(2, '0')}T01:26:00Z`,
+      targets: [{ target_type: 'server', target_id: '2', state: 'succeeded' }],
+    }))
+    const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(String(url).includes('/task-operations?') ? { operations } : { tasks: [] }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const client = createAPIClientFactory(path => path, () => new Error('request failed'))('cookie')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<Tasks client={client} servers={[{ id: 2, name: '测试节点' }]} />))
+      const history = container.querySelector('.task-operation-history')!
+      expect(history.querySelectorAll(':scope > .task-operation-list > .task-operation-item')).toHaveLength(3)
+      expect(history.querySelector('.task-operation-older > summary')?.textContent).toContain('6 条')
+      expect(history.querySelector('.task-operation-item > summary')?.textContent).toContain('1 台 · 0 失败')
+    } finally {
+      act(() => root.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
   it('retains task summaries and recursive secret redaction', () => {
     expect(taskSummaryFromPayload('apply_core_config', { skipped: true })).toBe('配置未变化，已跳过')
     expect(redactTaskJSON({ nested: [{ password: 'secret', config: 'abc', status: 'ok' }] })).toEqual({ nested: [{ password: '***', config: '[config 3 B]', status: 'ok' }] })

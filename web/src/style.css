@@ -17967,6 +17967,45 @@ button.user-table-compact-button:hover {
 .task-attempt-history > summary { cursor: pointer; padding: 10px 12px; color: var(--text-secondary); font-size: 12px; }
 .task-attempt-history > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .task-group-history { margin-top: 12px; }
+.task-operation-history { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
+.task-operation-history h3 { margin: 0 0 10px; }
+.task-operation-list { display: grid; gap: 6px; }
+.task-operation-item { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-solid); }
+.task-operation-item > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 15px;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 7px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.task-operation-item > summary::-webkit-details-marker,
+.task-operation-older > summary::-webkit-details-marker { display: none; }
+.task-operation-item > summary:focus-visible,
+.task-operation-older > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.task-operation-item[open] > summary .task-chevron { transform: rotate(90deg); }
+.task-operation-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; min-width: 0; }
+.task-operation-title strong { color: var(--text-strong); font-size: 13px; }
+.task-operation-title time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.task-operation-result { color: var(--text-secondary); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.task-operation-result.is-fail { color: var(--danger); font-weight: 700; }
+.task-operation-item > p { margin: 0; padding: 7px 10px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.task-operation-older { margin-top: 8px; }
+.task-operation-older > summary { min-height: 44px; display: flex; align-items: center; padding: 7px 10px; cursor: pointer; color: var(--text-secondary); font-size: 12px; }
+.task-operation-older > .task-operation-list { padding-top: 6px; }
+.task-operation-history .section-actions { margin-top: 8px; }
+@media (max-width: 720px) {
+  .tasks-panel > .panel-body { padding: 12px; }
+  .tasks-panel .task-category-filter { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 94px), 1fr)); gap: 6px; margin-block: 12px; }
+  .tasks-panel .task-category-filter button { min-width: 0; min-height: 44px; padding: 6px 7px; justify-content: center; gap: 4px; border-radius: var(--radius-md); font-size: 12px; line-height: 1.15; white-space: nowrap; }
+  .tasks-panel .task-category-filter button span { font-size: 11px; }
+  .tasks-panel .task-operation-history { padding: 10px; }
+  .tasks-panel .task-operation-title { display: grid; gap: 2px; }
+  .tasks-panel .task-operation-history .section-actions button { min-height: 44px; padding: 7px 12px; font-size: 12px; }
+  .tasks-panel :is(.task-group-toggle, .task-server-toggle, .task-detail-toggle) { min-height: 44px; padding: 10px 12px; }
+}
 .task-detail-toggle > div:first-child { display: grid; gap: 3px; min-width: 0; text-align: left; overflow-wrap: anywhere; }
 .task-detail-card {
   border: 1px solid var(--border);
