@@ -165,7 +165,7 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serve
 		if err != nil {
 			return "", nil, err
 		}
-		layout, err := s.issueServerStealthLayout(ctx, serverID[0])
+		layout, err := s.serverStealthLayout(ctx, serverID[0])
 		if err != nil {
 			return "", nil, err
 		}

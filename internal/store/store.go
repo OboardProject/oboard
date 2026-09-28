@@ -2040,6 +2040,14 @@ func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	return value, err
 }
 
+func (s *Store) SetSettingIfAbsent(ctx context.Context, key, value string) (string, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do nothing`, key, value, now); err != nil {
+		return "", err
+	}
+	return s.GetSetting(ctx, key)
+}
+
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, key, value, now)
@@ -3036,15 +3044,6 @@ func (s *Store) ClaimServerEnrollment(ctx context.Context, enrollmentHash, agent
 	// confirmations describe an Agent that no longer exists, and a watermark
 	// nobody can honour keeps the fast lanes from ever delivering again.
 	if err := clearDeliveredLaneStateTx(ctx, tx, serverID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `insert into app_settings(key,value,updated_at)
-		select 'server_stealth_layout.'||?, value, ? from app_settings
-		where key='server_stealth_pending.'||? and exists (select 1 from servers where id=? and stealth_enabled=1)
-		on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, serverID, ts, serverID, serverID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `delete from app_settings where key='server_stealth_pending.'||?`, serverID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

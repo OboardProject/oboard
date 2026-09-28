@@ -33,13 +33,13 @@ import (
 
 	"github.com/OboardProject/oboard/internal/airpc"
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/auditactivity"
 	"github.com/OboardProject/oboard/internal/auditintel"
 	"github.com/OboardProject/oboard/internal/auditreview"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/capability"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
-	"github.com/OboardProject/oboard/internal/auditactivity"
 	"github.com/OboardProject/oboard/internal/core"
 	oboardgeoip "github.com/OboardProject/oboard/internal/geoip"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
@@ -261,7 +261,7 @@ type Server struct {
 	latencyHistoryNow      func() time.Time
 	// settingsCache is the revision-keyed ListSettings snapshot used by hot
 	// paths (health reports, audit gates).
-	settingsCache atomic.Pointer[settingsSnapshot]
+	settingsCache      atomic.Pointer[settingsSnapshot]
 	accountSourceCache atomic.Pointer[accountAuditSourceSnapshot]
 	// configHealthCache is the revision-keyed configuration health report.
 	// It is derived only when a console asks for it, so an operator who never
@@ -1730,7 +1730,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_stealth_pending.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
 			continue
 		}
 		out[key] = value
@@ -14734,9 +14734,9 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	event.ConditionalRequest = subscriptionETagMatches(r.Header.Get("If-None-Match"), etag)
 	auditState := s.auditSettingsState(r.Context())
 	auditOptions := store.SubscriptionAuditOptions{
-		AuditEnabled: auditState.Enabled && auditState.Subscription,
+		AuditEnabled:          auditState.Enabled && auditState.Subscription,
 		IngressAccountCharged: true,
-		Action:       auditState.Action,
+		Action:                auditState.Action,
 	}
 	var decision store.SubscriptionPullDecision
 	if custom {
@@ -14783,9 +14783,13 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	// burn-after-read token and answer 304 with no body, leaving the client
 	// without content and no way to ask again.
 	recordSuccess := func() {
-		if !auditOptions.AuditEnabled { return }
+		if !auditOptions.AuditEnabled {
+			return
+		}
 		key, sourcePolicy, policyErr := s.accountAuditSourcePolicy(r.Context())
-		if policyErr != nil { return }
+		if policyErr != nil {
+			return
+		}
 		source, sourceErr := auditactivity.SourceGroup(key, user.ID, event.SourceIP, true, sourcePolicy)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
 		defer cancel()
@@ -16590,6 +16594,120 @@ restore_previous_services() {
   done
 }
 
+stop_previous_services() {
+  listing_binary=$1
+  if ! old_services=$("$listing_binary" -stealth-bootstrap -list-existing \
+    -keep-config "$STEALTH_CONFIG_PATH" -manager "$SERVICE_MANAGER" 2>> "$INSTALL_LOG"); then
+    echo "无法确认旧安装所属服务，未启动新 Agent；请检查日志：$INSTALL_LOG。" >&2
+    return 1
+  fi
+  if [ "${STEALTH_REUSE:-0}" = 1 ]; then
+    old_services="$STEALTH_AGENT_SERVICE $STEALTH_CORE_SERVICE $old_services"
+  fi
+  OLD_ACTIVE_SERVICES=
+  for previous_service in $old_services; do
+    if service_active "$previous_service"; then
+      OLD_ACTIVE_SERVICES="$OLD_ACTIVE_SERVICES $previous_service"
+      if ! stop_managed_service "$previous_service" || service_active "$previous_service"; then
+        restore_previous_services || true
+        echo "旧 Agent 或内核未能停止，已取消新服务启动；请检查日志：$INSTALL_LOG。" >&2
+        return 1
+      fi
+    fi
+  done
+}
+
+restore_reused_install() {
+  if service_active "$STEALTH_AGENT_SERVICE"; then stop_managed_service "$STEALTH_AGENT_SERVICE" || return 1; fi
+  if service_active "$STEALTH_CORE_SERVICE"; then stop_managed_service "$STEALTH_CORE_SERVICE" || return 1; fi
+  if service_active "$STEALTH_AGENT_SERVICE" || service_active "$STEALTH_CORE_SERVICE"; then return 1; fi
+  for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do
+    [ -e "$asset.previous.$$" ] || continue
+    mv -f "$asset.previous.$$" "$asset" || return 1
+  done
+  for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do rm -f "$asset.next.$$"; done
+  for previous_service in $OLD_ACTIVE_SERVICES; do restart_managed_service "$previous_service" || return 1; done
+}
+
+install_reused_stealth() {
+  if ! existing_env=$("$tmp/$agent_name" -stealth-bootstrap -reuse-existing \
+    -install-dir "$INSTALL_DIR" -manager "$SERVICE_MANAGER" \
+    -identity-json "$STEALTH_IDENTITY_JSON" 2>> "$INSTALL_LOG"); then
+    echo "主控记录的布局与现有安装不一致，未覆盖原文件；请检查日志：$INSTALL_LOG。" >&2
+    return 1
+  fi
+  eval "$existing_env"
+  STEALTH_REUSE=1
+  BACKUP_READY=
+  for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do
+    if ! ln "$asset" "$asset.previous.$$"; then
+      for created_asset in $BACKUP_READY; do rm -f "$created_asset.previous.$$"; done
+      echo "无法保留现有组件，未停止旧服务：$asset" >&2
+      return 1
+    fi
+    BACKUP_READY="$BACKUP_READY $asset"
+  done
+  if ! stop_previous_services "$tmp/$agent_name"; then
+    for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do rm -f "$asset.previous.$$"; done
+    return 1
+  fi
+  if [ -n "${TARGET_BUILD:-}" ] && ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
+    restore_reused_install || true
+    echo "安装的 Agent 构建号与主控目标不一致，已尝试恢复旧服务。" >&2
+    return 1
+  fi
+  if ! install -m 0755 "$tmp/$agent_name" "$STEALTH_AGENT_BIN.next.$$" ||
+     ! install -m 0755 "$tmp/$core_name" "$STEALTH_CORE_BIN.next.$$" ||
+     ! install -m 0755 "$tmp/$realm_name" "$STEALTH_REALM_BIN.next.$$" ||
+     ! mv -f "$STEALTH_AGENT_BIN.next.$$" "$STEALTH_AGENT_BIN" ||
+     ! mv -f "$STEALTH_CORE_BIN.next.$$" "$STEALTH_CORE_BIN" ||
+     ! mv -f "$STEALTH_REALM_BIN.next.$$" "$STEALTH_REALM_BIN"; then
+    restore_reused_install || true
+    echo "原路径组件替换失败，已尝试恢复旧服务；请检查日志：$INSTALL_LOG。" >&2
+    return 1
+  fi
+  if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$STEALTH_AGENT_BIN" \
+    -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" -enroll-only >> "$INSTALL_LOG" 2>"$tmp/stealth-enroll.err"; then
+    cat "$tmp/stealth-enroll.err" >> "$INSTALL_LOG"
+    restore_reused_install || true
+    if grep -qi 'invalid enrollment token' "$tmp/stealth-enroll.err"; then
+      echo "接入令牌无效或已被重新签发；请从面板复制最新安装命令并重新执行。" >&2
+    else
+      echo "Agent 注册失败，已尝试恢复旧服务；请检查日志：$INSTALL_LOG。" >&2
+    fi
+    return 1
+  fi
+  cat "$tmp/stealth-enroll.err" >> "$INSTALL_LOG"
+  unset OBOARD_ENROLL_TOKEN
+  release_core_lifecycle_lock
+  case " $OLD_ACTIVE_SERVICES " in
+    *" $STEALTH_CORE_SERVICE "*)
+      REUSE_CORE_WAS_ACTIVE=1
+      if ! restart_managed_service "$STEALTH_CORE_SERVICE" || ! wait_service_stable "$STEALTH_CORE_SERVICE" 15; then
+        restore_reused_install || true
+        echo "内核重启失败，已尝试恢复旧服务；请检查日志：$INSTALL_LOG。" >&2
+        return 1
+      fi ;;
+  esac
+  if ! restart_managed_service "$STEALTH_AGENT_SERVICE" || ! wait_service_stable "$STEALTH_AGENT_SERVICE" 15; then
+    restore_reused_install || true
+    echo "Agent 重启失败，已尝试恢复旧服务；请检查日志：$INSTALL_LOG。" >&2
+    return 1
+  fi
+  if [ "${REUSE_CORE_WAS_ACTIVE:-0}" = 1 ] && ! "$STEALTH_AGENT_BIN" -verify-core-runtime -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" >> "$INSTALL_LOG" 2>&1; then
+    restore_reused_install || true
+    echo "内核运行态校验失败，已尝试恢复旧服务；请检查日志：$INSTALL_LOG。" >&2
+    return 1
+  fi
+  for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do rm -f "$asset.previous.$$" "$asset.next.$$"; done
+  if ! "$STEALTH_AGENT_BIN" -stealth-bootstrap -cleanup-existing \
+    -keep-config "$STEALTH_CONFIG_PATH" -manager "$SERVICE_MANAGER" >> "$INSTALL_LOG" 2>&1; then
+    echo "新 Agent 已运行，但其他旧安装清理失败；请检查日志：$INSTALL_LOG。" >&2
+    return 1
+  fi
+  echo "安装完成：沿用主控记录的安全进程布局，旧版本进程已停止。"
+}
+
 # A service that comes up and immediately exits is a failed update, not a
 # successful one. Restart exit codes alone do not catch that.
 wait_service_stable() {
@@ -17728,8 +17846,10 @@ case "$ACTION" in
     acquire_core_lifecycle_lock
     if [ "$STEALTH_MODE" = 1 ]; then
       resolve_update_policy
-      try_enable_bbr_fq
-      try_enable_tcp_tuning
+      if [ ! -d "$STEALTH_INSTALL_DIR" ]; then
+        try_enable_bbr_fq
+        try_enable_tcp_tuning
+      fi
       # Security-process install: the binaries prefer the GitHub release
       # (github.com is a neutral target with no panel association) and
       # integrity is enforced by the same Ed25519 manifest verification
@@ -17795,6 +17915,11 @@ case "$ACTION" in
       fi
       verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name" >> "$INSTALL_LOG" 2>&1
       chmod 0755 "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name"
+      if [ -d "$STEALTH_INSTALL_DIR" ]; then
+        echo "[3/4] 验证并沿用主控记录的安全进程布局"
+        install_reused_stealth
+        exit 0
+      fi
       install -d -m 0755 -o root -g root "$INSTALL_DIR"
       install -m 0755 "$tmp/$agent_name" "$INSTALL_DIR/oboard-agent.new"
       install -m 0755 "$tmp/$core_name" "$INSTALL_DIR/oboard-sb.new"
@@ -17843,22 +17968,7 @@ case "$ACTION" in
       fi
       cat "$tmp/stealth-enroll.err" >> "$INSTALL_LOG"
       unset OBOARD_ENROLL_TOKEN
-      if ! old_services=$("$STEALTH_AGENT_BIN" -stealth-bootstrap -list-existing \
-        -keep-config "$STEALTH_CONFIG_PATH" -manager "$SERVICE_MANAGER" 2>> "$INSTALL_LOG"); then
-        echo "无法确认旧安装所属服务，未启动新 Agent；请检查日志：$INSTALL_LOG。" >&2
-        exit 1
-      fi
-      OLD_ACTIVE_SERVICES=
-      for previous_service in $old_services; do
-        if service_active "$previous_service"; then
-          OLD_ACTIVE_SERVICES="$OLD_ACTIVE_SERVICES $previous_service"
-          if ! stop_managed_service "$previous_service" || service_active "$previous_service"; then
-            restore_previous_services || true
-            echo "旧 Agent 或内核未能停止，已取消新服务启动；请检查日志：$INSTALL_LOG。" >&2
-            exit 1
-          fi
-        fi
-      done
+      stop_previous_services "$STEALTH_AGENT_BIN" || exit 1
       release_core_lifecycle_lock
       if [ "$SERVICE_MANAGER" = systemd ]; then
         start_ok=0
