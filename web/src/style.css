@@ -12159,32 +12159,36 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .topbar {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) 44px;
-    grid-template-areas:
-      "menu status refresh"
-      "title title title";
+    grid-template-columns: 44px minmax(0, 1fr) auto 44px;
+    grid-template-areas: "menu title status refresh";
     align-items: center;
     gap: 8px;
     border-radius: 0;
   }
   .topbar.proxy-path-topbar {
     grid-template-areas:
-      "menu status refresh"
-      "title title title"
-      "picker picker picker";
+      "menu title status refresh"
+      "picker picker picker picker";
     row-gap: 4px;
     margin-bottom: 12px;
     padding-bottom: 10px;
   }
   .topbar.topbar-quiet {
-    grid-template-areas: "menu status refresh";
+    grid-template-areas: "menu title status refresh";
   }
   .topbar-title-container,
   .topbar-actions {
     display: contents;
   }
   .mobile-menu-toggle { grid-area: menu; }
-  .topbar-title-stage { grid-area: title; }
+  .topbar-title-stage { grid-area: title; align-self: center; }
+  .topbar-title-stage h1 {
+    margin: 0;
+    font-size: 18px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .topbar.topbar-quiet .topbar-title-stage { display: none; }
   .deploy-status-pill {
     grid-area: status;
@@ -12194,7 +12198,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     padding: 4px 10px;
     font-size: 12px;
     justify-self: end;
-    max-width: 100%;
+    max-width: 112px;
     white-space: nowrap;
   }
   .deploy-status-pill > span {
