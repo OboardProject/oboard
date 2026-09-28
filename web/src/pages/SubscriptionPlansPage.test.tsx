@@ -49,6 +49,34 @@ describe('SubscriptionPlansPage', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
+  it('keeps complete plan counts while page data triggers a list refresh', async () => {
+    const completePlan = { ...plan, node_count: 3, member_count: 2 }
+    let resolveRefresh: (value: { subscription_plans: typeof completePlan[] }) => void = () => undefined
+    let reads = 0
+    const request = vi.fn((path: string) => {
+      if (path === '/access-changes?limit=50') return Promise.resolve({ access_changes: [] })
+      if (path === '/subscription-plans') {
+        reads += 1
+        return reads === 1
+          ? Promise.resolve({ subscription_plans: [completePlan] })
+          : new Promise<{ subscription_plans: typeof completePlan[] }>(resolve => { resolveRefresh = resolve })
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    const render = async (subscriptionPlans: typeof plan[]) => {
+      await act(async () => root.render(<SubscriptionPlansPage data={{ subscription_plans: subscriptionPlans }} client={{ request }} load={vi.fn()} />))
+    }
+
+    await render([plan])
+    await flushEffects()
+    expect(container.textContent).toContain('3 节点 / 2 用户')
+
+    await render([{ ...plan }])
+    expect(container.textContent).toContain('3 节点 / 2 用户')
+    await act(async () => resolveRefresh({ subscription_plans: [completePlan] }))
+    expect(container.textContent).toContain('3 节点 / 2 用户')
+  })
+
   it('keeps user assignment inside the selected plan detail', async () => {
     const request = vi.fn(async (path: string) => {
       if (path === '/subscription-plans') return { subscription_plans: [plan] }

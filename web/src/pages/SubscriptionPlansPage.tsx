@@ -301,6 +301,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [convertRulesBusy, setConvertRulesBusy] = React.useState(false)
   const [saveBusy, setSaveBusy] = React.useState(false)
   const planMutationQueueRef = React.useRef(Promise.resolve())
+  const plansReadRef = React.useRef(0)
   const nodeSaveGenerationRef = React.useRef(new Map<number, number>())
   const planVersionsRef = React.useRef(new Map<number, Plan>())
   const blockedNodeSavesRef = React.useRef(new Set<number>())
@@ -350,8 +351,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   }
 
   const refreshPlans = async () => {
+    const read = ++plansReadRef.current
     const res = await client.request<{ subscription_plans: Plan[] }>('/subscription-plans')
-    setPlans(res.subscription_plans || [])
+    if (read === plansReadRef.current) setPlans(res.subscription_plans || [])
   }
 
   const loadDetail = React.useCallback(async (id: number) => {
@@ -423,10 +425,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   }, [client])
 
   React.useEffect(() => {
-    if (Array.isArray(data.subscription_plans)) setPlans(data.subscription_plans)
+    void refreshPlans()
   }, [data.subscription_plans])
   React.useEffect(() => {
-    void refreshPlans()
     void loadChanges()
   }, [])
   useRegisterPageRefresh(async () => {
