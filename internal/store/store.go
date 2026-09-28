@@ -2040,6 +2040,14 @@ func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	return value, err
 }
 
+func (s *Store) SetSettingIfAbsent(ctx context.Context, key, value string) (string, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do nothing`, key, value, now); err != nil {
+		return "", err
+	}
+	return s.GetSetting(ctx, key)
+}
+
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, key, value, now)

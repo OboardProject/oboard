@@ -176,8 +176,8 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 		t.Fatal("stealth branch must consume the bootstrap variables")
 	}
 	updateBranch := shellCaseBranch(t, script, "update)", "uninstall)")
-	if !strings.Contains(updateBranch, `if [ "$STEALTH_MODE" = 1 ]; then`) {
-		t.Fatal("update branch must refuse stealth installs")
+	if !strings.Contains(updateBranch, `if [ "$STEALTH_MODE" = 1 ]; then`) || !strings.Contains(updateBranch, `verify_downloaded_release "$tmp/release-manifest.json"`) || !strings.Contains(updateBranch, `restart_managed_service "$STEALTH_AGENT_SERVICE"`) {
+		t.Fatal("security-process script update must verify the signed release and restart the recorded service")
 	}
 	if !strings.Contains(script, "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装") {
 		t.Fatal("uninstall must refuse stealth installs with guidance")
@@ -187,7 +187,7 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 func TestAgentCommandLineUpdateRejectsMissingStandardInstall(t *testing.T) {
 	script := testAgentInstallScript(t)
 	branch := shellCaseBranch(t, script, "update)", "uninstall)")
-	start := strings.Index(branch, "\n    if [ \"$STEALTH_MODE\" = 1 ]; then")
+	start := strings.Index(branch, "\n    if [ ! -s \"$CONFIG_PATH\"")
 	end := strings.Index(branch, "\n    need_base_url")
 	if start < 0 || end <= start {
 		t.Fatal("update preflight is missing")
@@ -279,6 +279,17 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 	srv.stealthTransport.Store(&stealthTransport{addr: "transport.example.com:443", pin: "test-pin"})
 	result := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)
 	command := result["install_command"].(string)
+	layout, err := srv.serverStealthLayout(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(command, "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) || !strings.Contains(result["update_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) {
+		t.Fatal("installation and script update must use the same Controller-recorded layout")
+	}
+	again := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)
+	if !strings.Contains(again["update_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) {
+		t.Fatal("reissuing the command changed the saved layout")
+	}
 	for _, want := range []string{
 		"https://panel.example.com/install/agent.sh",
 		"OBOARD_ENROLL_TOKEN=" + shellSingleQuote(result["enrollment_token"].(string)),

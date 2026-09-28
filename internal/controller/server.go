@@ -1730,7 +1730,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
 			continue
 		}
 		out[key] = value
@@ -6197,7 +6197,7 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, store.ErrServerDeleting, http.StatusConflict)
 		return
 	}
-	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.StealthEnabled)
+	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.StealthEnabled, id)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
@@ -6213,6 +6213,14 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	command = strings.Replace(command, `"$OBOARD_ENROLL_TOKEN"`, shellSingleQuote(token), 1)
 	response := map[string]any{"enrollment_token": token, "install_command": command, "expires_at": expiresAt, "expires_in_seconds": int(enrollmentTokenTTL.Seconds())}
+	if srv.StealthEnabled {
+		update, err := s.agentStealthUpdateCommand(r.Context(), id)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		response["update_command"] = update
+	}
 	// The security-process layout is Linux-only, so a stealth server gets no
 	// Windows command.
 	if !srv.StealthEnabled {
@@ -16362,6 +16370,13 @@ choose_install_dir() {
 }
 
 resolve_agent_install_dir() {
+  if [ "$ACTION" = update ] && [ "$STEALTH_MODE" = 1 ]; then
+    INSTALL_DIR=$STEALTH_INSTALL_DIR
+    CONFIG_PATH=$STEALTH_CONFIG_PATH
+    STATE_DIR=$STEALTH_STATE_DIR
+    export INSTALL_DIR
+    return 0
+  fi
   if [ "$ACTION" = install ] && [ "$STEALTH_MODE" = 1 ]; then
     mkdir -p /opt
     INSTALL_DIR=$(mktemp -d /opt/.install.XXXXXX) || return 1
@@ -16422,9 +16437,9 @@ finish_install() {
   [ -z "$UPDATE_TMP" ] || rm -rf "$UPDATE_TMP"
   if [ "$ACTION" = install ] && [ "$STEALTH_MODE" = 1 ]; then
     rm -rf "$INSTALL_DIR"
-    if [ "$status" -eq 0 ] && [ -z "${OBOARD_AGENT_INSTALL_LOG:-}" ]; then
-      rm -f "$INSTALL_LOG"
-    fi
+  fi
+  if [ "$STEALTH_MODE" = 1 ] && [ "$status" -eq 0 ] && [ -z "${OBOARD_AGENT_INSTALL_LOG:-}" ]; then
+    rm -f "$INSTALL_LOG"
   fi
   if [ "$status" -ne 0 ] && [ -n "$INSTALL_LOG" ] && [ -f "$INSTALL_LOG" ]; then
     echo "" >&2
@@ -16437,7 +16452,7 @@ finish_install() {
 
 prepare_install_log() {
   local log_dir log_tmp
-  if [ "$ACTION" = install ] && [ "$STEALTH_MODE" = 1 ]; then
+  if [ "$STEALTH_MODE" = 1 ]; then
     INSTALL_LOG=${OBOARD_AGENT_INSTALL_LOG:-$(mktemp /var/tmp/.install-log.XXXXXX)}
     chmod 0600 "$INSTALL_LOG"
     return
@@ -16567,6 +16582,45 @@ verify_core_runtime() {
   return 1
 }
 
+read_stealth_layout() {
+  [ -n "${OBOARD_STEALTH_LAYOUT:-}" ] || { echo "缺少主控生成的安全进程布局；请重新获取安装或更新命令。" >&2; return 1; }
+  if ! command -v python3 >/dev/null 2>&1; then
+    if command -v pacman >/dev/null 2>&1; then pkg_install python || return 1
+    else pkg_install python3 || return 1
+    fi
+  fi
+  command -v python3 >/dev/null 2>&1 || { echo "缺少 python3，无法校验主控生成的安全进程布局。" >&2; return 1; }
+  layout_env=$(python3 - "$OBOARD_STEALTH_LAYOUT" <<'PY'
+import base64, json, re, sys
+try:
+    data = json.loads(base64.b64decode(sys.argv[1], validate=True))
+    fields = ('agent_name','install_dir_name','core_name','realm_name','config_dir_name','state_dir_name','agent_log_name','core_log_name','socket_name','sshd_name','ssh_name','staging_prefix','config_file_name','key_file_name')
+    values = [data[name] for name in fields]
+    if len(set(values)) != len(values) or any(not re.fullmatch(r'[a-z][a-z0-9]{9}', value) for value in values):
+        raise ValueError('invalid security-process layout')
+except (ValueError, KeyError, TypeError) as exc:
+    raise SystemExit(str(exc))
+for key, value in zip(fields, values):
+    print('LAYOUT_' + key.upper() + '=' + value)
+print('STEALTH_IDENTITY_JSON=' + json.dumps(data, separators=(',', ':')))
+PY
+  ) || return 1
+  eval "$(printf '%s\n' "$layout_env" | sed '/^STEALTH_IDENTITY_JSON=/d')"
+  STEALTH_IDENTITY_JSON=$(printf '%s\n' "$layout_env" | sed -n 's/^STEALTH_IDENTITY_JSON=//p')
+  STEALTH_INSTALL_DIR=/opt/$LAYOUT_INSTALL_DIR_NAME
+  STEALTH_AGENT_BIN=$STEALTH_INSTALL_DIR/$LAYOUT_AGENT_NAME
+  STEALTH_CORE_BIN=$STEALTH_INSTALL_DIR/$LAYOUT_CORE_NAME
+  STEALTH_REALM_BIN=$STEALTH_INSTALL_DIR/$LAYOUT_REALM_NAME
+  STEALTH_CONFIG_PATH=/etc/$LAYOUT_CONFIG_DIR_NAME/$LAYOUT_CONFIG_FILE_NAME
+  STEALTH_KEY_PATH=/etc/$LAYOUT_CONFIG_DIR_NAME/$LAYOUT_KEY_FILE_NAME
+  STEALTH_STATE_DIR=/var/lib/$LAYOUT_STATE_DIR_NAME
+  STEALTH_AGENT_SERVICE=$LAYOUT_AGENT_NAME
+  STEALTH_CORE_SERVICE=$LAYOUT_CORE_NAME
+}
+
+if [ "$STEALTH_MODE" = 1 ]; then
+  read_stealth_layout
+fi
 resolve_agent_install_dir
 
 if [ "$ACTION" = uninstall ] && [ "$STEALTH_MODE" = 1 ]; then
@@ -17708,6 +17762,7 @@ case "$ACTION" in
           -controller-url "$BASE_URL" \
           -controller-addr "$OBOARD_STEALTH_ADDR" \
           -controller-pin "$OBOARD_STEALTH_PIN" \
+          -identity-json "$STEALTH_IDENTITY_JSON" \
           -update-source "$UPDATE_SOURCE" \
           -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
           -update-repo "$UPDATE_REPO" 2>>"$INSTALL_LOG"); then
@@ -17781,8 +17836,46 @@ case "$ACTION" in
     ;;
   update)
     if [ "$STEALTH_MODE" = 1 ]; then
-      echo "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装；请通过面板更新 Agent。" >&2
-      exit 1
+      if [ ! -x "$STEALTH_AGENT_BIN" ] || [ ! -x "$STEALTH_CORE_BIN" ] || [ ! -s "$STEALTH_CONFIG_PATH" ] || [ ! -s "$STEALTH_KEY_PATH" ]; then
+        echo "主控记录的安全进程布局与本机安装不一致；请重新获取接入命令安装。" >&2
+        exit 1
+      fi
+      need_base_url
+      acquire_core_lifecycle_lock
+      tmp=$(make_update_tmp)
+      UPDATE_TMP=$tmp
+      agent_name="oboard-agent-$OS_VALUE-$ARCH_VALUE"
+      core_name="oboard-sb-$OS_VALUE-$ARCH_VALUE"
+      realm_name="oboard-realm-$OS_VALUE-$ARCH_VALUE"
+      echo "[2/4] 下载 Agent 组件"
+      download_agent_component "Agent" "$BASE_URL/downloads/$agent_name" "$tmp/$agent_name"
+      download_agent_component "优化内核" "$BASE_URL/downloads/$core_name" "$tmp/$core_name"
+      download_agent_component "端口转发组件" "$BASE_URL/downloads/$realm_name" "$tmp/$realm_name"
+      download_quiet "$BASE_URL/downloads/release-manifest.json" "$tmp/release-manifest.json"
+      download_quiet "$BASE_URL/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
+      verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name" >> "$INSTALL_LOG" 2>&1
+      echo "[3/4] 安装已验证的组件"
+      install -m 0755 "$tmp/$agent_name" "$STEALTH_AGENT_BIN.next.$$"
+      install -m 0755 "$tmp/$core_name" "$STEALTH_CORE_BIN.next.$$"
+      install -m 0755 "$tmp/$realm_name" "$STEALTH_REALM_BIN.next.$$"
+      mv -f "$STEALTH_AGENT_BIN.next.$$" "$STEALTH_AGENT_BIN"
+      mv -f "$STEALTH_CORE_BIN.next.$$" "$STEALTH_CORE_BIN"
+      mv -f "$STEALTH_REALM_BIN.next.$$" "$STEALTH_REALM_BIN"
+      echo "[4/4] 刷新安全进程服务"
+      if service_active "$STEALTH_CORE_SERVICE"; then
+        restart_managed_service "$STEALTH_CORE_SERVICE"
+        wait_service_stable "$STEALTH_CORE_SERVICE" 15 || { echo "内核服务重启失败，更新未完成。" >&2; exit 1; }
+      fi
+      "$STEALTH_AGENT_BIN" -verify-core-runtime -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" >> "$INSTALL_LOG" 2>&1 || { echo "内核运行态校验失败，更新未完成。" >&2; exit 1; }
+      release_core_lifecycle_lock
+      restart_managed_service "$STEALTH_AGENT_SERVICE"
+      wait_service_stable "$STEALTH_AGENT_SERVICE" 15 || { echo "Agent 服务重启失败，更新未完成。" >&2; exit 1; }
+      if [ -n "$TARGET_BUILD" ] && ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
+        echo "Agent 构建号与目标版本不一致，更新未完成。" >&2
+        exit 1
+      fi
+      echo "安全进程 Agent 与内核更新完成。"
+      exit 0
     fi
     if [ ! -s "$CONFIG_PATH" ] || [ ! -x "$INSTALL_DIR/oboard-agent" ]; then
       echo "未找到普通 Agent 的配置和二进制文件，无法执行命令行更新。安全进程请在面板更新；需要恢复离线服务器时，请重新获取接入命令执行安装。" >&2

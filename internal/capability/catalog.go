@@ -462,10 +462,10 @@ func defaultDescriptors() []Descriptor {
 	}
 	enrollmentInput, enrollmentOutput, _ := executableSchemas("servers.enrollment.issue")
 	descriptors = append(descriptors, Descriptor{
-		Name: "servers.enrollment.issue", Description: "为已存在服务器重新签发一次性 Agent 接入令牌，不创建新服务器记录",
+		Name: "servers.enrollment.issue", Description: "为已存在服务器重新签发一次性 Agent 接入令牌；安全进程同时提供主控记录布局的脚本更新命令，不创建新服务器记录",
 		InputSchema: enrollmentInput, OutputSchema: enrollmentOutput, RequiredScopes: []string{"servers:onboard"},
 		ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 2, ApprovalPolicy: "required",
-		Idempotent: true, DataClassification: DataSensitive, SensitiveOutput: []string{"enrollment_token"},
+		Idempotent: true, DataClassification: DataSensitive, SensitiveOutput: []string{"enrollment_token", "update_command"},
 		MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: serverRefFromServerID,
 	})
 	deleteInput, deleteOutput, _ := executableSchemas("servers.delete")
@@ -767,7 +767,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "servers.enrollment.issue":
 		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
 			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "stealth_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
-			"enrollment_expires_at": stringValue, "enrollment_token": stringValue,
+			"enrollment_expires_at": stringValue, "enrollment_token": stringValue, "update_command": stringValue,
 		}), "server_ids"
 	case "servers.delete":
 		return schemaObject(map[string]any{"server_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "server_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "server_id": positiveID}), "server_ids"

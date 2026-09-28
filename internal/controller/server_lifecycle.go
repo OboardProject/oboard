@@ -144,7 +144,7 @@ func agentInstallCommand(baseURL, bbrValue, tcpTuningValue, stealthValue string)
 // agentEnrollmentCommand renders the Linux install command. BBR + FQ and TCP
 // tuning are panel-wide switches, so every issued command reads the current
 // settings instead of a per-server choice.
-func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool) (string, map[string]any, error) {
+func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serverID ...int64) (string, map[string]any, error) {
 	base, err := s.publicBaseURL(ctx)
 	if err != nil {
 		return "", nil, err
@@ -158,16 +158,35 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool) (stri
 	command := agentInstallCommand(base, bbrValue, tcpTuningValue, stealthValue)
 	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_TCP_TUNING": tcpTuningValue, "OBOARD_INSTALL_STEALTH": stealthValue}
 	if stealth {
+		if len(serverID) != 1 {
+			return "", nil, fmt.Errorf("server ID is required for security-process layout")
+		}
+		layout, err := s.serverStealthLayout(ctx, serverID[0])
+		if err != nil {
+			return "", nil, err
+		}
 		addr, pin, err := s.agentStealthInstallEnv()
 		if err != nil {
 			return "", nil, err
 		}
 		addr = strings.TrimPrefix(addr, "OBOARD_STEALTH_ADDR=")
 		pin = strings.TrimPrefix(pin, "OBOARD_STEALTH_PIN=")
-		command = strings.TrimSuffix(command, " sh") + " OBOARD_STEALTH_ADDR=" + shellSingleQuote(addr) + " OBOARD_STEALTH_PIN=" + shellSingleQuote(pin) + " sh"
-		env["OBOARD_STEALTH_ADDR"], env["OBOARD_STEALTH_PIN"] = addr, pin
+		command = strings.TrimSuffix(command, " sh") + " OBOARD_STEALTH_ADDR=" + shellSingleQuote(addr) + " OBOARD_STEALTH_PIN=" + shellSingleQuote(pin) + " OBOARD_STEALTH_LAYOUT=" + shellSingleQuote(layout) + " sh"
+		env["OBOARD_STEALTH_ADDR"], env["OBOARD_STEALTH_PIN"], env["OBOARD_STEALTH_LAYOUT"] = addr, pin, layout
 	}
 	return command, env, nil
+}
+
+func (s *Server) agentStealthUpdateCommand(ctx context.Context, serverID int64) (string, error) {
+	base, err := s.publicBaseURL(ctx)
+	if err != nil {
+		return "", err
+	}
+	layout, err := s.serverStealthLayout(ctx, serverID)
+	if err != nil {
+		return "", err
+	}
+	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(base, "/")+"/install/agent.sh") + " | env OBOARD_ACTION=update OBOARD_INSTALL_STEALTH=1 OBOARD_STEALTH_LAYOUT=" + shellSingleQuote(layout) + " sh", nil
 }
 
 // agentStealthInstallEnv renders the transport parameters appended to the
@@ -208,6 +227,13 @@ func (s *Server) registerServerLifecycleOperations() {
 		view := enrollmentServerView(*srv)
 		public := map[string]any{"server": view, "enrollment_expires_at": expiresAt}
 		oneTime := map[string]any{"server": view, "enrollment_expires_at": expiresAt, "enrollment_token": token}
+		if srv.StealthEnabled {
+			update, err := s.agentStealthUpdateCommand(ctx, srv.ID)
+			if err != nil {
+				return nil, err
+			}
+			oneTime["update_command"] = update
+		}
 		return automation.MutationResult{Public: public, OneTime: oneTime}, nil
 	})
 

@@ -732,7 +732,14 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 			continue
 		}
 		stealth, _ := server["stealth_enabled"].(bool)
-		command, environment, err := s.agentEnrollmentCommand(ctx, stealth)
+		var serverID int64
+		switch value := server["id"].(type) {
+		case int64:
+			serverID = value
+		case float64:
+			serverID = int64(value)
+		}
+		command, environment, err := s.agentEnrollmentCommand(ctx, stealth, serverID)
 		if err != nil {
 			return "", err
 		}
@@ -744,6 +751,9 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 			"expires_at":  operation["enrollment_expires_at"],
 			"sensitive":   true, "must_not_log": true,
 			"completion_condition": map[string]any{"resource_uri": fmt.Sprintf("oboard://servers/%v/health", server["id"]), "field": "agent_connected", "equals": true},
+		}
+		if update, ok := operation["update_command"].(string); ok && update != "" {
+			action["update_command"] = update
 		}
 		// Windows targets run the PowerShell installer with the same
 		// environment; the security-process layout is Linux-only.
