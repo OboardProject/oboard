@@ -777,7 +777,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create unique index if not exists idx_controller_update_runs_one_active on controller_update_runs((1)) where phase not in ('succeeded','failed','cancelled')`,
 		`create table if not exists agent_fleet_update_state (id integer primary key check(id=1), paused integer not null default 0, rolling integer not null default 0, target_build text not null default '', attempted integer not null default 0, succeeded integer not null default 0, failed integer not null default 0, last_pause_reason text not null default '', updated_at text not null)`,
 		`insert or ignore into agent_fleet_update_state(id,paused,target_build,attempted,succeeded,failed,last_pause_reason,updated_at) values(1,0,'',0,0,0,'','1970-01-01T00:00:00Z')`,
-		`create table if not exists agent_update_retries (server_id integer primary key references servers(id) on delete cascade, target_build text not null default '', attempts integer not null default 0, next_retry_at text, last_error text not null default '', updated_at text not null)`,
+		`create table if not exists agent_update_retries (server_id integer primary key references servers(id) on delete cascade, target_build text not null default '', attempts integer not null default 0, next_retry_at text, last_error text not null default '', updated_at text not null, failure_round integer not null default 0)`,
 		`create index if not exists idx_servers_agent_update_scan on servers(status, agent_build, id)`,
 		`create index if not exists idx_agent_tasks_update_active on agent_tasks(type, status, server_id)`,
 	}

@@ -163,6 +163,61 @@ func TestAgentFleetCircuitBreakerPauses(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateRetryBudgetShrinksAcrossBuilds(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "failing-node", Status: model.ServerOnline, AgentID: "agent-1", AgentBuild: "old"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(db, "test-secret", "")
+	builds := []string{"build-1", "build-2", "build-3", "build-4", "build-5"}
+	limits := []int{5, 3, 2, 1, 1}
+	previousBuild := version.AgentBuild
+	version.AgentBuild = builds[len(builds)-1]
+	t.Cleanup(func() { version.AgentBuild = previousBuild })
+	for round, build := range builds {
+		retry, err := db.GetAgentUpdateRetry(ctx, server.ID, build)
+		if err != nil || agentUpdateAttemptLimit(retry.FailureRound) != limits[round] || retry.Attempts != 0 {
+			t.Fatalf("round %d before update = %#v err=%v", round, retry, err)
+		}
+		for attempt := 1; attempt <= limits[round]; attempt++ {
+			s.noteAgentUpdateOutcome(ctx, server.ID, "failed", "download interrupted", build)
+			retry, err = db.GetAgentUpdateRetry(ctx, server.ID, build)
+			if err != nil || retry.Attempts != attempt || retry.LastError != "download interrupted" {
+				t.Fatalf("round %d attempt %d = %#v err=%v", round, attempt, retry, err)
+			}
+			if (retry.NextRetryAt == nil) != (attempt == limits[round]) {
+				t.Fatalf("round %d attempt %d next retry = %v", round, attempt, retry.NextRetryAt)
+			}
+		}
+		if err := db.ReleaseAgentUpdateRetryDelays(ctx, build); err != nil {
+			t.Fatal(err)
+		}
+		candidates, err := db.ListAgentUpdateCandidates(ctx, build, 1)
+		if err != nil || len(candidates) != 0 {
+			t.Fatalf("exhausted build %s candidates = %#v err=%v", build, candidates, err)
+		}
+	}
+	status, err := s.agentFleetStatus(ctx)
+	if err != nil || status["failure_count"] != 1 || status["exhausted_count"] != 1 {
+		t.Fatalf("failed update status = %#v err=%v", status, err)
+	}
+	failures, ok := status["failed_servers"].([]store.AgentUpdateFailure)
+	if !ok || len(failures) != 1 || failures[0].MaxAttempts != 1 || failures[0].LastError != "download interrupted" {
+		t.Fatalf("failed server status = %#v", status["failed_servers"])
+	}
+	s.noteAgentUpdateOutcome(ctx, server.ID, "succeeded", "", builds[len(builds)-1])
+	retry, err := db.GetAgentUpdateRetry(ctx, server.ID, "build-6")
+	if err != nil || retry.FailureRound != 0 || retry.Attempts != 0 {
+		t.Fatalf("successful update did not reset retry history: %#v err=%v", retry, err)
+	}
+}
+
 func TestControllerUpdateRunRecoversOnNewBuild(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
 	if err != nil {

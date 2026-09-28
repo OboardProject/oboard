@@ -20,7 +20,7 @@ const (
 	agentUpdateDefaultQuietSeconds    = 30
 	agentUpdateFallbackPeriod         = 12 * time.Minute
 	agentUpdateRetryFirst             = 10 * time.Minute
-	agentUpdateRetrySecond            = time.Hour
+	agentUpdateRetryMultiplier        = 2
 	agentUpdateCircuitMinAttempted    = 10
 	agentUpdateCircuitFailureRatio    = 0.4
 	agentUpdateAutoConcurrencyMin     = 10
@@ -138,6 +138,27 @@ type agentFleetFillResult struct {
 	Rolling bool
 }
 
+func agentUpdateAttemptLimit(failureRound int) int {
+	switch failureRound {
+	case 0:
+		return 5
+	case 1:
+		return 3
+	case 2:
+		return 2
+	default:
+		return 1
+	}
+}
+
+func agentUpdateRetryDelay(attempt int) time.Duration {
+	delay := agentUpdateRetryFirst
+	for i := 1; i < attempt; i++ {
+		delay *= agentUpdateRetryMultiplier
+	}
+	return delay
+}
+
 func newAgentUpdateCoordinator(server *Server) *agentUpdateCoordinator {
 	return &agentUpdateCoordinator{server: server, wake: make(chan struct{}, 1)}
 }
@@ -247,7 +268,6 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 	if state.TargetBuild != targetBuild {
 		state = store.AgentFleetState{TargetBuild: targetBuild, Rolling: state.Rolling || manual}
 		dirty = true
-		_ = c.server.store.ClearAgentUpdateRetriesForBuild(ctx, targetBuild)
 	}
 	if manual && !state.Rolling {
 		state.Rolling = true
@@ -302,7 +322,7 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFle
 		if retryErr != nil {
 			continue
 		}
-		if retry.Attempts >= 3 {
+		if retry.Attempts >= agentUpdateAttemptLimit(retry.FailureRound) {
 			continue
 		}
 		if retry.NextRetryAt != nil && retry.NextRetryAt.After(now) {
@@ -385,16 +405,11 @@ func (s *Server) noteAgentUpdateOutcome(ctx context.Context, serverID int64, sta
 		}
 		retry.Attempts++
 		retry.LastError = strings.TrimSpace(errorText)
-		next := time.Now().UTC()
-		switch retry.Attempts {
-		case 1:
-			next = next.Add(agentUpdateRetryFirst)
-			retry.NextRetryAt = &next
-		case 2:
-			next = next.Add(agentUpdateRetrySecond)
-			retry.NextRetryAt = &next
-		default:
+		if retry.Attempts >= agentUpdateAttemptLimit(retry.FailureRound) {
 			retry.NextRetryAt = nil
+		} else {
+			next := time.Now().UTC().Add(agentUpdateRetryDelay(retry.Attempts))
+			retry.NextRetryAt = &next
 		}
 		_ = s.store.SaveAgentUpdateRetry(ctx, retry)
 		if state.Attempted >= agentUpdateCircuitMinAttempted && float64(state.Failed)/float64(state.Attempted) >= agentUpdateCircuitFailureRatio {
@@ -424,6 +439,14 @@ func (s *Server) agentFleetStatus(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	failures, failureCount, err := s.store.ListAgentUpdateFailures(ctx, targetBuild, 20)
+	if err != nil {
+		return nil, err
+	}
+	exhausted, err := s.store.CountExhaustedAgentUpdates(ctx, targetBuild)
+	if err != nil {
+		return nil, err
+	}
 	concurrency := 0
 	if s.agentUpdates != nil {
 		concurrency = s.agentUpdates.concurrency(ctx, settings)
@@ -447,6 +470,9 @@ func (s *Server) agentFleetStatus(ctx context.Context) (map[string]any, error) {
 		"effective_concurrency": concurrency,
 		"startup_quiet_seconds": settingInt(settings, managedUpdateStartupQuietSetting, agentUpdateDefaultQuietSeconds, 0, 300),
 		"auto_update_enabled":   settingBool(settings, agentAutoUpdateSetting, false),
+		"failure_count":         failureCount,
+		"exhausted_count":       exhausted,
+		"failed_servers":        failures,
 		"message":               "Controller 更新成功后，Agent 版本同步将在后台滚动进行。",
 	}, nil
 }

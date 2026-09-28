@@ -60,7 +60,7 @@ func (s *Server) agentUpdatesRetryFailed(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	target := strings.TrimSpace(version.AgentBuild)
-	if err := s.store.ClearAgentUpdateRetriesForBuild(r.Context(), target); err != nil {
+	if err := s.store.ReleaseAgentUpdateRetryDelays(r.Context(), target); err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
@@ -164,7 +164,7 @@ func (s *Server) registerAgentUpdateOperations() {
 			return nil, err
 		}
 		target := strings.TrimSpace(version.AgentBuild)
-		if err := s.store.ClearAgentUpdateRetriesForBuild(ctx, target); err != nil {
+		if err := s.store.ReleaseAgentUpdateRetryDelays(ctx, target); err != nil {
 			return nil, err
 		}
 		state, err := s.store.GetAgentFleetState(ctx)

@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -262,7 +261,7 @@ func (s *Server) runStealthSession(session *agentlink.Session, server *model.Ser
 	sessionDone := make(chan error, 1)
 	sessionDownload := func(req *agentlink.RequestFrame) *agentlink.ResponseFrame {
 		if strings.TrimSpace(req.Path) == "/download" {
-			return s.handleStealthDownloadRequest(server, session, req)
+			return s.handleStealthDownloadRequest(req)
 		}
 		return s.handleStealthRequest(server, req)
 	}
@@ -321,9 +320,8 @@ func (s *Server) stealthAgentRoutes() map[string]http.HandlerFunc {
 
 // handleStealthDownloadRequest serves one download chunk over the transport.
 // The request body is {stream, offset, length}; the response body is the
-// base64-less raw chunk JSON (the agent decodes []byte), and the data frames
-// stream from the session goroutine.
-func (s *Server) handleStealthDownloadRequest(server *model.Server, session *agentlink.Session, req *agentlink.RequestFrame) *agentlink.ResponseFrame {
+// JSON-encoded chunk; the agent requests only the next needed offset.
+func (s *Server) handleStealthDownloadRequest(req *agentlink.RequestFrame) *agentlink.ResponseFrame {
 	var request struct {
 		Stream string `json:"stream"`
 		Offset int64  `json:"offset"`
@@ -334,7 +332,7 @@ func (s *Server) handleStealthDownloadRequest(server *model.Server, session *age
 			return &agentlink.ResponseFrame{ID: req.ID, Status: 400, Error: "invalid download request"}
 		}
 	}
-	if request.Length <= 0 || request.Length > 1<<20 {
+	if request.Offset < 0 || request.Length <= 0 || request.Length > 1<<20 {
 		return &agentlink.ResponseFrame{ID: req.ID, Status: 400, Error: "invalid chunk length"}
 	}
 	root, err := filepath.Abs(downloadsDir(s.staticDir))
@@ -363,11 +361,6 @@ func (s *Server) handleStealthDownloadRequest(server *model.Server, session *age
 		return &agentlink.ResponseFrame{ID: req.ID, Status: 200, Body: []byte("null")}
 	}
 	chunk := buf[:n]
-	if request.Offset == 0 && n == int(request.Length) {
-		// First chunk of a full read: stream the remainder as data frames so
-		// the agent reuses one session for the whole artifact.
-		go s.ServeStealthDownload(server, session, name, request.Offset+int64(n))
-	}
 	encoded, err := json.Marshal(chunk)
 	if err != nil {
 		return &agentlink.ResponseFrame{ID: req.ID, Status: 500, Error: err.Error()}
@@ -428,48 +421,6 @@ func stealthJSONResponse(id int64, status int, body any) *agentlink.ResponseFram
 		return &agentlink.ResponseFrame{ID: id, Status: 500, Error: err.Error()}
 	}
 	return &agentlink.ResponseFrame{ID: id, Status: status, Body: encoded}
-}
-
-// ServeStealthDownload streams one release artifact to the agent. The agent
-// requests chunks; this reader side runs in the session goroutine.
-func (s *Server) ServeStealthDownload(server *model.Server, session *agentlink.Session, name string, offset int64) error {
-	root, err := filepath.Abs(downloadsDir(s.staticDir))
-	if err != nil {
-		return err
-	}
-	switch filepath.Base(name) {
-	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64", "release-manifest.json", "release-manifest.json.sig":
-	default:
-		return fmt.Errorf("unknown artifact")
-	}
-	path := filepath.Join(root, filepath.Base(name))
-	file, err := os.Open(path) // #nosec G304 -- name is allowlisted above.
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if offset > 0 {
-		if _, err := file.Seek(offset, io.SeekStart); err != nil {
-			return err
-		}
-	}
-	buf := make([]byte, 512<<10)
-	for {
-		n, readErr := file.Read(buf)
-		if n > 0 {
-			header, _ := json.Marshal(agentlink.DataHeader{Stream: name, Offset: offset})
-			if err := session.WriteFrame(agentlink.NewDataFrame(append(header, buf[:n]...))); err != nil {
-				return err
-			}
-			offset += int64(n)
-		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				return nil
-			}
-			return readErr
-		}
-	}
 }
 
 func stealthRemoteIP(session *agentlink.Session) string {

@@ -139,6 +139,12 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"offline": map[string]any{"type": "integer"}, "max_concurrency": map[string]any{"type": "integer"},
 		"effective_concurrency": map[string]any{"type": "integer"}, "startup_quiet_seconds": map[string]any{"type": "integer"},
 		"auto_update_enabled": boolValue, "message": stringValue,
+		"failure_count": map[string]any{"type": "integer"}, "exhausted_count": map[string]any{"type": "integer"},
+		"failed_servers": map[string]any{"type": "array", "items": closedObject(map[string]any{
+			"server_id": positiveID, "server_name": stringValue, "attempts": map[string]any{"type": "integer"},
+			"max_attempts": map[string]any{"type": "integer"}, "last_error": stringValue,
+			"next_retry_at": stringValue,
+		})},
 	})
 	controllerUpdateResult := schemaObject(map[string]any{
 		"controller_update": controllerUpdate, "accepted": boolValue,
@@ -227,7 +233,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		}, "confirmation"), controllerUpdateResult, 4, true),
 		adminWrite("agent_updates.pause", "暂停 Agent 滚动更新", schemaObject(nil), rawSchema(agentUpdates), 2, false),
 		adminWrite("agent_updates.resume", "恢复 Agent 滚动更新", schemaObject(nil), rawSchema(agentUpdates), 2, false),
-		adminWrite("agent_updates.retry_failed", "重试失败的 Agent 更新并恢复滚动", schemaObject(nil), rawSchema(agentUpdates), 2, false),
+		adminWrite("agent_updates.retry_failed", "提前重试仍有剩余次数的 Agent 更新并恢复滚动", schemaObject(nil), rawSchema(agentUpdates), 2, false),
 		adminWrite("subscription_relays.create", "创建受管订阅中继并签发一次性接入令牌", schemaObject(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "public_url": map[string]any{"type": "string", "minLength": 1, "maxLength": 2048}}, "name", "public_url"), schemaObject(map[string]any{"subscription_relay": subscriptionRelay, "enrollment_expires_at": stringValue}, "subscription_relay", "enrollment_expires_at"), 2, false),
 		adminWrite("subscription_relays.update", "修改受管订阅中继名称和公开地址", schemaObject(map[string]any{"relay_id": positiveID, "name": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "public_url": map[string]any{"type": "string", "minLength": 1, "maxLength": 2048}}, "relay_id", "name", "public_url"), schemaObject(map[string]any{"subscription_relay": subscriptionRelay}, "subscription_relay"), 2, false),
 		adminWrite("subscription_relays.issue_enrollment", "为受管订阅中继重新签发一次性接入令牌", schemaObject(map[string]any{"relay_id": positiveID}, "relay_id"), schemaObject(map[string]any{"relay_id": positiveID, "enrollment_expires_at": stringValue}, "relay_id", "enrollment_expires_at"), 2, false),

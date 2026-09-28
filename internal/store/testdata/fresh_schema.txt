@@ -383,6 +383,7 @@ table agent_update_retries
     next_retry_at TEXT notnull=0 default=- pk=0
     last_error TEXT notnull=1 default='' pk=0
     updated_at TEXT notnull=1 default=- pk=0
+    failure_round INTEGER notnull=1 default=0 pk=0
 table ai_audit_review_evidence
     ref TEXT notnull=1 default=- pk=2
     review_id TEXT notnull=1 default=- pk=1

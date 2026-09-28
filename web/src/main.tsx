@@ -409,6 +409,9 @@ type AgentFleetUpdateStatus = {
   effective_concurrency: number
   startup_quiet_seconds: number
   auto_update_enabled: boolean
+  failure_count: number
+  exhausted_count: number
+  failed_servers: { server_id: number; server_name: string; attempts: number; max_attempts: number; last_error: string; next_retry_at?: string }[]
   message: string
 }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; resource_recorded: boolean; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
@@ -4745,12 +4748,21 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
     <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.rolling && !status.paused ? '正在滚动更新全部已接入 Agent。' : status.message}</p></div>
     <AgentFleetProgress status={status} />
     {status.paused && <div className="controller-update-error" role="status">{status.pause_reason || 'Agent 滚动更新已暂停'}</div>}
+    {status.failure_count > 0 && <details className="controller-update-warning">
+      <summary>更新失败 {status.failure_count} 台{status.exhausted_count > 0 ? `，${status.exhausted_count} 台已停止自动重试` : ''}</summary>
+      <ul>{status.failed_servers.map(item => <li key={item.server_id}>
+        <strong>{item.server_name}</strong>：已尝试 {item.attempts}/{item.max_attempts} 次
+        {item.next_retry_at ? `，下次 ${new Date(item.next_retry_at).toLocaleString()}` : item.attempts >= item.max_attempts ? '，等待主控下一次更新' : ''}
+        {item.last_error && <div>{item.last_error}</div>}
+      </li>)}</ul>
+      {status.failure_count > status.failed_servers.length && <p>仅显示最近 {status.failed_servers.length} 台，请到任务中心查看其余失败记录。</p>}
+    </details>}
     {updateSettings?.database_maintenance_hint && <div className="controller-update-warning">{String(updateSettings.database_maintenance_hint)}</div>}
     <div className="settings-actions controller-update-actions">
       {status.paused
         ? <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/resume', '已恢复 Agent 滚动更新')}>{busy === '/agent-updates/resume' ? '处理中...' : '恢复'}</button>
         : <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/pause', '已暂停 Agent 滚动更新')}>{busy === '/agent-updates/pause' ? '处理中...' : '暂停'}</button>}
-      <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/retry-failed', '已重试失败的 Agent 更新')}>重试失败</button>
+      <button type="button" className="ghost" disabled={Boolean(busy) || status.failure_count === 0 || status.exhausted_count >= status.failure_count} onClick={() => void act('/agent-updates/retry-failed', '已请求重试仍有可用次数的 Agent 更新')}>重试可用次数</button>
       <button type="button" className="ghost" onClick={() => setAdvancedOpen(true)}>高级</button>
     </div>
     <Dialog isOpen={advancedOpen} onClose={() => setAdvancedOpen(false)} title="Agent 滚动更新" size="default">

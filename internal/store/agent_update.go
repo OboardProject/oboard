@@ -45,12 +45,22 @@ type AgentFleetState struct {
 
 // AgentUpdateRetry is the per-server retry gate for one target build.
 type AgentUpdateRetry struct {
-	ServerID    int64
-	TargetBuild string
-	Attempts    int
-	NextRetryAt *time.Time
-	LastError   string
-	UpdatedAt   time.Time
+	ServerID     int64
+	TargetBuild  string
+	Attempts     int
+	FailureRound int
+	NextRetryAt  *time.Time
+	LastError    string
+	UpdatedAt    time.Time
+}
+
+type AgentUpdateFailure struct {
+	ServerID    int64      `json:"server_id"`
+	ServerName  string     `json:"server_name"`
+	Attempts    int        `json:"attempts"`
+	MaxAttempts int        `json:"max_attempts"`
+	LastError   string     `json:"last_error"`
+	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 }
 
 func (s *Store) migrateAgentUpdateIndexes(ctx context.Context) error {
@@ -61,7 +71,10 @@ func (s *Store) migrateAgentUpdateIndexes(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_agent_tasks_one_active_update on agent_tasks(server_id) where type='update_agent' and status in ('pending','running')`); err != nil {
 		return err
 	}
-	return s.ensureColumn(ctx, "agent_fleet_update_state", "rolling", `alter table agent_fleet_update_state add column rolling integer not null default 0`)
+	if err := s.ensureColumn(ctx, "agent_fleet_update_state", "rolling", `alter table agent_fleet_update_state add column rolling integer not null default 0`); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "agent_update_retries", "failure_round", `alter table agent_update_retries add column failure_round integer not null default 0`)
 }
 
 // ListAgentUpdateCandidates returns at most limit online enrolled servers whose
@@ -71,7 +84,7 @@ func (s *Store) ListAgentUpdateCandidates(ctx context.Context, targetBuild strin
 	if limit < 1 {
 		limit = 1
 	}
-	rows, err := s.db.QueryContext(ctx, `select id, coalesce(agent_id,''), coalesce(agent_build,''), status from servers where status=? and agent_id is not null and agent_id<>'' and coalesce(agent_build,'')<>? and not exists (select 1 from agent_tasks t where t.server_id=servers.id and t.type=? and t.status in ('pending','running')) order by id limit ?`, model.ServerOnline, targetBuild, model.AgentTaskTypeUpdateAgent, limit)
+	rows, err := s.db.QueryContext(ctx, `select servers.id, coalesce(servers.agent_id,''), coalesce(servers.agent_build,''), servers.status from servers left join agent_update_retries r on r.server_id=servers.id where servers.status=? and servers.agent_id is not null and servers.agent_id<>'' and coalesce(servers.agent_build,'')<>? and not exists (select 1 from agent_tasks t where t.server_id=servers.id and t.type=? and t.status in ('pending','running')) and (r.server_id is null or r.target_build<>? or (r.attempts < case when r.failure_round=0 then 5 when r.failure_round=1 then 3 when r.failure_round=2 then 2 else 1 end and (r.next_retry_at is null or r.next_retry_at<=?))) order by servers.id limit ?`, model.ServerOnline, targetBuild, model.AgentTaskTypeUpdateAgent, targetBuild, now(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +284,7 @@ func (s *Store) GetAgentUpdateRetry(ctx context.Context, serverID int64, targetB
 	var item AgentUpdateRetry
 	var next sql.NullString
 	var updated string
-	err := s.db.QueryRowContext(ctx, `select server_id,target_build,attempts,next_retry_at,last_error,updated_at from agent_update_retries where server_id=?`, serverID).Scan(&item.ServerID, &item.TargetBuild, &item.Attempts, &next, &item.LastError, &updated)
+	err := s.db.QueryRowContext(ctx, `select server_id,target_build,attempts,failure_round,next_retry_at,last_error,updated_at from agent_update_retries where server_id=?`, serverID).Scan(&item.ServerID, &item.TargetBuild, &item.Attempts, &item.FailureRound, &next, &item.LastError, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentUpdateRetry{ServerID: serverID, TargetBuild: strings.TrimSpace(targetBuild)}, nil
 	}
@@ -279,7 +292,13 @@ func (s *Store) GetAgentUpdateRetry(ctx context.Context, serverID int64, targetB
 		return AgentUpdateRetry{}, err
 	}
 	if strings.TrimSpace(item.TargetBuild) != strings.TrimSpace(targetBuild) {
-		return AgentUpdateRetry{ServerID: serverID, TargetBuild: strings.TrimSpace(targetBuild)}, nil
+		if item.Attempts > 0 && item.FailureRound < 3 {
+			item.FailureRound++
+		}
+		item.TargetBuild = strings.TrimSpace(targetBuild)
+		item.Attempts = 0
+		item.NextRetryAt = nil
+		return item, nil
 	}
 	if next.Valid && next.String != "" {
 		t := parseTime(next.String)
@@ -291,8 +310,58 @@ func (s *Store) GetAgentUpdateRetry(ctx context.Context, serverID int64, targetB
 
 func (s *Store) SaveAgentUpdateRetry(ctx context.Context, item AgentUpdateRetry) error {
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into agent_update_retries(server_id,target_build,attempts,next_retry_at,last_error,updated_at) values(?,?,?,?,?,?) on conflict(server_id) do update set target_build=excluded.target_build,attempts=excluded.attempts,next_retry_at=excluded.next_retry_at,last_error=excluded.last_error,updated_at=excluded.updated_at`, item.ServerID, strings.TrimSpace(item.TargetBuild), item.Attempts, timePtrString(item.NextRetryAt), item.LastError, ts)
+	_, err := s.db.ExecContext(ctx, `insert into agent_update_retries(server_id,target_build,attempts,failure_round,next_retry_at,last_error,updated_at) values(?,?,?,?,?,?,?) on conflict(server_id) do update set target_build=excluded.target_build,attempts=excluded.attempts,failure_round=excluded.failure_round,next_retry_at=excluded.next_retry_at,last_error=excluded.last_error,updated_at=excluded.updated_at`, item.ServerID, strings.TrimSpace(item.TargetBuild), item.Attempts, item.FailureRound, timePtrString(item.NextRetryAt), item.LastError, ts)
 	return err
+}
+
+func (s *Store) ListAgentUpdateFailures(ctx context.Context, targetBuild string, limit int) ([]AgentUpdateFailure, int, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	rows, err := s.db.QueryContext(ctx, `select r.server_id, servers.name, r.target_build, r.attempts, r.failure_round, r.next_retry_at, r.last_error from agent_update_retries r join servers on servers.id=r.server_id where r.attempts>0 and servers.agent_id is not null and servers.agent_id<>'' and coalesce(servers.agent_build,'')<>? order by r.updated_at desc limit ?`, strings.TrimSpace(targetBuild), limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	items := make([]AgentUpdateFailure, 0, limit)
+	for rows.Next() {
+		var item AgentUpdateFailure
+		var retryTarget string
+		var failureRound int
+		var next sql.NullString
+		if err := rows.Scan(&item.ServerID, &item.ServerName, &retryTarget, &item.Attempts, &failureRound, &next, &item.LastError); err != nil {
+			return nil, 0, err
+		}
+		if strings.TrimSpace(retryTarget) != strings.TrimSpace(targetBuild) {
+			item.Attempts = 0
+			if failureRound < 3 {
+				failureRound++
+			}
+		} else if next.Valid && next.String != "" {
+			parsed := parseTime(next.String)
+			item.NextRetryAt = &parsed
+		}
+		switch failureRound {
+		case 0:
+			item.MaxAttempts = 5
+		case 1:
+			item.MaxAttempts = 3
+		case 2:
+			item.MaxAttempts = 2
+		default:
+			item.MaxAttempts = 1
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	var total int
+	err = s.db.QueryRowContext(ctx, `select count(*) from agent_update_retries r join servers on servers.id=r.server_id where r.attempts>0 and servers.agent_id is not null and servers.agent_id<>'' and coalesce(servers.agent_build,'')<>?`, strings.TrimSpace(targetBuild)).Scan(&total)
+	return items, total, err
 }
 
 func (s *Store) ClearAgentUpdateRetry(ctx context.Context, serverID int64) error {
@@ -300,9 +369,15 @@ func (s *Store) ClearAgentUpdateRetry(ctx context.Context, serverID int64) error
 	return err
 }
 
-func (s *Store) ClearAgentUpdateRetriesForBuild(ctx context.Context, targetBuild string) error {
-	_, err := s.db.ExecContext(ctx, `delete from agent_update_retries where target_build=?`, strings.TrimSpace(targetBuild))
+func (s *Store) ReleaseAgentUpdateRetryDelays(ctx context.Context, targetBuild string) error {
+	_, err := s.db.ExecContext(ctx, `update agent_update_retries set next_retry_at=null where target_build=? and attempts < case when failure_round=0 then 5 when failure_round=1 then 3 when failure_round=2 then 2 else 1 end`, strings.TrimSpace(targetBuild))
 	return err
+}
+
+func (s *Store) CountExhaustedAgentUpdates(ctx context.Context, targetBuild string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `select count(*) from agent_update_retries r join servers on servers.id=r.server_id where r.target_build=? and r.attempts>=case when r.failure_round=0 then 5 when r.failure_round=1 then 3 when r.failure_round=2 then 2 else 1 end and servers.agent_id is not null and servers.agent_id<>'' and coalesce(servers.agent_build,'')<>?`, strings.TrimSpace(targetBuild), strings.TrimSpace(targetBuild)).Scan(&count)
+	return count, err
 }
 
 // RelayUpdateCandidate is the lightweight row used by relay rolling updates.

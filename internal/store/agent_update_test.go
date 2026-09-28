@@ -54,6 +54,30 @@ func TestListAgentUpdateCandidatesIsLightweight(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateCandidatesSkipExhaustedHeadOfFleet(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		server := &model.Server{Name: fmt.Sprintf("node-%d", i), Status: model.ServerOnline, AgentID: fmt.Sprintf("agent-%d", i), AgentBuild: "old"}
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+		if i < 4 {
+			if err := db.SaveAgentUpdateRetry(ctx, AgentUpdateRetry{ServerID: server.ID, TargetBuild: "new", Attempts: 5}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	items, err := db.ListAgentUpdateCandidates(ctx, "new", 1)
+	if err != nil || len(items) != 1 || items[0].ServerID != 5 {
+		t.Fatalf("eligible candidate after exhausted rows = %#v err=%v", items, err)
+	}
+}
+
 func TestEnqueueUniqueAgentTaskSuppressesDuplicates(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -116,6 +140,51 @@ func TestAgentFleetRollingColumnMigratesFromPreviousSchema(t *testing.T) {
 	got, err := db.GetAgentFleetState(ctx)
 	if err != nil || !got.Rolling || got.Attempted != 3 {
 		t.Fatalf("saved rolling state = %#v err=%v", got, err)
+	}
+}
+
+func TestAgentUpdateFailureRoundMigratesFromPreviousSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retry.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	server := &model.Server{Name: "old-node", Status: model.ServerOnline, AgentID: "agent-old", AgentBuild: "old"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveAgentUpdateRetry(ctx, AgentUpdateRetry{ServerID: server.ID, TargetBuild: "build-1", Attempts: 3, LastError: "network failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`alter table agent_update_retries drop column failure_round`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	retry, err := db.GetAgentUpdateRetry(ctx, server.ID, "build-1")
+	if err != nil || retry.Attempts != 3 || retry.FailureRound != 0 || retry.LastError != "network failed" {
+		t.Fatalf("migrated retry = %#v err=%v", retry, err)
+	}
+	if err := db.SaveAgentUpdateRetry(ctx, retry); err != nil {
+		t.Fatal(err)
+	}
+	retry, err = db.GetAgentUpdateRetry(ctx, server.ID, "build-2")
+	if err != nil || retry.FailureRound != 1 || retry.Attempts != 0 {
+		t.Fatalf("next build retry = %#v err=%v", retry, err)
 	}
 }
 
