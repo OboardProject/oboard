@@ -2985,11 +2985,9 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   font-size: 14px;
   font-weight: 650;
   line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 0 1 auto;
-  max-width: fit-content;
+  overflow-wrap: anywhere;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .server-address-block {

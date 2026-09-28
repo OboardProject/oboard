@@ -48,7 +48,7 @@ describe('server card address badge', () => {
     expect(styleSource).toMatch(/\.server-card-title\s*\{[^}]*align-items:\s*center/)
     expect(styleSource).toMatch(/\.server-address-block\s*\{[^}]*align-items:\s*center/)
     expect(styleSource).toMatch(/\.server-card-name-row\s*\{[^}]*flex-wrap:\s*nowrap/)
-    expect(styleSource).toMatch(/\.server-card-name-row h3\s*\{[^}]*flex:\s*0 1 auto/)
+    expect(styleSource).toMatch(/\.server-card-name-row h3\s*\{[^}]*flex:\s*0 0 auto/)
     expect(styleSource).toMatch(/\.server-address-block\s*\{[^}]*flex:\s*0 1 auto/)
     expect(styleSource).toMatch(/\.server-card-name-row\s*>\s*\.server-address-block\s*\{[^}]*flex-basis:\s*100%/)
   })
