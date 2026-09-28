@@ -4,7 +4,7 @@ export type ThemePreference = ThemeName | 'auto'
 export type ThemeOrigin = { x: number; y: number }
 
 const THEME_STORAGE_KEY = 'oboard.theme'
-const THEME_DURATION_MS = 480
+const THEME_DURATION_MS = 320
 const THEME_NO_TRANSITIONS_CLASS = 'theme-no-transitions'
 const THEME_KEYBOARD_SETTLE_MS = 900
 const THEME_KEYBOARD_MIN_WAIT_MS = 160
@@ -247,7 +247,7 @@ export function resolveThemeOrigin(
   // 1. Target element bounding rectangle (exact button center)
   const rawTarget = (event?.currentTarget || event?.target) as Element | null
   const target = rawTarget?.closest
-    ? rawTarget.closest('button, a, [role="button"], label, input, .login-ghost-link, .login-theme-inline, .sidebar-footer-btn') || rawTarget
+    ? rawTarget.closest('button, a, [role="button"], label, input, .theme-selector-option') || rawTarget
     : rawTarget
 
   if (target instanceof Element) {
@@ -261,7 +261,7 @@ export function resolveThemeOrigin(
   }
 
   // 2. Query active theme toggle elements in DOM
-  const activeToggle = document.querySelector('.login-theme-inline, .login-ghost-link, .sidebar-footer-btn')
+  const activeToggle = document.querySelector('.theme-selector-option[aria-pressed="true"]')
   if (activeToggle) {
     const rect = activeToggle.getBoundingClientRect()
     if (rect.width > 0 && rect.height > 0) {
@@ -424,10 +424,10 @@ export async function transitionThemeTo(
     ring.style.position = 'fixed'
     ring.style.top = `${origin.y}px`
     ring.style.left = `${origin.x}px`
-    ring.style.width = '0px'
-    ring.style.height = '0px'
+    ring.style.width = `${maxR * 2}px`
+    ring.style.height = `${maxR * 2}px`
     ring.style.borderRadius = '50%'
-    ring.style.transform = 'translate(-50%, -50%)'
+    ring.style.transform = 'translate(-50%, -50%) scale(0)'
     ring.style.pointerEvents = 'none'
     ring.style.zIndex = 'var(--z-theme-transition)'
     ring.style.boxShadow = targetTheme === 'dark'
@@ -470,9 +470,7 @@ export async function transitionThemeTo(
         }
 
         if (ring) {
-          const d = currentR * 2
-          ring.style.width = `${d}px`
-          ring.style.height = `${d}px`
+          ring.style.transform = `translate(-50%, -50%) scale(${currentR / maxR})`
           ring.style.opacity = `${(0.95 * (1 - progress)).toFixed(2)}`
         }
 

@@ -2402,10 +2402,14 @@ export function App() {
   }, [token, tab, realtimeStatus])
   useEffect(() => {
     const apply = (next: ThemeName) => {
-      void transitionThemeTo(next, themeOriginRef.current ?? resolveThemeOrigin(), () => {})
+      const origin = themeOriginRef.current ?? resolveThemeOrigin()
+      themeOriginRef.current = null
+      void transitionThemeTo(next, origin, () => {})
     }
     apply(resolveTheme(theme))
-    return watchSystemTheme(theme, apply)
+    return watchSystemTheme(theme, next => {
+      void transitionThemeTo(next, resolveThemeOrigin(), () => {})
+    })
   }, [theme])
   useEffect(() => {
     const onPopState = () => {

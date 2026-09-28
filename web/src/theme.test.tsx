@@ -73,7 +73,7 @@ it('updates primary text contrast when the accent color changes', () => {
   expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#111827')
 })
 
-it('cycles dark, light and automatic modes', async () => {
+it('selects light, automatic and dark modes directly with icon-only buttons', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -84,17 +84,17 @@ it('cycles dark, light and automatic modes', async () => {
   }
   try {
     await act(async () => root.render(<Harness />))
-    const button = container.querySelector('button')!
-    button.focus()
-    expect(button.textContent).toBe('自动模式')
-    const preferences = ['dark', 'light', 'auto', 'dark']
-    for (const [index, label] of ['暗黑模式', '浅色模式', '自动模式', '暗黑模式'].entries()) {
-      await act(async () => button.click())
-      expect(container.firstElementChild?.getAttribute('data-preference')).toBe(preferences[index])
-      expect(button.textContent).toBe(label)
-      expect(button.getAttribute('aria-label')).toContain(`当前${label}`)
-      expect(container.querySelectorAll('button')).toHaveLength(1)
-      expect(document.activeElement).toBe(button)
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('.theme-selector-option')]
+    expect(buttons.map(button => button.getAttribute('aria-label'))).toEqual(['浅色模式', '自动模式，跟随系统', '暗黑模式'])
+    expect(buttons.every(button => button.textContent === '')).toBe(true)
+    expect(buttons.map(button => button.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false'])
+
+    for (const [index, preference] of [[2, 'dark'], [0, 'light'], [1, 'auto']] as const) {
+      buttons[index].focus()
+      await act(async () => buttons[index].click())
+      expect(container.firstElementChild?.getAttribute('data-preference')).toBe(preference)
+      expect(buttons.map(button => button.getAttribute('aria-pressed'))).toEqual(buttons.map((_, buttonIndex) => String(buttonIndex === index)))
+      expect(document.activeElement).toBe(buttons[index])
     }
   } finally {
     await act(async () => root.unmount())
