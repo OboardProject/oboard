@@ -102,14 +102,6 @@ export function SecuritySettingsCard({
     }
   }
 
-  // Passkey details subtext
-  const latestPasskey = passkeys.length > 0 ? passkeys[0] : null
-  const passkeySubtext = latestPasskey
-    ? latestPasskey.last_used_at
-      ? `最近使用：${formatDate(latestPasskey.last_used_at)}`
-      : `添加于：${formatDate(latestPasskey.created_at)}`
-    : ''
-
   return (
     <section className="sub-section account-card account-login-security">
       <div className="sub-section-head">
@@ -175,11 +167,6 @@ export function SecuritySettingsCard({
           id="setting-row-passkeys"
           icon={<Fingerprint size={18} />}
           title="通行密钥"
-          description={
-            passkeySubtext
-              ? `使用设备生物识别或系统验证登录 · ${passkeySubtext}`
-              : '使用设备生物识别或系统验证登录'
-          }
           status={
             <span className={`status-badge ${passkeys.length > 0 ? 'ok' : 'neutral'}`}>
               {passkeys.length > 0 ? `${passkeys.length} 个` : '无通行密钥'}
@@ -200,6 +187,7 @@ export function SecuritySettingsCard({
           expanded={expandedPanel === 'passkeys'}
         >
           <div className="account-passkey-panel">
+            <p className="muted text-sm">使用设备生物识别或系统验证登录</p>
             {!passkeySupported || !passkeyAvailable ? (
               <p className="account-security-note">通行密钥需要通过 HTTPS 访问面板。</p>
             ) : null}
@@ -211,10 +199,9 @@ export function SecuritySettingsCard({
                     <div className="account-passkey-info">
                       <strong>{passkey.name}</strong>
                       <small>
-                        {passkey.last_used_at
-                          ? `最近使用 ${formatDate(passkey.last_used_at)}`
-                          : `添加于 ${formatDate(passkey.created_at)}`}
+                        最近使用：{passkey.last_used_at ? formatDate(passkey.last_used_at) : '从未使用'}
                       </small>
+                      <small>添加于：{formatDate(passkey.created_at)}</small>
                     </div>
                     <button
                       type="button"
@@ -228,8 +215,8 @@ export function SecuritySettingsCard({
                 ))}
               </div>
             ) : (
-              <p className="muted text-sm" style={{ marginBottom: 12 }}>
-                尚未添加通行密钥。您可以添加 Face ID、Touch ID 或系统验证进行安全登录。
+              <p className="muted text-sm">
+                尚未添加通行密钥。
               </p>
             )}
 

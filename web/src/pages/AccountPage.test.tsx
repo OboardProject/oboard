@@ -90,6 +90,41 @@ describe('AccountPage component unit & interaction tests', () => {
     expect(container.textContent).toContain('Age 未开启')
   })
 
+  it('shows usage for each passkey in management instead of the summary row', async () => {
+    const passkeys = [
+      { id: 'mac', name: 'Mac', created_at: '2026-09-20', last_used_at: '2026-09-27' },
+      { id: 'phone', name: 'iPhone', created_at: '2026-09-21' },
+    ]
+    const mockClient = { request: vi.fn().mockResolvedValue({ totp_enabled: false, recovery_codes_remaining: 0, passkeys, passkey_supported: true }) }
+
+    await act(async () => {
+      root.render(<AccountPage
+        data={dummyData} client={mockClient} load={vi.fn()}
+        useDialogs={() => ({ prompt: vi.fn(), confirm: vi.fn() })}
+        passkeyAvailable={() => true} createPasskeyCredential={vi.fn()} copyText={vi.fn()}
+        formatDate={d => d} localizeErrorMessage={String} Panel={DummyPanel}
+        TOTPSetupDialog={DummyDialog} RecoveryCodesDialog={DummyDialog}
+      />)
+    })
+
+    const row = container.querySelector('#setting-row-passkeys')
+    expect(row?.querySelector('.setting-row__description')).toBeNull()
+    expect(row?.textContent).not.toContain('使用设备生物识别或系统验证登录')
+    expect(row?.textContent).not.toContain('2026-09-27')
+
+    await act(async () => {
+      row?.querySelector<HTMLButtonElement>('.setting-row__action button')?.click()
+    })
+
+    const items = row?.querySelectorAll('.account-passkey-item')
+    expect(row?.querySelector('.account-passkey-panel')?.textContent).toContain('使用设备生物识别或系统验证登录')
+    expect(items).toHaveLength(2)
+    expect(items?.[0].querySelector('strong')?.textContent).toBe('Mac')
+    expect(Array.from(items?.[0].querySelectorAll('small') || [], item => item.textContent)).toEqual(['最近使用：2026-09-27', '添加于：2026-09-20'])
+    expect(items?.[1].querySelector('strong')?.textContent).toBe('iPhone')
+    expect(Array.from(items?.[1].querySelectorAll('small') || [], item => item.textContent)).toEqual(['最近使用：从未使用', '添加于：2026-09-21'])
+  })
+
   it('makes username readonly and disables save profile button when unchanged', async () => {
     const mockClient = { request: vi.fn().mockResolvedValue({ totp_enabled: false, recovery_codes_remaining: 0, passkeys: [], passkey_supported: true }) }
     const mockLoad = vi.fn().mockResolvedValue(undefined)
