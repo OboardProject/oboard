@@ -11299,6 +11299,48 @@ body:has(.controller-update-immersive-layer) {
 }
 
 .record-actions { display: flex; gap: 2px; }
+.dns-management .record-actions { gap: 0; }
+.dns-management .record-actions > button.ghost.icon-button {
+  position: relative;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border: 0 !important;
+  background: transparent !important;
+}
+.dns-management .record-actions > button.ghost.icon-button::before {
+  position: absolute;
+  inset: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  content: '';
+  pointer-events: none;
+}
+.dns-management .record-actions > button.ghost.icon-button:hover:not(:disabled)::before,
+.dns-management .record-actions > button.ghost.icon-button:focus-visible::before {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+}
+.dns-management .record-actions > button.ghost.icon-button svg {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+}
+.dns-management .record-actions > button.ghost.icon-button.danger-text { color: var(--text-strong) !important; }
+.dns-management .record-actions > button.ghost.icon-button.danger-text:hover:not(:disabled),
+.dns-management .record-actions > button.ghost.icon-button.danger-text:focus-visible { color: var(--danger) !important; }
+@media (max-width: 767px) {
+  .dns-management .record-actions > button.ghost.icon-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .dns-management .record-actions > button.ghost.icon-button::before { inset: 7px; }
+}
 .certificate-record-list { overflow: visible; }
 .tooltip-button { position: relative; }
 .tooltip-button::after {
