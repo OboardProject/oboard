@@ -1,12 +1,13 @@
 import { AnimatePresence } from 'motion/react'
-import { ArrowUp, ArrowUpCircle, CalendarSync, Database, Download, Eye, Info, KeyRound, RefreshCw, Settings2, Trash2 } from 'lucide-react'
+import { ArrowUp, ArrowUpCircle, Database, Download, Eye, Info, KeyRound, RefreshCw, Settings2, Trash2, MoreHorizontal } from 'lucide-react'
 import { MotionDialogPanel } from '../../components/ui/motion'
 import { FormField, FieldHelp } from '../../components/ui/form-field'
 import { Switch } from '../../components/ui/switch'
 import { Select } from '../../components/ui/select'
+import { Dropdown, DropdownContent, DropdownItem, DropdownTrigger } from '../../components/ui/dropdown-menu'
 import { formatBytes, formatDate } from '../../shared/presentation'
 import { useBackups } from './use-backups'
-import type { BackupDestination, BackupProps } from './types'
+import type { BackupDestination, BackupProps, ControllerBackup, ControllerUpdateBackup } from './types'
 
 function XIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
@@ -14,36 +15,23 @@ function XIcon() {
 
 export function ControllerBackupPanel(props: BackupProps) {
   const { localizeErrorMessage } = props
-  const { snapshot, draft, setDraft, updateBackupDetail, setUpdateBackupDetail, recoveryPassword, setRecoveryPassword, recoveryPasswordConfirm, setRecoveryPasswordConfirm, s3AccessKey, setS3AccessKey, s3SecretKey, setS3SecretKey, webdavUsername, setWebdavUsername, webdavPassword, setWebdavPassword, uploadPassword, setUploadPassword, settingsDialogOpen, passwordDialogOpen, uploadDialogOpen, uploadFile, uploadDragActive, setUploadDragActive, uploadValidationError, setUploadValidationError, passwordValidationError, setPasswordValidationError, working, uploadRef, uploadDropRef, uploadPasswordRef, refresh, saveSettings, saveRecoveryPassword, testDestination, createBackup, downloadBackup, restoreBackup, removeBackup, viewUpdateBackup, downloadUpdateBackup, removeUpdateBackup, uploadBackup, openSettingsDialog, closeSettingsDialog, openPasswordDialog, closePasswordDialog, chooseUploadFile, openUploadDialog, closeUploadDialog, updateDestination, destination, weekdayNames, savedSettings, savedDestination, savedDestinationName, scheduleDescription, backupStatus } = useBackups(props)
+  const { snapshot, draft, setDraft, updateBackupDetail, setUpdateBackupDetail, recoveryPassword, setRecoveryPassword, recoveryPasswordConfirm, setRecoveryPasswordConfirm, s3AccessKey, setS3AccessKey, s3SecretKey, setS3SecretKey, webdavUsername, setWebdavUsername, webdavPassword, setWebdavPassword, uploadPassword, setUploadPassword, settingsDialogOpen, passwordDialogOpen, uploadDialogOpen, uploadFile, uploadDragActive, setUploadDragActive, uploadValidationError, setUploadValidationError, passwordValidationError, setPasswordValidationError, working, loading, ready, refreshing, backupLoadError, updateLoadError, refreshBackups, refreshUpdateBackups, uploadRef, uploadDropRef, uploadPasswordRef, refresh, saveSettings, saveRecoveryPassword, testDestination, createBackup, downloadBackup, restoreBackup, removeBackup, viewUpdateBackup, downloadUpdateBackup, removeUpdateBackup, uploadBackup, openSettingsDialog, closeSettingsDialog, openPasswordDialog, closePasswordDialog, chooseUploadFile, openUploadDialog, closeUploadDialog, updateDestination, destination, weekdayNames, savedSettings, savedDestination, savedDestinationName, scheduleDescription, backupStatus } = useBackups(props)
   return <>
-  <section className="settings-card controller-backup-card">
-    <div className="settings-card-head">
-      <div className="settings-heading"><h3>主控数据备份</h3><FieldHelp label="主控数据备份" hint="备份用户数据、证书和配置，不包含日志和程序文件。" placement="bottom" /></div>
-      <div className="backup-card-head-actions"><span className={`status-pill ${snapshot.settings?.last_error ? 'danger' : 'ok'}`}>{working === 'load' ? '正在读取' : snapshot.settings?.last_error ? '需要处理' : '已就绪'}</span><button type="button" className="ghost" onClick={openSettingsDialog} disabled={Boolean(working)}><Settings2 size={15} />自动备份设置</button></div>
-    </div>
-    {snapshot.settings?.last_error && <div className="controller-update-error" role="alert">{localizeErrorMessage(snapshot.settings.last_error)}</div>}
-    <div className="backup-settings-summary">
-      <span className={`backup-settings-summary-icon${savedSettings.enabled ? ' active' : ''}`}><CalendarSync size={18} /></span>
-      <div><strong>{savedSettings.enabled ? '自动备份已开启' : '自动备份未开启'}</strong><span>{scheduleDescription}</span><small>{savedDestination.enabled ? `新备份会同时上传到${savedDestinationName}，远端保留 ${savedSettings.remote_retention || 1} 份。` : '第三方备份未启用，新备份只保存在本机。'}</small></div>
-    </div>
-    <section className="backup-password-setting">
-      <div className="settings-heading"><h3>备份密码</h3><FieldHelp label="备份密码" hint="用于加密新备份；恢复时须输入创建该备份时的密码。" placement="bottom" /></div>
-      <div className="backup-password-setting-actions"><span className={`status-pill ${savedSettings.password_configured ? 'ok' : 'warning'}`}>{savedSettings.password_configured ? '已设置' : '未设置'}</span><button type="button" className="ghost" onClick={openPasswordDialog} disabled={Boolean(working)}><KeyRound size={15} />{savedSettings.password_configured ? '更换密码' : '设置密码'}</button></div>
+  <div className="controller-backup-page">
+    <header className="controller-backup-page-head"><div><h2>备份</h2><p>主控数据备份包含用户数据、证书和配置，不包含日志与程序文件。</p></div><button type="button" className="ghost" onClick={openSettingsDialog} disabled={Boolean(working) || !ready}><Settings2 size={16} aria-hidden="true" />自动备份设置</button></header>
+    <section className="settings-card controller-backup-card backup-password-card" aria-labelledby="backup-password-title">
+      <div className="backup-setting-copy"><div className="settings-heading"><h3 id="backup-password-title">备份密码</h3><FieldHelp label="备份密码" hint="用于加密新备份；恢复时须输入创建该备份时的密码。" placement="bottom" /></div><p>用于加密备份文件</p></div>
+      <div className="backup-password-setting-actions"><span className={'status-pill ' + (!ready ? '' : savedSettings.password_configured ? 'ok' : 'warning')}>{!ready ? loading ? '读取中' : '读取失败' : savedSettings.password_configured ? '已设置' : '未设置'}</span><button type="button" className="ghost" onClick={openPasswordDialog} disabled={Boolean(working) || !ready}><KeyRound size={16} aria-hidden="true" />{savedSettings.password_configured ? '修改密码' : '设置密码'}</button></div>
     </section>
-    <div className="backup-actions"><div><strong>立即备份</strong><span>本地备份完成后，会上传到已启用的第三方目标。</span></div><button onClick={() => void createBackup()} disabled={Boolean(working)}><Database size={15} />{working === 'create' ? '备份中...' : '创建备份'}</button></div>
-    <section className="backup-import">
-      <div className="settings-heading"><h3>导入备份</h3><FieldHelp label="导入备份" hint="上传已有备份，验证密码后可恢复。" placement="bottom" /></div>
-      <button type="button" className="ghost" onClick={openUploadDialog} disabled={Boolean(working)}><ArrowUp size={15} />上传备份</button>
+    <section className="settings-card controller-backup-card backup-actions-card" aria-labelledby="backup-actions-title">
+      <div className="backup-section-copy"><h3 id="backup-actions-title">备份与恢复</h3><p>创建当前配置备份或导入已有备份。</p></div>
+      <div className="backup-action-buttons"><button type="button" onClick={() => void createBackup()} disabled={Boolean(working) || !ready} aria-busy={working === 'create'}><Database size={16} aria-hidden="true" />{working === 'create' ? '备份中…' : '创建备份'}</button><button type="button" className="ghost" onClick={openUploadDialog} disabled={Boolean(working) || !ready}><ArrowUp size={16} aria-hidden="true" />导入备份</button></div>
+      <p className="backup-action-note">{savedDestination.enabled ? '备份完成后将同步至已启用的' + savedDestinationName + '。' : '第三方存储未启用，新备份仅保存在本机。'} {scheduleDescription}{savedDestination.enabled ? ' 远端保留 ' + (savedSettings.remote_retention || 1) + ' 份。' : ''}</p>
+      {snapshot.settings?.last_error && <div className="backup-inline-error" role="alert">{localizeErrorMessage(snapshot.settings.last_error)}</div>}
     </section>
-    <section className="backup-records">
-      <div className="settings-card-head"><div className="settings-heading"><h3>备份记录</h3><FieldHelp label="备份记录" hint="恢复前会创建保护备份，保护备份不会被自动清理。" placement="bottom" /></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
-      {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {item.local_status === 'pending' ? '等待后台完成' : formatBytes(Number(item.size_bytes || 0)) + ' · 来源 ' + (item.source_version || '-')}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div><span className={`status-pill ${item.local_status === 'pending' ? 'warning' : item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
-    </section>
-    <section className="backup-records">
-      <div className="settings-card-head"><div className="settings-heading"><h3>更新前备份</h3><FieldHelp label="更新前备份" hint="更新前创建的数据副本。保留 0 份时，更新成功后立即清理。" placement="bottom" /></div><span className="status-pill">{`保留 ${snapshot.settings?.update_retention ?? snapshot.update_retention ?? 2} 份`}</span><button className="ghost icon-button" onClick={() => void refresh(true)} disabled={Boolean(working)} title="刷新更新前备份" aria-label="刷新更新前备份"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
-      {snapshot.update_backups?.length ? <div className="backup-record-list">{snapshot.update_backups.map(item => <div className="backup-record" key={item.name}><div className="backup-record-main"><strong>{item.is_latest ? '最近更新前备份' : '更新前备份'} {item.is_latest && <span className="status-pill ok" style={{marginLeft:6, fontSize:11}}>最新</span>}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))}{item.target_build ? ` · 目标构建 ${item.target_build}` : ''}</span><small title={item.path} style={{overflowWrap:'anywhere'}}>{item.name}</small></div><span className={`status-pill ${item.is_latest ? 'warning' : 'ok'}`}>{item.is_latest ? '已关联' : '已保留'}</span><div className="backup-record-actions"><button type="button" className="ghost icon-button" title="查看详情" aria-label="查看详情" onClick={() => void viewUpdateBackup(item)} disabled={Boolean(working)}><Eye size={15} /></button><button type="button" className="ghost icon-button" title="下载快照" aria-label="下载快照" onClick={() => void downloadUpdateBackup(item)} disabled={Boolean(working)}><Download size={15} /></button><button type="button" className="ghost icon-button danger-text" title="删除更新前备份" aria-label="删除更新前备份" onClick={() => void removeUpdateBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">暂无更新前备份，更新时选择“备份”后会自动创建。</p>}
-    </section>
-  </section>
+    <BackupHistoryCard items={snapshot.backups} loading={loading} refreshing={refreshing === 'backups'} error={backupLoadError} working={working} localizeErrorMessage={localizeErrorMessage} backupStatus={backupStatus} onRefresh={() => void refreshBackups()} onDownload={downloadBackup} onRestore={restoreBackup} onDelete={removeBackup} />
+    <PreUpdateBackupCard items={snapshot.update_backups} retention={savedSettings.update_retention ?? snapshot.update_retention ?? 2} loading={loading} ready={ready} refreshing={refreshing === 'updates'} error={updateLoadError} working={working} onSettings={openSettingsDialog} onRefresh={() => void refreshUpdateBackups()} onView={viewUpdateBackup} onDownload={downloadUpdateBackup} onDelete={removeUpdateBackup} />
+  </div>
   <AnimatePresence>{passwordDialogOpen && <MotionDialogPanel onCancel={closePasswordDialog} className="backup-password-dialog" ariaLabel={savedSettings.password_configured ? '更换备份恢复密码' : '设置备份恢复密码'}>
     <header className="dialog-head"><div><h2>{savedSettings.password_configured ? '更换备份密码' : '设置备份密码'}</h2><p className="muted">密码不会显示或找回，请妥善保存。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closePasswordDialog} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <form id="backup-password-form" onSubmit={event => { event.preventDefault(); void saveRecoveryPassword() }}>
@@ -165,4 +153,46 @@ export function ControllerBackupPanel(props: BackupProps) {
     <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setUpdateBackupDetail(null)}>关闭</button><button type="button" className="ghost" onClick={() => { const item = updateBackupDetail; setUpdateBackupDetail(null); if (item) void downloadUpdateBackup(item) }}>下载</button><button type="button" className="ghost danger-text" onClick={() => { const item = updateBackupDetail; setUpdateBackupDetail(null); if (item) void removeUpdateBackup(item) }}>删除</button></footer>
   </MotionDialogPanel>}</AnimatePresence>
   </>
+}
+
+function RefreshButton({ label, busy, disabled, onClick }: { label: string; busy: boolean; disabled: boolean; onClick: () => void }) {
+  return <button type="button" className="ghost icon-button backup-refresh-button" onClick={onClick} disabled={disabled || busy} aria-label={label} title={label} aria-busy={busy}><RefreshCw size={16} className={busy ? 'spin' : ''} aria-hidden="true" /></button>
+}
+
+function BackupHistoryCard({ items, loading, refreshing, error, working, localizeErrorMessage, backupStatus, onRefresh, onDownload, onRestore, onDelete }: {
+  items: ControllerBackup[] | undefined; loading: boolean; refreshing: boolean; error: string; working: string;
+  localizeErrorMessage: BackupProps['localizeErrorMessage']; backupStatus: (item: ControllerBackup) => string;
+  onRefresh: () => void; onDownload: (item: ControllerBackup) => void; onRestore: (item: ControllerBackup) => void; onDelete: (item: ControllerBackup) => void;
+}) {
+  return <section className="settings-card controller-backup-card backup-list-card" aria-labelledby="backup-history-title" aria-busy={refreshing}>
+    <div className="backup-list-head"><div className="settings-heading"><h3 id="backup-history-title">备份记录</h3><FieldHelp label="备份记录" hint="恢复前会创建保护备份，保护备份不会被自动清理。" placement="bottom" /></div><RefreshButton label="刷新备份记录" busy={refreshing} disabled={Boolean(working) || loading} onClick={onRefresh} /></div>
+    {error && <div className="backup-inline-error" role="alert"><span>备份记录加载失败：{error}</span><button type="button" className="ghost" onClick={onRefresh} disabled={refreshing}>重试</button></div>}
+    {items?.length ? <div className="backup-record-list">{items.map(item => {
+      const available = item.local_status === 'available' || item.remote_retrievable
+      const pending = item.local_status === 'pending'
+      return <div className="backup-record" key={item.id}>
+        <div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {pending ? '等待后台完成' : formatBytes(Number(item.size_bytes || 0)) + ' · 来源 ' + (item.source_version || '-')}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div>
+        <span className={'status-pill ' + (pending ? 'warning' : item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok')}>{backupStatus(item)}</span>
+        <div className="backup-record-actions">{available && <button type="button" className="ghost" onClick={() => onRestore(item)} disabled={Boolean(working) || pending}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<Dropdown><DropdownTrigger><button type="button" className="ghost icon-button backup-more-button" aria-label="更多备份操作" title="更多备份操作" disabled={Boolean(working) || pending}><MoreHorizontal size={17} aria-hidden="true" /></button></DropdownTrigger><DropdownContent align="right">{available && <DropdownItem onClick={() => onDownload(item)}><Download size={16} aria-hidden="true" />{item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'}</DropdownItem>}<DropdownItem className="danger-text" onClick={() => onDelete(item)}><Trash2 size={16} aria-hidden="true" />删除备份</DropdownItem></DropdownContent></Dropdown></div>
+      </div>
+    })}</div> : !error && <div className="backup-empty">{loading ? <span role="status">正在读取备份记录…</span> : <><strong>尚无备份记录</strong><span>创建备份后将在此处显示</span></>}</div>}
+  </section>
+}
+
+function PreUpdateBackupCard({ items, retention, loading, ready, refreshing, error, working, onSettings, onRefresh, onView, onDownload, onDelete }: {
+  items: ControllerUpdateBackup[] | undefined; retention: number; loading: boolean; ready: boolean; refreshing: boolean; error: string; working: string;
+  onSettings: () => void; onRefresh: () => void; onView: (item: ControllerUpdateBackup) => void; onDownload: (item: ControllerUpdateBackup) => void; onDelete: (item: ControllerUpdateBackup) => void;
+}) {
+  return <section className="settings-card controller-backup-card backup-list-card backup-update-card" aria-labelledby="backup-update-title" aria-busy={refreshing}>
+    <div className="settings-heading"><h3 id="backup-update-title">更新前备份</h3><FieldHelp label="更新前备份" hint="更新前创建的数据副本。保留 0 份时，更新成功后立即清理。" placement="bottom" /></div>
+    <div className="backup-retention-row"><span>保留数量</span><div><span className="backup-setting-value">{retention} 份</span><button type="button" className="ghost" onClick={onSettings} disabled={Boolean(working) || !ready}>修改</button></div></div>
+    <div className="backup-update-history">
+      <div className="backup-list-head"><h4>更新备份</h4><RefreshButton label="刷新更新前备份" busy={refreshing} disabled={Boolean(working) || loading} onClick={onRefresh} /></div>
+      {error && <div className="backup-inline-error" role="alert"><span>更新前备份加载失败：{error}</span><button type="button" className="ghost" onClick={onRefresh} disabled={refreshing}>重试</button></div>}
+      {items?.length ? <div className="backup-record-list">{items.map(item => <div className="backup-record" key={item.name}>
+        <div className="backup-record-main"><strong>{item.is_latest ? '最近更新前备份' : '更新前备份'}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))}{item.target_build ? ' · 目标构建 ' + item.target_build : ''}</span><small className="backup-filename" title={item.path}>{item.name}</small></div>
+        <div className="backup-record-actions"><button type="button" className="ghost" onClick={() => onDownload(item)} disabled={Boolean(working)}>下载</button><Dropdown><DropdownTrigger><button type="button" className="ghost icon-button backup-more-button" aria-label="更多更新备份操作" title="更多更新备份操作" disabled={Boolean(working)}><MoreHorizontal size={17} aria-hidden="true" /></button></DropdownTrigger><DropdownContent align="right"><DropdownItem onClick={() => onView(item)}><Eye size={16} aria-hidden="true" />查看详情</DropdownItem><DropdownItem className="danger-text" onClick={() => onDelete(item)}><Trash2 size={16} aria-hidden="true" />删除更新前备份</DropdownItem></DropdownContent></Dropdown></div>
+      </div>)}</div> : !error && <div className="backup-empty">{loading ? <span role="status">正在读取更新前备份…</span> : <><strong>暂无更新前备份</strong><span>执行更新并选择「备份」时自动创建。</span></>}</div>}
+    </div>
+  </section>
 }

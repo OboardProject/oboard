@@ -30939,3 +30939,109 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
   .dns-list-toolbar > button { min-height: 38px; }
   .dns-list-item { padding-inline: 16px; }
 }
+
+.controller-backup-page {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  max-width: 960px;
+  min-width: 0;
+}
+.controller-backup-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+.controller-backup-page-head h2 { margin: 0 0 4px; color: var(--text-strong); font-size: 18px; }
+.controller-backup-page-head p,
+.controller-backup-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.controller-backup-page-head > button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.controller-backup-page > .controller-backup-card {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 20px 24px;
+}
+.controller-backup-page > .controller-backup-card > :not(.settings-card-head):not(.settings-group) {
+  margin: 0;
+  min-width: 0;
+}
+.controller-backup-page .settings-heading { display: inline-flex; align-items: center; gap: 4px; }
+.controller-backup-page .settings-heading h3,
+.controller-backup-card h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.controller-backup-page > .backup-password-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.backup-setting-copy,
+.backup-section-copy { min-width: 0; display: grid; gap: 4px; }
+.controller-backup-page .backup-password-setting-actions { display: flex; align-items: center; gap: 10px; }
+.controller-backup-page .backup-password-setting-actions button { min-height: 36px; }
+.backup-action-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.backup-action-buttons > button { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; }
+.controller-backup-page .backup-action-note { font-size: 13px; }
+.controller-backup-page .backup-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.backup-list-head h4 { margin: 0; color: var(--text-strong); font-size: 14px; font-weight: 600; }
+.controller-backup-page button.backup-refresh-button,
+.controller-backup-page button.backup-more-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+.controller-backup-page .backup-refresh-button:active:not(:disabled),
+.controller-backup-page .backup-more-button:active:not(:disabled) { transform: scale(.97) translateY(1px); }
+.controller-backup-page .backup-empty {
+  min-height: 104px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  padding: 12px;
+  text-align: center;
+}
+.backup-empty strong { color: var(--text-strong); font-size: 14px; font-weight: 600; }
+.backup-empty span { color: var(--muted); font-size: 13px; }
+.controller-backup-page .backup-record-list { gap: 0; border-top: 1px solid var(--border); border-bottom: 0; }
+.controller-backup-page .backup-record { min-width: 0; padding: 11px 0; }
+.controller-backup-page .backup-record:last-child { padding-bottom: 0; }
+.controller-backup-page .backup-record-main { gap: 2px; }
+.controller-backup-page .backup-record-main strong { font-size: 14px; font-weight: 600; }
+.controller-backup-page .backup-record-main span,
+.controller-backup-page .backup-record-main small { font-size: 12px; line-height: 1.45; }
+.controller-backup-page .backup-record-main .backup-filename { color: var(--muted); }
+.controller-backup-page .backup-record-actions { gap: 8px; }
+.controller-backup-page .backup-record-actions > button { min-height: 34px; }
+.controller-backup-page .backup-retention-row,
+.controller-backup-page .backup-retention-row > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.backup-retention-row > span { color: var(--text-secondary); font-size: 14px; }
+.backup-setting-value { color: var(--text-strong); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.backup-retention-row button { min-height: 34px; }
+.controller-backup-page .backup-update-history { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
+.controller-backup-page .backup-inline-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; color: var(--danger); font-size: 13px; }
+.backup-inline-error button { min-height: 32px; }
+@media (max-width: 620px) {
+  .controller-backup-page > .controller-backup-card { padding: 16px; }
+  .controller-backup-page-head { align-items: flex-start; }
+  .controller-backup-page > .backup-password-card { flex-wrap: wrap; }
+  .controller-backup-page .backup-password-setting-actions { width: 100%; justify-content: space-between; }
+  .controller-backup-page .backup-record { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .controller-backup-page .backup-record-main { flex: 1 1 180px; }
+  .controller-backup-page .backup-record-actions { width: auto; margin-inline-start: auto; }
+}
+@media (max-width: 440px) {
+  .controller-backup-page-head { flex-wrap: wrap; }
+  .controller-backup-page-head > button { min-height: 34px; }
+  .controller-backup-page .backup-record-main { flex-basis: 100%; }
+  .controller-backup-page .backup-record-actions { margin-inline-start: auto; }
+}

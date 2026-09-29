@@ -24,21 +24,58 @@ export function useBackups({ client, notify, dialogs, localizeErrorMessage }: Ba
   const [uploadValidationError, setUploadValidationError] = useState<'file' | 'password' | ''>('')
   const [passwordValidationError, setPasswordValidationError] = useState('')
   const [working, setWorking] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [ready, setReady] = useState(false)
+  const [refreshing, setRefreshing] = useState<'' | 'backups' | 'updates'>('')
+  const [backupLoadError, setBackupLoadError] = useState('')
+  const [updateLoadError, setUpdateLoadError] = useState('')
   const uploadRef = useRef<HTMLInputElement>(null)
   const uploadDropRef = useRef<HTMLButtonElement>(null)
   const uploadPasswordRef = useRef<HTMLInputElement>(null)
   const refresh = async (quiet = false) => {
-    if (!quiet) setWorking('load')
     try {
       const result = await api.list()
       setSnapshot(result)
       setDraft(result.settings || emptySettings)
+      setReady(true)
+      setBackupLoadError('')
+      setUpdateLoadError('')
     } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      const message = localizeErrorMessage(error?.message || error)
+      setBackupLoadError(message)
+      setUpdateLoadError(message)
+      if (quiet) notify?.(message, 'error')
     } finally {
-      if (!quiet) setWorking('')
+      setLoading(false)
     }
   }
+  const refreshSection = async (section: 'backups' | 'updates') => {
+    if (refreshing) return
+    setRefreshing(section)
+    try {
+      const result = await api.list()
+      setSnapshot(previous => !ready ? result : section === 'backups'
+        ? { ...previous, backups: result.backups, settings: result.settings }
+        : { ...previous, update_backups: result.update_backups, update_retention: result.update_retention, settings: result.settings })
+      if (!ready) {
+        setDraft(result.settings || emptySettings)
+        setReady(true)
+        setBackupLoadError('')
+        setUpdateLoadError('')
+      }
+      if (section === 'backups') setBackupLoadError('')
+      else setUpdateLoadError('')
+    } catch (error: any) {
+      const message = localizeErrorMessage(error?.message || error)
+      if (section === 'backups') setBackupLoadError(message)
+      else setUpdateLoadError(message)
+      notify?.(message, 'error')
+    } finally {
+      setRefreshing('')
+    }
+  }
+  const refreshBackups = () => refreshSection('backups')
+  const refreshUpdateBackups = () => refreshSection('updates')
   useEffect(() => { void refresh() }, [])
   const saveSettings = async () => {
     if (working) return
@@ -278,6 +315,7 @@ export function useBackups({ client, notify, dialogs, localizeErrorMessage }: Ba
     }
   }
   const uploadBackup = async () => {
+    if (working) return
     const file = uploadFile
     if (!file) {
       setUploadValidationError('file')
@@ -381,5 +419,5 @@ export function useBackups({ client, notify, dialogs, localizeErrorMessage }: Ba
   const scheduleDescription = savedSettings.enabled
     ? `${savedSettings.schedule === 'weekly' ? `每${weekdayNames[savedSettings.weekday] || '周日'}` : '每天'} ${savedSettings.time || '03:00'} 自动创建，本地保留 ${savedSettings.local_retention || 1} 份。`
     : '当前只会在您点击“创建备份”时备份。'
-  return { snapshot, draft, setDraft, updateBackupDetail, setUpdateBackupDetail, recoveryPassword, setRecoveryPassword, recoveryPasswordConfirm, setRecoveryPasswordConfirm, s3AccessKey, setS3AccessKey, s3SecretKey, setS3SecretKey, webdavUsername, setWebdavUsername, webdavPassword, setWebdavPassword, uploadPassword, setUploadPassword, settingsDialogOpen, passwordDialogOpen, uploadDialogOpen, uploadFile, uploadDragActive, setUploadDragActive, uploadValidationError, setUploadValidationError, passwordValidationError, setPasswordValidationError, working, uploadRef, uploadDropRef, uploadPasswordRef, refresh, saveSettings, saveRecoveryPassword, testDestination, createBackup, downloadBackup, restoreBackup, removeBackup, viewUpdateBackup, downloadUpdateBackup, removeUpdateBackup, uploadBackup, openSettingsDialog, closeSettingsDialog, openPasswordDialog, closePasswordDialog, chooseUploadFile, openUploadDialog, closeUploadDialog, updateDestination, destination, weekdayNames, savedSettings, savedDestination, savedDestinationName, scheduleDescription, backupStatus }
+  return { snapshot, draft, setDraft, updateBackupDetail, setUpdateBackupDetail, recoveryPassword, setRecoveryPassword, recoveryPasswordConfirm, setRecoveryPasswordConfirm, s3AccessKey, setS3AccessKey, s3SecretKey, setS3SecretKey, webdavUsername, setWebdavUsername, webdavPassword, setWebdavPassword, uploadPassword, setUploadPassword, settingsDialogOpen, passwordDialogOpen, uploadDialogOpen, uploadFile, uploadDragActive, setUploadDragActive, uploadValidationError, setUploadValidationError, passwordValidationError, setPasswordValidationError, working, loading, ready, refreshing, backupLoadError, updateLoadError, refreshBackups, refreshUpdateBackups, uploadRef, uploadDropRef, uploadPasswordRef, refresh, saveSettings, saveRecoveryPassword, testDestination, createBackup, downloadBackup, restoreBackup, removeBackup, viewUpdateBackup, downloadUpdateBackup, removeUpdateBackup, uploadBackup, openSettingsDialog, closeSettingsDialog, openPasswordDialog, closePasswordDialog, chooseUploadFile, openUploadDialog, closeUploadDialog, updateDestination, destination, weekdayNames, savedSettings, savedDestination, savedDestinationName, scheduleDescription, backupStatus }
 }

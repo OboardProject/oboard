@@ -36,3 +36,25 @@ it('keeps uploaded-password reuse behind confirmation and clears dialog secrets'
     vi.unstubAllGlobals()
   }
 })
+
+it('keeps existing backup records visible when their refresh fails', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const initial = { settings: emptySettings, backups: [{ id: 'kept', local_status: 'available' }], update_backups: [] }
+  const request = vi.fn().mockResolvedValueOnce(initial).mockRejectedValueOnce(new Error('network failed'))
+  const props = { client: { request }, dialogs: {}, localizeErrorMessage: String } as unknown as BackupProps
+  let model!: ReturnType<typeof useBackups>
+  function Harness() { model = useBackups(props); return null }
+  const root = createRoot(document.createElement('div'))
+  try {
+    await act(async () => root.render(<Harness />))
+    expect(model.snapshot.backups[0].id).toBe('kept')
+    await act(async () => { await model.refreshBackups() })
+    expect(model.snapshot.backups[0].id).toBe('kept')
+    expect(model.backupLoadError).toBe('network failed')
+    expect(model.updateLoadError).toBe('')
+    expect(model.refreshing).toBe('')
+  } finally {
+    await act(async () => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
