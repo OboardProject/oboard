@@ -9356,7 +9356,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
               <div className="server-list-status">
                 <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
-                {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
+                {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>待更新</Badge>}
                 <ServerDeliveryBadge server={server} />
                 <ServerExpiryBadge server={server} />
                 {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>{timeIssue.summary}</Badge>}
@@ -9465,7 +9465,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         <div className="server-card-head-actions">
           {outdated && (
             <div className={`server-version-update${updateInfoOpen ? ' open' : ''}`}>
-              <button type="button" className="server-version-warning" aria-label="Agent 有可用更新" aria-expanded={updateInfoOpen} onClick={() => setUpdateInfoOpen(value => !value)}>有更新</button>
+              <button type="button" className="server-version-warning" aria-label="Agent 待更新" aria-expanded={updateInfoOpen} onClick={() => setUpdateInfoOpen(value => !value)}>待更新</button>
               <div className="server-version-popover" role="tooltip">
                 <span>Agent</span>
                 <strong>{compactBuildLabel(server.agent_build)} → {compactBuildLabel(expectedBuild)}</strong>
