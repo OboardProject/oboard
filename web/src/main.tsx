@@ -8176,7 +8176,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
         ))}
       </div>
       <div className="dialog-body">
-        <div className="form server-dialog-form labeled-form">
+        <div className={`form server-dialog-form labeled-form${tab === 'network' ? ' server-network-form' : ''}`}>
           {tab === 'basic' && <>
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom">
@@ -8222,7 +8222,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
 
           {tab === 'network' && <>
           <div className="form-section-title">入口与监听</div>
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom">
+          <FormField label="默认入口地址策略" className="server-network-inline-field" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom">
             <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
           {draft.entry_ip_mode === 'custom' ? (
@@ -8233,14 +8233,14 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           ) : draft.entry_address ? (
             <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
           ) : null}
-          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
+          <FormField label="监听模式" className="server-network-inline-field" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
             <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
           </FormField>
-          <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
+          <FormField label="监听 IP" className="server-network-inline-field" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
             <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
           </FormField>
           <div className="form-section-title">出口与端口</div>
-          <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。">
+          <FormField label="出口解析策略" className="server-network-inline-field" hint="选择出口优先使用的 IP 类型。">
             <Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。">
@@ -8366,7 +8366,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
         ))}
       </div>
       <div className="dialog-body">
-        <div className="form server-dialog-form labeled-form">
+        <div className={`form server-dialog-form labeled-form${tab === 'network' ? ' server-network-form' : ''}`}>
           {tab === 'basic' && <>
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
@@ -8420,7 +8420,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           </>}
           {tab === 'network' && <>
           <div className="form-section-title">入口与监听</div>
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          <FormField label="默认入口地址策略" className="server-network-inline-field" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           {draft.entry_ip_mode === 'custom' ? (
             <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
               <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
@@ -8429,10 +8429,10 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           ) : draft.entry_address ? (
             <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
           ) : null}
-          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
-          <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
+          <FormField label="监听模式" className="server-network-inline-field" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
+          <FormField label="监听 IP" className="server-network-inline-field" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
           <div className="form-section-title">出口与端口</div>
-          <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          <FormField label="出口解析策略" className="server-network-inline-field" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
           <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
           <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。"><PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} /></FormField>
@@ -8774,7 +8774,8 @@ function MTUSettingsDialog({ draft, onCancel, onSave, embedded = false }: { draf
 function DetectedEntryAddressNote({ ipv4, ipv6 }: { ipv4?: string; ipv6?: string }) {
   return (
     <small className="detected-address-note">
-      <span><strong>IPv4</strong> {ipv4 || '待检测'}<i>·</i><strong>IPv6</strong> {ipv6 || '待检测'}</span>
+      <span><strong>IPv4</strong><span>{ipv4 || '待检测'}</span></span>
+      <span><strong>IPv6</strong><span>{ipv6 || '待检测'}</span></span>
     </small>
   )
 }
