@@ -25049,6 +25049,7 @@ button.dns-policy-row-main:focus {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
+.dns-list-dialog > .dialog-head { align-items: center; }
 .dns-candidate-editor {
   min-width: 0;
   display: grid;
@@ -25201,19 +25202,23 @@ button.dns-policy-row-main:focus {
   .dns-status-strip > span:last-child { border-bottom: 0; }
   .dns-settings-form { grid-template-columns: minmax(0, 1fr); }
 	.dns-group-grid { grid-template-columns: minmax(0, 1fr); }
-  .dns-candidate-editor-head { align-items: stretch; flex-direction: column; }
-  .dns-candidate-editor-head button { width: 100%; }
+  .dns-candidate-editor-head { min-height: 52px; flex-direction: row; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; }
+  .dns-candidate-editor-head button { flex: 0 0 auto; width: auto; min-height: 40px; padding-inline: 8px; white-space: nowrap; }
   .dns-candidate-columns { display: none; }
   .dns-candidate-row {
-    grid-template-columns: 28px minmax(0, 1fr) 34px;
+    grid-template-columns: 20px minmax(0, 1fr) 44px;
     gap: 8px;
-    align-items: start;
-    padding: 10px 8px;
+    align-items: end;
+    padding: 10px 12px;
   }
-  .dns-candidate-index { grid-column: 1; grid-row: 1 / span 2; padding-top: 27px; }
-  .dns-candidate-row > label { grid-column: 2; }
-  .dns-candidate-row > label > span { display: block; color: var(--text-muted); font-size: 10px; font-weight: 650; }
-  .dns-candidate-row > .icon-button { grid-column: 3; grid-row: 1 / span 2; align-self: center; }
+  .dns-candidate-index { grid-column: 1; grid-row: 1; align-self: end; line-height: 44px; }
+  .dns-candidate-row > label { grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 6px; }
+  .dns-candidate-row > .dns-candidate-name { grid-column: 2; grid-row: 1; }
+  .dns-candidate-row > .dns-candidate-address { grid-column: 1 / -1; grid-row: 2; }
+  .dns-candidate-row > label > span { display: block; color: var(--text-muted); font-size: 11px; font-weight: 650; white-space: nowrap; }
+  .dns-candidate-row > .dns-candidate-remove { grid-column: 3; grid-row: 1; align-self: end; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  button.ghost.dns-candidate-remove { border: 0 !important; border-radius: var(--radius-sm); background: transparent !important; }
+  button.ghost.dns-candidate-remove:hover { background: var(--surface-2) !important; }
   .dns-provider-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dns-dialog-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
   .dns-dialog-actions button { width: 100%; min-width: 0; }

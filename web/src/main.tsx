@@ -18793,30 +18793,29 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
   }
   const addCandidate = () => setDraft(current => current.candidates.length >= 32 ? current : ({ ...current, candidates: [...current.candidates, dnsCandidateDraft()] }))
   const removeCandidate = (id: number) => setDraft(current => current.candidates.length <= 2 ? current : ({ ...current, candidates: current.candidates.filter(candidate => candidate.id !== id) }))
-  const typeLabel = draft.kind === 'encrypted' ? '加密 DNS' : '默认 DNS'
   const addressPlaceholder = draft.kind === 'encrypted' ? 'https://cloudflare-dns.com/dns-query' : 'udp://1.1.1.1'
   const canSave = Boolean(draft.name.trim()) && draft.candidates.length >= 2 && draft.candidates.every(candidate => candidate.name.trim() && candidate.address.trim())
   return <MotionDialogPanel onCancel={saving ? () => undefined : onCancel} className="dns-list-dialog">
     <header className="dialog-head">
-      <div><h2>{editing ? '编辑解析服务列表' : '新建解析服务列表'}</h2><p className="muted">{editing ? editing.name : typeLabel}</p></div>
+      <h2>{editing ? '编辑解析服务列表' : '新建解析服务列表'}</h2>
       <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body">
       <div className="form server-dialog-form labeled-form dns-list-dialog-form">
-        <FormField label="列表名称" required><input value={draft.name} onChange={event => update({ name: event.target.value })} placeholder={draft.kind === 'encrypted' ? '海外加密解析' : '公网基础解析'} autoFocus /></FormField>
-        <FormField label="列表类型" required><Select variant="segmented" value={draft.kind} disabled={Boolean(editing)} onChange={event => update({ kind: event.target.value as DNSListKind, candidates: emptyDNSListCandidates() })}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select></FormField>
+        <FormField label="列表名称" required><input aria-label="列表名称" required value={draft.name} onChange={event => update({ name: event.target.value })} placeholder={draft.kind === 'encrypted' ? '海外加密解析' : '公网基础解析'} autoFocus /></FormField>
+        <FormField label="列表类型" required><Select variant="segmented" aria-label="列表类型" value={draft.kind} disabled={Boolean(editing)} onChange={event => update({ kind: event.target.value as DNSListKind, candidates: emptyDNSListCandidates() })}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select></FormField>
         <section className="dns-candidate-editor" aria-labelledby="dns-candidate-editor-title">
           <div className="dns-candidate-editor-head">
             <div><h3 id="dns-candidate-editor-title">解析服务</h3><span>{draft.candidates.length} / 32</span></div>
-            <button type="button" className="ghost" onClick={addCandidate} disabled={draft.candidates.length >= 32 || saving}><Plus size={14} />添加解析服务</button>
+            <button type="button" className="ghost" onClick={addCandidate} disabled={draft.candidates.length >= 32 || saving}><Plus size={14} aria-hidden="true" />添加解析服务</button>
           </div>
           <div className="dns-candidate-columns" aria-hidden="true"><span>序号</span><span>名称</span><span>服务地址</span><span>操作</span></div>
           <div className="dns-candidate-list">
             {draft.candidates.map((candidate, index) => <div className="dns-candidate-row" key={candidate.id}>
               <span className="dns-candidate-index">{index + 1}</span>
-              <label><span>名称</span><input value={candidate.name} onChange={event => updateCandidate(candidate.id, { name: event.target.value })} placeholder={index === 0 ? 'Cloudflare' : 'Google'} disabled={saving} /></label>
-              <label><span>服务地址</span><input value={candidate.address} onChange={event => updateCandidate(candidate.id, { address: event.target.value })} placeholder={addressPlaceholder} inputMode="url" spellCheck={false} disabled={saving} /></label>
-              <button type="button" className="ghost icon-button danger-text" onClick={() => removeCandidate(candidate.id)} disabled={draft.candidates.length <= 2 || saving} aria-label={`删除第 ${index + 1} 个解析服务`} title={draft.candidates.length <= 2 ? '至少保留两个解析服务' : '删除解析服务'}><Trash2 size={14} /></button>
+              <label className="dns-candidate-name"><span>名称</span><input aria-label={`第 ${index + 1} 个解析服务名称`} value={candidate.name} onChange={event => updateCandidate(candidate.id, { name: event.target.value })} placeholder={index === 0 ? 'Cloudflare' : 'Google'} disabled={saving} /></label>
+              <label className="dns-candidate-address"><span>服务地址</span><input aria-label={`第 ${index + 1} 个解析服务地址`} value={candidate.address} onChange={event => updateCandidate(candidate.id, { address: event.target.value })} placeholder={addressPlaceholder} inputMode="url" spellCheck={false} disabled={saving} /></label>
+              <button type="button" className="ghost icon-button danger-text dns-candidate-remove" onClick={() => removeCandidate(candidate.id)} disabled={draft.candidates.length <= 2 || saving} aria-label={`删除第 ${index + 1} 个解析服务`} title={draft.candidates.length <= 2 ? '至少保留两个解析服务' : '删除解析服务'}><Trash2 size={14} aria-hidden="true" /></button>
             </div>)}
           </div>
         </section>
