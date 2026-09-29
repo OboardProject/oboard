@@ -100,8 +100,8 @@
   .signal-settings-row .settings-row-control > input[type="checkbox"] { width: 20px; }
   .signal-settings-row .ui-segmented-select { width: 100%; min-width: 0; }
   .signal-settings-row .ui-segmented-select button { min-width: 0; padding-inline: 8px; white-space: normal; }
-  .signal-settings-disclosure > summary { grid-template-columns: minmax(0, 1fr) 18px; }
-  .signal-settings-disclosure .settings-disclosure-summary { display: block; grid-row: 2; grid-column: 1; }
+  .signal-settings-disclosure > summary:has(.settings-disclosure-summary) { grid-template-columns: minmax(0, 1fr) auto 18px; }
+  .signal-settings-disclosure .settings-disclosure-summary { display: block; grid-row: 1; grid-column: 2; white-space: nowrap; }
   .signal-settings-disclosure .settings-disclosure-chevron { grid-row: 1; }
   .signal-presets .node-presets-toolbar-actions { width: 100%; }
   .signal-presets .node-presets-toolbar-actions > .muted { flex-basis: 100%; }
