@@ -9403,7 +9403,7 @@ body:has(.controller-update-immersive-layer) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  width: min(760px, calc(100% - 32px));
+  width: min(880px, calc(100% - 32px));
   margin: 0 auto;
   padding: max(32px, env(safe-area-inset-top)) 0 0;
 }
@@ -9446,13 +9446,26 @@ body:has(.controller-update-immersive-layer) {
 .controller-update-immersive-content {
   position: relative;
   z-index: 1;
-  width: min(760px, calc(100% - 32px));
+  width: min(880px, calc(100% - 32px));
   margin: 28px auto 0;
   display: grid;
   gap: 16px;
 }
 
+.controller-update-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.controller-update-header-actions button { white-space: nowrap; }
+.controller-update-view-button { min-width: 92px; perspective: 350px; }
+.controller-update-view-cube { position: relative; display: block; width: 100%; height: 18px; transform-style: preserve-3d; transition: transform .48s cubic-bezier(.22, 1, .36, 1); }
+.controller-update-view-cube.flipped { transform: rotateX(180deg); }
+.controller-update-view-cube > span { position: absolute; inset: 0; display: grid; place-items: center; backface-visibility: hidden; }
+.controller-update-view-cube > span:last-child { transform: rotateX(180deg); }
+.controller-update-face-scene { width: 100%; min-height: 380px; perspective: 1100px; }
+.controller-update-face { width: 100%; transform-style: preserve-3d; backface-visibility: hidden; }
+.controller-update-logs-face { min-height: 380px; max-height: min(65vh, 720px); overflow: auto; border: 1px solid #373737; border-radius: 28px; background: #1a1a1a; box-shadow: 0 20px 54px rgba(0,0,0,.32); }
+.controller-update-face-result { padding: 14px 30px; color: var(--text-secondary); text-align: center; }
+
 .controller-update-stepper {
+  justify-self: center;
   width: fit-content;
   max-width: 100%;
   display: flex;
@@ -9654,6 +9667,7 @@ body:has(.controller-update-immersive-layer) {
   background: #fff;
   box-shadow: 0 20px 54px rgb(35 51 72 / 10%);
 }
+:root:not([data-theme="dark"]) .controller-update-logs-face { border-color: #dce2ea; background: #fff; box-shadow: 0 20px 54px rgb(35 51 72 / 10%); }
 :root:not([data-theme="dark"]) .controller-update-progress-stages li { color: #98a2b0; }
 :root:not([data-theme="dark"]) .controller-update-progress-stages li.done { color: #586475; }
 :root:not([data-theme="dark"]) .controller-update-progress-stages li.active { color: #17202d; }
@@ -9706,6 +9720,7 @@ body:has(.controller-update-immersive-layer) {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .controller-update-view-cube { transition: none; }
   .controller-update-lightfield-status.running .controller-update-lightfield-dot { animation: none; }
   .controller-update-lightfield-status,
   .controller-update-lightfield-status > svg { transition: none; }
@@ -9717,6 +9732,8 @@ body:has(.controller-update-immersive-layer) {
 
 @media (max-width: 640px) {
   .controller-update-immersive-head { padding-top: max(22px, env(safe-area-inset-top)); }
+  .controller-update-immersive-head { flex-direction: column; }
+  .controller-update-header-actions { justify-content: flex-start; }
   .controller-update-immersive-content { margin-top: 22px; gap: 12px; }
   .controller-update-stepper-item { gap: 5px; padding: 0 4px; }
   .controller-update-stepper-item + .controller-update-stepper-item::before { margin-right: 2px; }

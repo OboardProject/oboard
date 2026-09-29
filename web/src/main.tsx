@@ -4826,7 +4826,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   reloadRef.current = onReload
   useEffect(() => {
     if (phase !== 'complete') return
-    const timer = window.setTimeout(() => reloadRef.current(), 1500)
+    const timer = window.setTimeout(() => reloadRef.current(), 3600)
     return () => window.clearTimeout(timer)
   }, [phase])
   const waiting = ['starting', 'checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(phase)
@@ -4840,9 +4840,8 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
   const backupSkipped = Boolean(skipBackup) && phase !== 'backing_up'
   const reduceMotion = useReducedMotion()
-  const detailsId = useId()
-  const [detailsOpen, setDetailsOpen] = useState(false)
-  const manualLogsWanted = detailsOpen && phase !== 'confirm' && !diagnosticsReason && Boolean(fetchDiagnostics)
+  const [logsOpen, setLogsOpen] = useState(false)
+  const manualLogsWanted = logsOpen && phase !== 'confirm' && !diagnosticsReason && Boolean(fetchDiagnostics)
   const manualDiagnostics = useControllerUpdateDiagnostics(manualLogsWanted ? 'manual' : '', fetchDiagnostics || rejectControllerUpdateDiagnostics)
   const diagnosticsSection = diagnosticsReason && diagnostics && diagnostics.status !== 'idle'
     ? <ControllerUpdateDiagnosticsSection reason={diagnosticsReason} diagnostics={diagnostics} onRetry={onRetryDiagnostics || (() => {})} />
@@ -4850,7 +4849,6 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       ? <ControllerUpdateDiagnosticsSection reason="manual" diagnostics={manualDiagnostics} onRetry={manualDiagnostics.retry} />
       : null
   const animationMode = controllerUpdateAnimationMode(phase)
-  const statusTone = animationMode === 'success' ? 'success' : animationMode === 'failed' ? 'failed' : phase === 'cancelled' ? 'muted' : 'running'
   const progressStages = [
     { key: 'checking', label: '检查版本' },
     { key: 'downloading', label: '下载更新' },
@@ -4864,7 +4862,13 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const currentStageIndex = progressStages.findIndex(stage => stage.key === phase)
   if (currentStageIndex >= 0) previousStageRef.current = currentStageIndex
   if (phase === 'ready') previousStageRef.current = 4
-  const stageIndex = phase === 'complete' ? progressStages.length : previousStageRef.current
+  const targetStageIndex = phase === 'complete' ? progressStages.length : previousStageRef.current
+  const [stageIndex, setStageIndex] = useState(0)
+  useEffect(() => {
+    if (logsOpen || stageIndex >= targetStageIndex) return
+    const timer = window.setTimeout(() => setStageIndex(index => index + 1), 400)
+    return () => window.clearTimeout(timer)
+  }, [logsOpen, stageIndex, targetStageIndex])
   const majorIndex = stageIndex < 1 ? 0 : stageIndex < 2 ? 1 : stageIndex < 4 ? 2 : 3
   if (phase === 'confirm') return <MotionDialogPanel onCancel={closeConfirm} className="controller-update-install-dialog" surfaceMotion="compact">
     <header className="dialog-head"><div><h2>{title}</h2>{targetVersion && <p className="muted">更新至 {targetVersion}</p>}</div><button type="button" className="ghost dialog-close icon-button" onClick={closeConfirm} aria-label="关闭" title="关闭"><XIcon /></button></header>
@@ -4878,42 +4882,27 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
     <ControllerUpdateLightfield mode={animationMode} reduceMotion={Boolean(reduceMotion)}>
       <header className="controller-update-immersive-head">
         <div><span className="controller-update-eyebrow">OBOARD / SYSTEM UPDATE</span><h2>{title}</h2><p>{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>
-        {!waiting && phase !== 'complete' && <button type="button" className="controller-update-immersive-close" onClick={onCancel} aria-label="关闭" title="关闭"><X size={18} /></button>}
+        <div className="controller-update-header-actions">
+          <button type="button" className="ghost controller-update-view-button" aria-label={logsOpen ? '查看进度' : '拉取日志'} aria-pressed={logsOpen} onClick={() => setLogsOpen(open => !open)}><span className={logsOpen ? 'controller-update-view-cube flipped' : 'controller-update-view-cube'} aria-hidden="true"><span>拉取日志</span><span>查看进度</span></span></button>
+          {waiting && <>
+            {canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}>{cancelling ? '正在中断...' : '中断更新'}</button>}
+            {onForceFinish && <button type="button" className="ghost danger-text" onClick={onForceFinish} disabled={Boolean(forceFinishing)}>{forceFinishing ? '正在强制结束...' : '强制结束更新'}</button>}
+            <button type="button" className="ghost" onClick={onHide}>在后台继续</button>
+          </>}
+          {!waiting && phase !== 'complete' && <button type="button" className="controller-update-immersive-close" onClick={onCancel} aria-label="关闭" title="关闭"><X size={18} /></button>}
+        </div>
       </header>
       <div className="controller-update-immersive-content">
         <div className="controller-update-stepper" aria-label="更新阶段">
-          {['检查', '下载', '准备', '安装'].map((label, index) => <div key={label} className={`controller-update-stepper-item ${index < majorIndex || phase === 'complete' ? 'done' : index === majorIndex ? 'active' : ''}`}><span>{index < majorIndex || phase === 'complete' ? <Check size={14} /> : index + 1}</span><small>{label}</small></div>)}
+          {['检查', '下载', '准备', '安装'].map((label, index) => <div key={label} className={`controller-update-stepper-item ${index < majorIndex || stageIndex === progressStages.length ? 'done' : index === majorIndex ? 'active' : ''}`}><span>{index < majorIndex || stageIndex === progressStages.length ? <Check size={14} /> : index + 1}</span><small>{label}</small></div>)}
         </div>
-        <section className="controller-update-progress-card" aria-label="主控更新进度">
-          <ol className="controller-update-progress-stages">{progressStages.map((stage, index) => {
-            const done = index < stageIndex || phase === 'complete'
-            const active = index === stageIndex && waiting
-            const progress = done ? backupSkipped && stage.key === 'backing_up' ? '已跳过' : '100%'
-              : active ? stage.key === 'downloading' && downloadPercent !== undefined ? `${downloadPercent.toFixed(1)}%`
-                : stage.key === 'backing_up' ? `${backupShown}%` : '进行中'
-                : ''
-            return <li key={stage.key} className={done ? 'done' : active ? 'active' : ''} aria-current={active ? 'step' : undefined}>
-              <span className="controller-update-progress-marker">{done ? <Check size={12} /> : ''}</span>
-              <span>{stage.label}</span>
-              {progress && <small role={active ? 'status' : undefined}>{progress}</small>}
-            </li>
-          })}</ol>
-        </section>
-      </div>
-      <div className="controller-update-immersive-dock">
-        <button type="button" className={`controller-update-lightfield-status ${statusTone}`} aria-expanded={detailsOpen} aria-controls={detailsId} title={detailsOpen ? '收起详情' : '查看详情、日志和操作'} onClick={() => setDetailsOpen(open => !open)}>
-          <span className="controller-update-lightfield-dot" aria-hidden="true" />
-          <span className="controller-update-lightfield-text">{detailsOpen ? '收起更新详情' : '查看更新详情与操作'}</span>
-          <ChevronDown size={14} aria-hidden="true" className={detailsOpen ? 'open' : ''} />
-        </button>
-        <AnimatePresence initial={false}>{detailsOpen && <m.div
-          id={detailsId}
-          className="controller-update-details"
-          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
-          animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.98 }}
-          transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-        >
+        <div className="controller-update-face-scene">
+          <AnimatePresence mode="wait" initial={false}>
+            {logsOpen ? <m.section key="logs" className="controller-update-face controller-update-logs-face" aria-label="主控更新日志"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, rotateY: 90 }}
+              animate={{ opacity: 1, rotateY: 0 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, rotateY: -90 }}
+              transition={{ duration: reduceMotion ? 0.12 : 0.3, ease: [0.22, 1, 0.36, 1] }}>
           <div className="controller-update-details-inner">
             {waiting && <>
               <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><div className="controller-update-transfer-detail">{phase === 'downloading' ? <>
@@ -4928,15 +4917,33 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
             {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
             {diagnosticsSection}
           </div>
-          <footer className="controller-update-details-actions">
-            {waiting && <>{onForceFinish && <button type="button" className="ghost danger-text" onClick={onForceFinish} disabled={Boolean(forceFinishing)}><X size={14} aria-hidden="true" />{forceFinishing ? '正在强制结束...' : '强制结束任务'}</button>}{canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}><X size={14} aria-hidden="true" />{cancelling ? '正在中断...' : '中断更新'}</button>}<button type="button" className="ghost" onClick={onHide}>在后台继续</button></>}
-            {phase === 'cancelled' && <button type="button" onClick={onCancel}>关闭</button>}
-            {phase === 'stopped' && <button type="button" onClick={onCancel}>关闭</button>}
-            {phase === 'force_finished' && <button type="button" onClick={onCancel}>关闭</button>}
-            {phase === 'complete' && <span role="status">正在自动刷新面板…</span>}
-            {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
-          </footer>
-        </m.div>}</AnimatePresence>
+              {!diagnosticsSection && <div className="controller-update-diagnostics-state" role="status">正在抓取更新日志...</div>}
+            </m.section> : <m.div key="progress" className="controller-update-face"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, rotateY: -90 }}
+              animate={{ opacity: 1, rotateY: 0 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, rotateY: 90 }}
+              transition={{ duration: reduceMotion ? 0.12 : 0.3, ease: [0.22, 1, 0.36, 1] }}>
+        <section className="controller-update-progress-card" aria-label="主控更新进度">
+          <ol className="controller-update-progress-stages">{progressStages.map((stage, index) => {
+            const done = index < stageIndex
+            const active = index === stageIndex && (waiting || stageIndex < targetStageIndex)
+            const progress = done ? backupSkipped && stage.key === 'backing_up' ? '已跳过' : '100%'
+              : active ? stageIndex < targetStageIndex ? '进行中' : stage.key === 'downloading' && downloadPercent !== undefined ? `${downloadPercent.toFixed(1)}%`
+                : stage.key === 'backing_up' ? `${backupShown}%` : '进行中'
+                : ''
+            return <li key={stage.key} className={done ? 'done' : active ? 'active' : ''} aria-current={active ? 'step' : undefined}>
+              <span className="controller-update-progress-marker">{done ? <Check size={12} /> : ''}</span>
+              <span>{stage.label}</span>
+              {progress && <small role={active ? 'status' : undefined}>{progress}</small>}
+            </li>
+          })}</ol>
+        </section>
+              {phase === 'failed' && <div className="controller-update-face-result" role="alert">{localizeErrorMessage(failure || '更新没有完成，请检查主控更新状态后重试。')}</div>}
+              {phase === 'complete' && <div className="controller-update-face-result" role="status">主控更新成功，正在刷新面板…</div>}
+              {['cancelled', 'stopped', 'force_finished'].includes(phase) && <div className="controller-update-face-result" role="status">{phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : '更新任务已强制结束'}</div>}
+            </m.div>}
+          </AnimatePresence>
+        </div>
       </div>
     </ControllerUpdateLightfield>
   </ModalSurface>
