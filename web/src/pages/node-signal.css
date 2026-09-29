@@ -89,8 +89,7 @@
   .signal-scope-columns { grid-template-columns: minmax(0, 1fr); }
   .node-signal-dialog .node-scope-auth-fields { grid-template-columns: minmax(0, 1fr); }
   .node-assignments-panel .node-row-icon-button { min-height: 42px; }
-  .node-assignments-panel .node-mobile-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .node-assignments-panel .node-mobile-card-actions button { flex: 1 1 auto; justify-content: center; }
+  .node-assignments-panel .node-mobile-card-actions button { justify-content: center; }
   .node-workspace .subscription-output-layout { grid-template-columns: minmax(0, 1fr); }
   .node-workspace .node-group-item { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .node-workspace .node-source-status { grid-column: 1 / -1; grid-row: 2; }

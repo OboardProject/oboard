@@ -20479,7 +20479,7 @@ button[aria-busy="true"] {
 
 .node-mobile-card-actions {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   align-items: stretch;
   gap: 8px;
   width: 100%;
