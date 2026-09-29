@@ -2741,6 +2741,7 @@ table user_plan_bindings
     updated_at TEXT notnull=1 default=- pk=0
     deployed_at TEXT notnull=0 default=- pk=0
     expiry_synced_at TEXT notnull=0 default=- pk=0
+    traffic_reset_hour_aligned INTEGER notnull=1 default=0 pk=0
 table users
     id INTEGER notnull=0 default=- pk=1
     username TEXT notnull=1 default=- pk=0

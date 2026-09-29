@@ -583,7 +583,7 @@ func (s *Server) trafficPeriodForUser(r *http.Request, userID int64, reportedPer
 		return model.TrafficPeriod{UserID: userID, PeriodKey: storedPeriod.PeriodKey, StartedAt: start, EndsAt: end, Limit: limit.TrafficLimitBytes}, nil
 	}
 	var windowErr error
-	periodKey, start, end, windowErr = trafficWindowForPeriodKey(time.Now(), reportedPeriodKey, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
+	periodKey, start, end, windowErr = trafficWindowForPeriodKeyAligned(time.Now(), reportedPeriodKey, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, limit.TrafficResetHourAligned, loc)
 	if windowErr != nil {
 		return model.TrafficPeriod{}, windowErr
 	}

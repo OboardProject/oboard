@@ -797,16 +797,17 @@ type NodeOrderTemplate struct {
 // exist per user (enforced by a partial unique index), so switching plans is an
 // atomic replace rather than a union of plans.
 type UserPlanBinding struct {
-	ID                   int64      `json:"id"`
-	UserID               int64      `json:"user_id"`
-	PlanID               int64      `json:"plan_id"`
-	Enabled              bool       `json:"enabled"`
-	StartsAt             *time.Time `json:"starts_at,omitempty"`
-	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
-	TrafficResetAnchorAt *time.Time `json:"traffic_reset_anchor_at,omitempty"`
-	AssignedBy           *int64     `json:"assigned_by,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	ID                      int64      `json:"id"`
+	UserID                  int64      `json:"user_id"`
+	PlanID                  int64      `json:"plan_id"`
+	Enabled                 bool       `json:"enabled"`
+	StartsAt                *time.Time `json:"starts_at,omitempty"`
+	ExpiresAt               *time.Time `json:"expires_at,omitempty"`
+	TrafficResetAnchorAt    *time.Time `json:"traffic_reset_anchor_at,omitempty"`
+	TrafficResetHourAligned bool       `json:"-"`
+	AssignedBy              *int64     `json:"assigned_by,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
 }
 
 type UserNodeExceptionEffect string

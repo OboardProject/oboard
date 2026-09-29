@@ -12,12 +12,13 @@ import (
 // plan authorization model. Precedence: explicit user override > active plan
 // limits > system defaults.
 type EffectiveUserPolicy struct {
-	SpeedLimitMbps     int
-	TrafficLimitBytes  int64
-	TrafficResetMode   string
-	TrafficResetDay    int
-	TrafficResetAnchor time.Time
-	Source             string // user_override | plan | user | default
+	SpeedLimitMbps          int
+	TrafficLimitBytes       int64
+	TrafficResetMode        string
+	TrafficResetDay         int
+	TrafficResetAnchor      time.Time
+	TrafficResetHourAligned bool
+	Source                  string // user_override | plan | user | default
 }
 
 // EffectiveNodeGrant explains why one user can use one node in the plan model.
@@ -281,7 +282,7 @@ func effectiveUserPolicy(user model.User, plan *model.SubscriptionPlan, binding 
 	if day <= 0 {
 		day = 1
 	}
-	return EffectiveUserPolicy{SpeedLimitMbps: speed, TrafficLimitBytes: traffic, TrafficResetMode: mode, TrafficResetDay: day, TrafficResetAnchor: anchor, Source: source}
+	return EffectiveUserPolicy{SpeedLimitMbps: speed, TrafficLimitBytes: traffic, TrafficResetMode: mode, TrafficResetDay: day, TrafficResetAnchor: anchor, TrafficResetHourAligned: plan != nil && user.TrafficLimitBytes == 0 && binding.TrafficResetHourAligned, Source: source}
 }
 
 // InboundUserBindings projects the snapshot into the legacy binding shape used
@@ -322,11 +323,12 @@ func (s *EffectiveAccessSnapshot) ProxyPathUserBindings() []model.ProxyPathUser 
 
 // UserLimitPolicy is the resolved speed/traffic policy for one user.
 type UserLimitPolicy struct {
-	SpeedLimitMbps     int
-	TrafficLimitBytes  int64
-	TrafficResetMode   string
-	TrafficResetDay    int
-	TrafficResetAnchor time.Time
+	SpeedLimitMbps          int
+	TrafficLimitBytes       int64
+	TrafficResetMode        string
+	TrafficResetDay         int
+	TrafficResetAnchor      time.Time
+	TrafficResetHourAligned bool
 }
 
 // UserLimitPolicyMap converts the snapshot policies into the legacy policy
@@ -334,7 +336,7 @@ type UserLimitPolicy struct {
 func (s *EffectiveAccessSnapshot) UserLimitPolicyMap() map[int64]UserLimitPolicy {
 	out := map[int64]UserLimitPolicy{}
 	for userID, policy := range s.UserPolicies {
-		out[userID] = UserLimitPolicy{SpeedLimitMbps: policy.SpeedLimitMbps, TrafficLimitBytes: policy.TrafficLimitBytes, TrafficResetMode: policy.TrafficResetMode, TrafficResetDay: policy.TrafficResetDay, TrafficResetAnchor: policy.TrafficResetAnchor}
+		out[userID] = UserLimitPolicy{SpeedLimitMbps: policy.SpeedLimitMbps, TrafficLimitBytes: policy.TrafficLimitBytes, TrafficResetMode: policy.TrafficResetMode, TrafficResetDay: policy.TrafficResetDay, TrafficResetAnchor: policy.TrafficResetAnchor, TrafficResetHourAligned: policy.TrafficResetHourAligned}
 	}
 	return out
 }

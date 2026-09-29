@@ -158,7 +158,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
         <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />
         <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
           <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="开始时间（可选）" aria-label="开始时间（可选）" title="开始时间（可选）" style={{ maxWidth: 200 }} />
-          <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（可选）" aria-label="到期时间（可选）" title="到期时间（可选）" style={{ maxWidth: 200 }} />
+          <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（按下一整点）" aria-label="到期时间（可选）" title="到期时间按下一整点计算" style={{ maxWidth: 200 }} />
           <Button variant="outline" size="sm" busy={previewBusy} onClick={() => void runPreview()}>预览影响</Button>
         </div>
         {message && <p role="status" aria-live="polite" style={{ margin: 0, color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}

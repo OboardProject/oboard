@@ -1354,7 +1354,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                 </div>
               </FormField>
               <FormField label="流量额度" hint="0 表示不限量。"><TrafficLimitInput bytes={createDraft.traffic_limit_bytes} onChange={v => setCreateDraft(d => ({ ...d, traffic_limit_bytes: v }))} /></FormField>
-              <FormField label="重置方式">
+              <FormField label="重置方式" hint="新分配的循环每月套餐按下一整点重置。例如 14:11 分配，下月 15:00 重置。">
                 <Select value={createDraft.traffic_reset_mode} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
                   <option value="anniversary_month">循环每月</option>
                   <option value="monthly">自然月</option>
@@ -1459,7 +1459,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
             <FormField label="流量额度" hint="0 表示不限量，按重置周期统计。">
               <TrafficLimitInput bytes={editDraft.traffic_limit_bytes} onChange={v => setEditDraft(d => ({ ...d, traffic_limit_bytes: v }))} />
             </FormField>
-            <FormField label="重置方式" hint="循环每月按用户获得套餐的日期和时刻计算。">
+            <FormField label="重置方式" hint="新分配的循环每月套餐按下一整点重置。例如 14:11 分配，下月 15:00 重置。">
               <Select value={editDraft.traffic_reset_mode} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
                 <option value="anniversary_month">循环每月</option>
                 <option value="monthly">自然月</option>

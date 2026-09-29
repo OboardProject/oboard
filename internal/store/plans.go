@@ -1972,20 +1972,21 @@ func (s *Store) ListUserPlanBindingsForPlan(ctx context.Context, planID int64) (
 	return scanUserPlanBindings(rows)
 }
 
-const userPlanBindingSelect = `select id,user_id,plan_id,enabled,starts_at,expires_at,traffic_reset_anchor_at,assigned_by,created_at,updated_at from user_plan_bindings`
+const userPlanBindingSelect = `select id,user_id,plan_id,enabled,starts_at,expires_at,traffic_reset_anchor_at,traffic_reset_hour_aligned,assigned_by,created_at,updated_at from user_plan_bindings`
 
 func scanUserPlanBindings(rows *sql.Rows) ([]model.UserPlanBinding, error) {
 	var out []model.UserPlanBinding
 	for rows.Next() {
 		var v model.UserPlanBinding
-		var enabled int
+		var enabled, hourAligned int
 		var startsAt, expiresAt, resetAnchorAt sql.NullString
 		var assignedBy sql.NullInt64
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.UserID, &v.PlanID, &enabled, &startsAt, &expiresAt, &resetAnchorAt, &assignedBy, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.UserID, &v.PlanID, &enabled, &startsAt, &expiresAt, &resetAnchorAt, &hourAligned, &assignedBy, &ca, &ua); err != nil {
 			return nil, err
 		}
 		v.Enabled = enabled == 1
+		v.TrafficResetHourAligned = hourAligned == 1
 		if startsAt.Valid {
 			t := parseTime(startsAt.String)
 			v.StartsAt = &t
@@ -2090,7 +2091,7 @@ func setUserPlanBindingsTx(ctx context.Context, tx *sql.Tx, bindings []model.Use
 				anchor = v.StartsAt.UTC().Format(time.RFC3339Nano)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `insert into user_plan_bindings(user_id,plan_id,enabled,status,starts_at,expires_at,traffic_reset_anchor_at,assigned_by,created_at,updated_at) values(?,?,1,?,?,?,?,?,?,?)`, v.UserID, v.PlanID, status, nilTime(v.StartsAt), nilTime(v.ExpiresAt), anchor, v.AssignedBy, ts, ts); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into user_plan_bindings(user_id,plan_id,enabled,status,starts_at,expires_at,traffic_reset_anchor_at,traffic_reset_hour_aligned,assigned_by,created_at,updated_at) values(?,?,1,?,?,?,?,?,?,?,?)`, v.UserID, v.PlanID, status, nilTime(v.StartsAt), nilTime(v.ExpiresAt), anchor, 1, v.AssignedBy, ts, ts); err != nil {
 			return err
 		}
 	}
@@ -2723,6 +2724,9 @@ func (s *Store) migrateUserNodeExceptionLifecycle(ctx context.Context) error {
 // migrateUserPlanBindingDeployTracking adds the columns the lifecycle worker
 // uses to claim bindings for access changes and to record removal sync.
 func (s *Store) migrateUserPlanBindingDeployTracking(ctx context.Context) error {
+	if err := s.ensureColumn(ctx, "user_plan_bindings", "traffic_reset_hour_aligned", `alter table user_plan_bindings add column traffic_reset_hour_aligned integer not null default 0`); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		name string
 		sql  string

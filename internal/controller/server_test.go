@@ -1728,6 +1728,51 @@ func TestTrafficWindowForPeriodKey(t *testing.T) {
 	}
 }
 
+func TestPlanAnniversaryRoundsFutureResetsToNextHour(t *testing.T) {
+	loc := time.FixedZone("Asia/Shanghai", 8*3600)
+	anchor := time.Date(2026, 10, 14, 14, 11, 23, 0, loc)
+	key, start, end := trafficWindowAligned(anchor, model.TrafficResetAnniversaryMonth, 1, anchor, true, loc)
+	if start != anchor || end != time.Date(2026, 11, 14, 15, 0, 0, 0, loc) {
+		t.Fatalf("first window = %s %s", start, end)
+	}
+	if _, _, _, err := trafficWindowForPeriodKeyAligned(anchor, key, model.TrafficResetAnniversaryMonth, 1, anchor, true, loc); err != nil {
+		t.Fatal(err)
+	}
+	key, start, end = trafficWindowAligned(end, model.TrafficResetAnniversaryMonth, 1, anchor, true, loc)
+	if start != time.Date(2026, 11, 14, 15, 0, 0, 0, loc) || end != time.Date(2026, 12, 14, 15, 0, 0, 0, loc) {
+		t.Fatalf("next window = %s %s", start, end)
+	}
+	if _, _, _, err := trafficWindowForPeriodKeyAligned(end, key, model.TrafficResetAnniversaryMonth, 1, anchor, true, loc); err != nil {
+		t.Fatal(err)
+	}
+	oldKey := time.Date(2026, 11, 14, 14, 11, 23, 0, loc).UTC().Format(time.RFC3339Nano)
+	if _, _, _, err := trafficWindowForPeriodKeyAligned(end, oldKey, model.TrafficResetAnniversaryMonth, 1, anchor, true, loc); err == nil {
+		t.Fatal("minute-specific key must not pass the aligned cycle")
+	}
+	_, _, oldEnd := trafficWindowAligned(anchor, model.TrafficResetAnniversaryMonth, 1, anchor, false, loc)
+	if oldEnd != time.Date(2026, 11, 14, 14, 11, 23, 0, loc) {
+		t.Fatalf("old binding changed: %s", oldEnd)
+	}
+	late := time.Date(2026, 1, 31, 23, 11, 0, 0, loc)
+	_, _, lateEnd := trafficWindowAligned(late, model.TrafficResetAnniversaryMonth, 1, late, true, loc)
+	if lateEnd != time.Date(2026, 3, 1, 0, 0, 0, 0, loc) {
+		t.Fatalf("month rollover = %s", lateEnd)
+	}
+}
+
+func TestPlanAssignmentExpiryRoundsUp(t *testing.T) {
+	raw := "2026-10-14T14:11:00+08:00"
+	expiry, err := (&Server{}).parseAssignmentExpiry(&raw)
+	if err != nil || expiry.Format(time.RFC3339) != "2026-10-14T15:00:00+08:00" {
+		t.Fatalf("expiry = %v, %v", expiry, err)
+	}
+	raw = "2026-10-14T15:00:00+08:00"
+	expiry, err = (&Server{}).parseAssignmentExpiry(&raw)
+	if err != nil || expiry.Format(time.RFC3339) != raw {
+		t.Fatalf("whole-hour expiry = %v, %v", expiry, err)
+	}
+}
+
 func TestControllerFormalAPI(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

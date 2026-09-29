@@ -1881,6 +1881,15 @@ func (s *Server) parseAssignmentTime(raw *string) (*time.Time, error) {
 	return &t, nil
 }
 
+func (s *Server) parseAssignmentExpiry(raw *string) (*time.Time, error) {
+	value, err := s.parseAssignmentTime(raw)
+	if err != nil || value == nil {
+		return value, err
+	}
+	rounded := nextLocalHour(*value, value.Location())
+	return &rounded, nil
+}
+
 func (s *Server) planAssignmentPreview(w http.ResponseWriter, r *http.Request) {
 	var req userPlanAssignmentRequest
 	if !decode(w, r, &req) {
@@ -1949,7 +1958,7 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 400)
 		return
 	}
-	expiresAt, err := s.parseAssignmentTime(req.ExpiresAt)
+	expiresAt, err := s.parseAssignmentExpiry(req.ExpiresAt)
 	if err != nil {
 		fail(w, err, 400)
 		return

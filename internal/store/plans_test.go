@@ -1087,6 +1087,49 @@ func TestUserPlanBindingOneActivePerUser(t *testing.T) {
 	}
 }
 
+func TestPlanBindingHourAlignmentMigratesPreviousRows(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createPlanTestUser(t, s, 1, "old")
+	createPlanTestUser(t, s, 2, "new")
+	plan := &model.SubscriptionPlan{Name: "monthly", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: 1, PlanID: plan.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `alter table user_plan_bindings drop column traffic_reset_hour_aligned`); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.GetActiveUserPlanBinding(ctx, 1)
+	if err != nil || old.TrafficResetHourAligned || old.TrafficResetAnchorAt == nil {
+		t.Fatalf("old binding after migration: %#v, %v", old, err)
+	}
+	if err := s.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: 2, PlanID: plan.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	newBinding, err := s.GetActiveUserPlanBinding(ctx, 2)
+	if err != nil || !newBinding.TrafficResetHourAligned {
+		t.Fatalf("new binding after reopen: %#v, %v", newBinding, err)
+	}
+}
+
 func TestDeleteSubscriptionPlanUnbindsUsersWithoutDeletingThem(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)

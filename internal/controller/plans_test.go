@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,22 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
+
+func TestPlanAssignmentAPIRoundsExpiryAndMarksNewCycle(t *testing.T) {
+	h, srv, token := setupPlansAPITestServer(t)
+	user := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "hourly-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "hourly-plan", "enabled": true, "traffic_reset_mode": "anniversary_month"}, http.StatusCreated)["subscription_plan"].(map[string]any)
+	userID := int64(user["id"].(float64))
+	applied := request(t, h, http.MethodPost, "/api/v1/ui/users/plan-assignment/apply", token, map[string]any{"user_ids": []int64{userID}, "plan_id": int64(plan["id"].(float64)), "expires_at": "2026-11-14T14:11:00+08:00"}, http.StatusOK)
+	if applied["applied"] != true {
+		t.Fatalf("assignment = %#v", applied)
+	}
+	bindings, err := srv.store.ListEnabledUserPlanBindings(context.Background(), []int64{userID})
+	wantExpiry, _ := time.Parse(time.RFC3339, "2026-11-14T15:00:00+08:00")
+	if err != nil || len(bindings) != 1 || !bindings[0].TrafficResetHourAligned || bindings[0].ExpiresAt == nil || !bindings[0].ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("saved binding = %#v, %v", bindings, err)
+	}
+}
 
 func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
 	h, srv, token := setupPlansAPITestServer(t)

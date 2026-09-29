@@ -793,13 +793,13 @@ func (s *Server) planTrafficPeriodMigrations(ctx context.Context, planID, curren
 		if binding.TrafficResetAnchorAt != nil {
 			anchor = *binding.TrafficResetAnchorAt
 		}
-		oldKey, _, _ := trafficWindow(now, current.TrafficResetMode, current.TrafficResetDay, anchor, loc)
+		oldKey, _, _ := trafficWindowAligned(now, current.TrafficResetMode, current.TrafficResetDay, anchor, binding.TrafficResetHourAligned, loc)
 		if resolved, _, resolveErr := s.store.ResolveTrafficPeriodKey(ctx, user.ID, oldKey); resolveErr != nil {
 			return nil, resolveErr
 		} else {
 			oldKey = resolved
 		}
-		newKey, newStart, newEnd := trafficWindow(now, candidate.TrafficResetMode, candidate.TrafficResetDay, anchor, loc)
+		newKey, newStart, newEnd := trafficWindowAligned(now, candidate.TrafficResetMode, candidate.TrafficResetDay, anchor, binding.TrafficResetHourAligned, loc)
 		if oldKey == newKey {
 			continue
 		}
