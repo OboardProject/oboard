@@ -8150,7 +8150,43 @@ body:has(.dialog-layer) .main {
   word-break: break-word;
 }
 
-.install-action-select { margin-bottom: 16px; }
+.install-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.install-options .install-action-select { margin: 0; }
+
+.install-command-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--danger);
+}
+
+.install-command-error p { flex: 1 1 180px; }
+
+@media (max-width: 640px) {
+  .dialog-layer[data-surface-kind="compact"] > .dialog-panel.install-dialog {
+    width: calc(100% - 24px);
+    max-width: 420px;
+    height: auto;
+    max-height: min(var(--dialog-available-height), calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)));
+  }
+
+  .install-dialog .dialog-body { padding: 14px; }
+  .install-dialog .install-options { flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .install-dialog .install-options .install-action-select { width: 100%; }
+  .install-dialog .install-options .install-action-select button { min-width: 0; padding-inline: 8px; }
+  .install-dialog .install-command-current .install-command-card { min-width: 0; padding: 10px; }
+  .install-dialog .command-copy-header { gap: 6px; padding-inline: 8px; }
+  .install-dialog .command-copy-btn { min-width: 44px; min-height: 44px; padding-inline: 8px; white-space: normal; }
+  .install-dialog .command-copy-body pre { max-height: min(28dvh, 180px); padding: 10px; overflow-wrap: anywhere; }
+  .install-dialog .dialog-actions { padding: 10px 14px; }
+}
 
 .setting-switch {
   position: relative;
@@ -30725,4 +30761,18 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   border: none !important;
   box-shadow: none !important;
   outline: none !important;
+}
+
+.dialog-layer[data-surface-kind="compact"] > .dialog-panel.install-dialog {
+  max-width: min(640px, calc(100vw - 28px));
+}
+
+.install-dialog .ui-segmented-indicator {
+  transition-duration: 120ms;
+}
+
+@media (max-width: 640px) {
+  .dialog-layer[data-surface-kind="compact"] > .dialog-panel.install-dialog {
+    max-width: min(420px, calc(100vw - 24px));
+  }
 }

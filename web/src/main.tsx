@@ -6817,7 +6817,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   const [editServer, setEditServer] = useState<Server | null>(null)
   const [extendServer, setExtendServer] = useState<Server | null>(null)
   const [agentConfigServer, setAgentConfigServer] = useState<Server | null>(null)
-  const [installTarget, setInstallTarget] = useState<{ server: Server; command: string; updateCommand?: string; windowsCommand?: string } | null>(null)
+  const [installTarget, setInstallTarget] = useState<{ server: Server; command?: string; updateCommand?: string; windowsCommand?: string; loading?: boolean; error?: string } | null>(null)
+  const enrollRequestRef = useRef(0)
   const [logServer, setLogServer] = useState<Server | null>(null)
   const [networkServer, setNetworkServer] = useState<{ server: Server; tab: 'overview' | 'traffic' | 'settings' | 'dns' | 'mtu' | 'diagnostics' } | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
@@ -7104,8 +7105,16 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     }))
   }
   const enroll = async (s: Server) => {
-    const res = await client.request(`/servers/${s.id}/enroll-token`, { method: 'POST', body: '{}' })
-    setInstallTarget({ server: s, command: res.install_command, updateCommand: res.update_command, windowsCommand: res.windows_install_command })
+    const request = ++enrollRequestRef.current
+    setInstallTarget({ server: s, loading: true })
+    try {
+      const res = await client.request(`/servers/${s.id}/enroll-token`, { method: 'POST', body: '{}' })
+      if (request !== enrollRequestRef.current) return
+      setInstallTarget({ server: s, command: res.install_command, updateCommand: res.update_command, windowsCommand: res.windows_install_command })
+    } catch (error) {
+      if (request !== enrollRequestRef.current) return
+      setInstallTarget({ server: s, error: error instanceof Error ? error.message : '获取命令失败，请重试。' })
+    }
   }
   const tasks = async (s: Server) => {
     notify?.(`已打开任务中心，可查看 ${s.name || '服务器'} 相关任务`, 'info')
@@ -7745,7 +7754,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     {monitoringServer && <ServerMonitoringTargetDialog key={monitoringServer.id} server={monitoringServer} client={client} onClose={() => setMonitoringServer(null)} onSaved={updated => { setServers(current => current.map(server => server.id === updated.id ? updated : server)); notify?.('默认监控目标已保存', 'success') }} />}
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
-    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} updateCommand={installTarget.updateCommand} windowsInstallCommand={installTarget.windowsCommand} controllerURL={effectiveControllerURL(data)} onUpdate={updateAgent} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
+    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} updateCommand={installTarget.updateCommand} windowsInstallCommand={installTarget.windowsCommand} loading={Boolean(installTarget.loading)} error={installTarget.error} onRetry={() => void enroll(installTarget.server)} controllerURL={effectiveControllerURL(data)} onUpdate={updateAgent} onClose={() => { enrollRequestRef.current++; setInstallTarget(null) }} />}</AnimatePresence>
     <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     </div>
@@ -7888,7 +7897,7 @@ function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Serv
   </MotionDialogPanel>
 }
 
-function AgentInstallDialog({ server, installCommand, updateCommand, windowsInstallCommand, controllerURL, onUpdate, onClose }: { server: Server; installCommand: string; updateCommand?: string; windowsInstallCommand?: string; controllerURL: string; onUpdate: (server: Server) => Promise<void>; onClose: () => void }) {
+function AgentInstallDialog({ server, installCommand, updateCommand, windowsInstallCommand, loading, error, onRetry, controllerURL, onUpdate, onClose }: { server: Server; installCommand?: string; updateCommand?: string; windowsInstallCommand?: string; loading: boolean; error?: string; onRetry: () => void; controllerURL: string; onUpdate: (server: Server) => Promise<void>; onClose: () => void }) {
   const isOnline = String(server.status || '').toLowerCase() === 'online'
   const stealthActive = isStealthAgent(server)
   const [action, setAction] = useState<'install' | 'update' | 'uninstall'>(isOnline ? 'update' : 'install')
@@ -7904,14 +7913,15 @@ function AgentInstallDialog({ server, installCommand, updateCommand, windowsInst
   const showCommand = action === 'install' || action === 'update' && Boolean(updateCommand) || !stealthActive
   const command = windows
     ? action === 'install' ? windowsInstallCommand || '' : agentWindowsScriptCommand(controllerURL, action)
-    : action === 'install' ? installCommand : action === 'update' && stealthActive && updateCommand ? updateCommand : agentScriptCommand(controllerURL, action)
+    : action === 'install' ? installCommand || '' : action === 'update' && stealthActive && updateCommand ? updateCommand : agentScriptCommand(controllerURL, action)
   const description = windows && action === 'install' ? '安装 Agent 和内核并注册为 Windows 服务。' : actionDescription
-  return <MotionDialogPanel onCancel={onClose} className="install-dialog">
+  return <MotionDialogPanel onCancel={onClose} className="install-dialog" surfaceMotion="compact" aria-labelledby="agent-install-title">
       <header className="dialog-head">
         <div><h2 id="agent-install-title">Agent 和内核</h2><p className="muted">{server.name || '这台服务器'} · {isOnline ? '在线' : '离线'}</p></div>
         <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
+        <div className="install-options">
         <Select variant="segmented" className="install-action-select" value={action} onChange={e => setAction(e.target.value as 'install' | 'update' | 'uninstall')} aria-label="Agent 操作">
           <option value="install">安装</option>
           <option value="update">更新</option>
@@ -7921,9 +7931,10 @@ function AgentInstallDialog({ server, installCommand, updateCommand, windowsInst
           <option value="linux">Linux</option>
           <option value="windows">Windows</option>
         </Select>}
+        </div>
         {!showCommand && action === 'uninstall' && <p className="muted">安全进程请通过面板的服务器删除操作卸载。</p>}
         <div className="install-command-current">
-          {showCommand ? <InstallCommandCard title={actionTitle} desc={description} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} /> : action === 'update' && isOnline ? <button type="button" onClick={() => { onClose(); void onUpdate(server) }}>从面板更新 Agent</button> : action === 'update' ? <p>Agent 当前离线。请重新获取接入命令并选择“安装”。</p> : null}
+          {loading ? <p className="muted" role="status">正在获取命令…</p> : error ? <div className="install-command-error"><p role="alert">{error}</p><button type="button" onClick={onRetry}>重试</button></div> : showCommand ? <InstallCommandCard title={actionTitle} desc={description} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} /> : action === 'update' && isOnline ? <button type="button" onClick={() => { onClose(); void onUpdate(server) }}>从面板更新 Agent</button> : action === 'update' ? <p>Agent 当前离线。请重新获取接入命令并选择“安装”。</p> : null}
         </div>
       </div>
       <footer className="dialog-actions"><button onClick={onClose}>完成</button></footer>
