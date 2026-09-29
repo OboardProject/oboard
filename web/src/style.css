@@ -2811,6 +2811,10 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   z-index: 2;
 }
 
+.server-card-monitorable .server-card-head-actions:has(.server-version-update:is(:hover, :focus-within, .open)) {
+  z-index: 3;
+}
+
 .server-actions-dropdown {
   position: relative;
   display: inline-block;
