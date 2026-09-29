@@ -72,7 +72,7 @@ type SettingsSwitchRowProps = {
 
 export function SettingsSwitchRow({ label, description, checked, onChange, disabled, ariaLabel, describedBy }: SettingsSwitchRowProps) {
   return (
-    <SettingsRow label={label} description={description}>
+    <SettingsRow label={label} description={description} className="settings-switch-row">
       <span className="settings-switch-state">{checked ? '已开启' : '已关闭'}</span>
       <Switch checked={checked} onChange={onChange} disabled={disabled} ariaLabel={ariaLabel} aria-describedby={describedBy} />
     </SettingsRow>

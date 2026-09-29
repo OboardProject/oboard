@@ -93,6 +93,8 @@
 @media (max-width: 620px) {
   .signal-settings-row.settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .signal-settings-row .settings-row-control { justify-content: flex-start; }
+  .signal-settings-row.settings-switch-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+  .signal-settings-row.settings-switch-row .settings-row-control { justify-content: flex-end; }
   .signal-settings-row .settings-row-control > :is(input, textarea, .custom-select),
   .signal-settings-row .settings-secret-field { width: 100%; }
   .signal-settings-row .settings-row-control > input[type="checkbox"] { width: 20px; }
