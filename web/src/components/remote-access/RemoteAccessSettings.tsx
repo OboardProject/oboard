@@ -149,7 +149,7 @@ function RemoteAccessServerDialog({
   const [globalTerminal, setGlobalTerminal] = useState(initialGlobalTerminal)
   const [globalMcp, setGlobalMcp] = useState(initialGlobalMcp)
   const [savingGlobal, setSavingGlobal] = useState('')
-  const [listOpen, setListOpen] = useState(() => typeof window === 'undefined' || typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width: 620px)').matches)
+  const [listOpen, setListOpen] = useState(false)
 
   useEffect(() => {
     setGlobalTerminal(initialGlobalTerminal)

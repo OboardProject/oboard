@@ -17,6 +17,10 @@ function remoteAccessMock(path: string, init?: RequestInit, servers: Array<{ id:
   throw new Error(`unexpected request: ${path}`)
 }
 
+async function expandServerList() {
+  await act(async () => document.querySelector<HTMLButtonElement>('button.remote-access-list-toggle')?.click())
+}
+
 describe('RemoteAccessSettings', () => {
   let container: HTMLDivElement
   let root: Root
@@ -116,13 +120,14 @@ describe('RemoteAccessSettings', () => {
     })
 
     expect(request).toHaveBeenCalledWith('/servers')
-    expect(document.body.textContent).toContain('共 3 台服务器')
+    expect(document.body.textContent).toContain('3 台服务器')
+    await expandServerList()
     expect(document.body.textContent).toContain('北京节点')
     expect(document.body.textContent).toContain('广州节点')
   })
 
-  it('starts with the server list collapsed on a narrow screen', async () => {
-    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+  it.each([true, false])('starts with the server list collapsed when narrow is %s', async narrow => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: narrow })))
     const request = vi.fn(async (path: string, init?: RequestInit) => remoteAccessMock(path, init))
     act(() => root.render(<RemoteAccessSettings data={{ settings: {} }} client={{ request }} load={vi.fn()} notify={vi.fn()} />))
     await act(async () => {
@@ -172,6 +177,7 @@ describe('RemoteAccessSettings', () => {
       await Promise.resolve()
     })
 
+    await expandServerList()
     const remoteSwitch = document.querySelector<HTMLInputElement>('input[aria-label="上海节点远程"]')
     expect(remoteSwitch?.disabled).toBe(true)
     expect(remoteSwitch?.checked).toBe(true)
@@ -188,6 +194,7 @@ describe('RemoteAccessSettings', () => {
       await Promise.resolve()
     })
 
+    await expandServerList()
     const mcpSwitch = document.querySelector<HTMLInputElement>('input[aria-label="上海节点MCP"]')
     expect(mcpSwitch?.disabled).toBe(true)
     expect(mcpSwitch?.checked).toBe(true)
@@ -211,6 +218,7 @@ describe('RemoteAccessSettings', () => {
       await Promise.resolve()
     })
 
+    await expandServerList()
     const mcpSwitch = document.querySelector<HTMLInputElement>('input[aria-label="上海节点MCP"]')
     expect(mcpSwitch?.checked).toBe(true)
     expect(mcpSwitch?.disabled).toBe(false)
@@ -236,6 +244,7 @@ describe('RemoteAccessSettings', () => {
       await Promise.resolve()
     })
 
+    await expandServerList()
     expect(document.querySelectorAll<HTMLInputElement>('input[aria-label$="MCP"]:checked').length).toBe(2)
   })
 
@@ -256,6 +265,7 @@ describe('RemoteAccessSettings', () => {
       await Promise.resolve()
     })
 
+    await expandServerList()
     expect(document.querySelector<HTMLInputElement>('input[aria-label="上海节点MCP"]')?.checked).toBe(true)
   })
 
@@ -268,6 +278,7 @@ describe('RemoteAccessSettings', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+    await expandServerList()
     const select = document.querySelector<HTMLInputElement>('input[aria-label="选择 上海节点"]')
     expect(select).not.toBeNull()
     act(() => select?.click())
