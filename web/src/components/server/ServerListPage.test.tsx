@@ -11,8 +11,8 @@ describe('server list paging', () => {
   const originalScrollIntoView = Element.prototype.scrollIntoView
   const servers = Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, name: `server-${index + 1}` }))
   const renderItem = vi.fn((server: typeof servers[number], index: number) => <article key={server.id} data-index={index}>{server.name}</article>)
-  const render = (items = servers, view: 'grid' | 'list' = 'grid', filter = '') => {
-    act(() => root.render(<ServerListPage key={filter} items={items} view={view} renderItem={renderItem} />))
+  const render = (items = servers, filter = '') => {
+    act(() => root.render(<ServerListPage key={filter} items={items} renderItem={renderItem} />))
   }
   const next = () => container.querySelector<HTMLButtonElement>('.server-list-pagination-controls > button:last-child')!
 
@@ -47,12 +47,12 @@ describe('server list paging', () => {
     expect(document.activeElement?.getAttribute('aria-label')).toBe('服务器页码顶部')
   })
 
-  it('keeps the page for telemetry updates and view changes, but searches across the whole fleet', () => {
+  it('keeps the page for telemetry updates, but searches across the whole fleet', () => {
     render()
     act(() => next().click())
-    render(servers.map(server => ({ ...server, name: `${server.name}-updated` })), 'list')
-    expect(container.querySelector('.server-list article')?.textContent).toBe('server-25-updated')
-    render(servers.filter(server => server.id === 999), 'list', '999')
+    render(servers.map(server => ({ ...server, name: `${server.name}-updated` })))
+    expect(container.querySelector('.server-grid article')?.textContent).toBe('server-25-updated')
+    render(servers.filter(server => server.id === 999), '999')
     expect(container.querySelector('article')?.textContent).toBe('server-999')
     expect(container.querySelectorAll('article')).toHaveLength(1)
     expect(container.querySelector('nav')).toBeNull()

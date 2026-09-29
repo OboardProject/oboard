@@ -3,9 +3,8 @@ import { Select } from '../ui/select'
 
 export const SERVER_PAGE_SIZE = 24
 
-export function ServerListPage<T>({ items, view, renderItem, page: controlledPage, onPageChange, hideTopPagination }: {
+export function ServerListPage<T>({ items, renderItem, page: controlledPage, onPageChange, hideTopPagination }: {
   items: T[]
-  view: 'grid' | 'list'
   renderItem: (item: T, index: number) => ReactNode
   page?: number
   onPageChange?: (page: number) => void
@@ -44,7 +43,7 @@ export function ServerListPage<T>({ items, view, renderItem, page: controlledPag
 
   return <div ref={topRef} className="server-list-page">
     {!hideTopPagination && navigation('顶部')}
-    <div className={view === 'grid' ? 'server-grid' : 'server-list'}>
+    <div className="server-grid">
       {items.slice(offset, offset + pageSize).map((item, index) => renderItem(item, offset + index))}
     </div>
     {navigation('底部')}

@@ -6774,14 +6774,6 @@ function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = 
   )
 }
 
-function GridViewIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg>
-}
-
-function ListViewIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12" /><path d="M8 12h12" /><path d="M8 18h12" /><circle cx="4" cy="6" r="1.2" /><circle cx="4" cy="12" r="1.2" /><circle cx="4" cy="18" r="1.2" /></svg>
-}
-
 type ServerListPreferences = { sortMode: ServerSortMode; customOrder: number[] }
 
 const serverListPreferencesKey = 'oboard.server-list.preferences.v1'
@@ -6835,23 +6827,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [monitoringServer, setMonitoringServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
-  const [view, setViewState] = useState<'grid' | 'list'>(() => {
-    try {
-      const saved = localStorage.getItem('oboard_server_view_mode')
-      if (saved === 'grid' || saved === 'list') return saved
-    } catch {
-      // ignore local storage errors
-    }
-    return 'grid'
-  })
-  const setView = (nextView: 'grid' | 'list') => {
-    setViewState(nextView)
-    try {
-      localStorage.setItem('oboard_server_view_mode', nextView)
-    } catch {
-      // ignore local storage errors
-    }
-  }
   const [serverQuery, setServerQuery] = useState('')
   const [serverSearchOpen, setServerSearchOpen] = useState(false)
   const serverSearchRef = useRef<HTMLInputElement>(null)
@@ -7534,7 +7509,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         ><GripVertical size={14} /></button>
         <button type="button" className="ghost icon-button" disabled={!next} onClick={() => next && moveCustomServer(server.id, next.id, 'after')} aria-label="向后移动" title="向后移动"><ArrowDown size={14} /></button>
       </div>}
-      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} uninstalling={uninstallingServerIDs.has(server.id)} onAction={handleServerAction} layout={view === 'list' ? 'list' : 'grid'} isSelected={inspectedServerId === server.id} />
+      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} uninstalling={uninstallingServerIDs.has(server.id)} onAction={handleServerAction} isSelected={inspectedServerId === server.id} />
     </div>
   }
   return <section className="panel server-management-panel">
@@ -7631,10 +7606,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
           )
         })()}
         </div>}
-        <div className="view-mode-toggle" role="radiogroup" aria-label="显示方式">
-          <button type="button" role="radio" aria-checked={view === 'grid'} className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')} aria-label="平铺模式" title="平铺模式"><GridViewIcon /></button>
-          <button type="button" role="radio" aria-checked={view === 'list'} className={view === 'list' ? 'active' : ''} onClick={() => setView('list')} aria-label="列表模式" title="列表模式"><ListViewIcon /></button>
-        </div>
         <div className="server-action-group">
           <button
             type="button"
@@ -7713,7 +7684,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
             <ServerListPage
               key={serverFilterKey}
               items={visibleServers}
-              view={view}
               renderItem={renderServerCard}
               page={currentServerPage}
               onPageChange={setServerPage}
@@ -9329,7 +9299,7 @@ function formatTimeOffset(offsetMS: number) {
   return `${seconds > 0 ? '+' : ''}${seconds.toFixed(Math.abs(seconds) >= 10 ? 1 : 2)} 秒`
 }
 
-function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalling = false, layout = 'grid', isSelected = false }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; uninstalling?: boolean; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list'; isSelected?: boolean }) {
+function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalling = false, isSelected = false }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; uninstalling?: boolean; onAction: (type: string, server: Server) => void; isSelected?: boolean }) {
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
   const reduceMotion = useReducedMotion()
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
@@ -9343,107 +9313,6 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const trafficPercent = trafficLimitBytes > 0 ? Math.min(100, (trafficTotalBytes / trafficLimitBytes) * 100) : 0
   const trafficPercentLabel = trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : ''
   const trafficQuotaTone = trafficPercent >= 90 ? 'danger' : trafficPercent >= 75 ? 'warning' : ''
-
-  if (layout === 'list') {
-    const memPercent = server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0
-    const downRate = formatByteRate(server.network_download_bps || 0)
-    const upRate = formatByteRate(server.network_upload_bps || 0)
-    const totalTraffic = formatBytes(trafficTotalBytes)
-    const limitTraffic = trafficLimitBytes > 0 ? formatBytes(trafficLimitBytes) : ''
-    return (
-      <article className={`server-card server-list-row server-card-monitorable${isSelected ? ' is-selected' : ''}`}>
-        <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
-        
-        {/* Identity */}
-        <div className="server-list-identity" onClick={() => onAction('inspect', server)} style={{ cursor: 'pointer' }}>
-          <RegionFlag code={serverRegionCode(server)} size={22} />
-          <div className="server-list-identity-text">
-            <div className="server-list-name-row">
-              <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
-              <div className="server-list-status">
-                <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
-                {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>待更新</Badge>}
-                <ServerDeliveryBadge server={server} />
-                <ServerExpiryBadge server={server} />
-                {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>{timeIssue.summary}</Badge>}
-                {uninstalling && <Badge variant="warning" role="status" aria-label={`${server.name || `服务器 #${server.id}`} 正在卸载，完成后自动删除`} style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}><Loader2 size={11} className={reduceMotion ? '' : 'spin'} aria-hidden="true" />卸载并删除中</Badge>}
-              </div>
-            </div>
-            <ServerAddressBadge server={server} />
-          </div>
-        </div>
-
-        {/* Desktop Metric: CPU/Memory */}
-        <div className="server-list-metric-item server-resource-open server-list-col-cpu">
-          <span className="server-list-metric-label">CPU / 内存</span>
-          <div className="server-list-metric-value">
-            <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
-            <span className="muted" style={{ fontSize: 11, marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>{serverMemoryLabel(server)} ({memPercent}%)</span>
-          </div>
-        </div>
-
-        {/* Desktop Metric: Network Rate & Traffic */}
-        <div className="server-list-metric-item server-list-metric-net server-list-col-net">
-          <span className="server-list-metric-label">实时速率 / 本周期</span>
-          <div className="server-list-network-row">
-            <div className="server-list-rate-group">
-              <span className="rate-sub down" title="下载速率"><ArrowDown size={12} /><strong>{downRate}</strong></span>
-              <span className="rate-sub up" title="上传速率"><ArrowUp size={12} /><strong>{upRate}</strong></span>
-            </div>
-            {trafficLimitBytes > 0 ? (
-              <span className={`server-list-traffic-badge has-quota ${trafficQuotaTone}`} title={`本周期 ${totalTraffic} / ${limitTraffic} · ${trafficPercentLabel}${server.traffic_period_end ? ` · 至 ${formatDate(server.traffic_period_end)}` : ''}`}>
-                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totalTraffic}</span>
-                <span style={{ opacity: 0.55, margin: '0 2px' }}>/</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{limitTraffic}</span>
-                <span className="server-list-quota-pct">{trafficPercentLabel}</span>
-              </span>
-            ) : (
-              <span className="server-list-traffic-badge" title="本计费周期累计流量">{totalTraffic}</span>
-            )}
-          </div>
-          {trafficLimitBytes > 0 && (
-            <div className="server-list-quota-track" role="progressbar" aria-valuenow={Math.round(trafficPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="周期流量使用率">
-              <div className={`server-list-quota-fill ${trafficQuotaTone}`} style={{ width: `${Math.min(100, trafficPercent)}%` }} />
-            </div>
-          )}
-        </div>
-
-        {/* Latency */}
-        <div className="server-list-metric-item server-list-metric-latency">
-          <span className="server-list-metric-label" title={monitorTitle}>延迟测试{targetButton}</span>
-          {server.monitoring_display?.enabled ? (
-            <div className="server-list-latency-btn">
-              <strong>{monitoring.latency}</strong>
-              <Badge variant={monitoring.status === 'available' ? 'success' : monitoring.status === 'unavailable' || monitoring.status === 'offline' ? 'destructive' : 'secondary'} className="latency-status-badge">
-                {connectivityStatusLabel(monitoring.status)}
-              </Badge>
-            </div>
-          ) : (
-            <div className="server-list-latency-btn disabled">
-              <span className="muted" style={{ fontSize: 12 }}>未配置</span>
-            </div>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="server-list-actions">
-          <ServerActionsDropdown server={server} role={role} onAction={onAction} />
-        </div>
-
-        {/* Mobile-only compact metadata line */}
-        <div className="server-list-mobile-meta">
-          <span className="server-list-mobile-tag">#{server.id}</span>
-          <span className="server-list-mobile-sep">·</span>
-          <span className="server-list-mobile-stat">CPU {Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
-          <span className="server-list-mobile-sep">·</span>
-          <span className="server-list-mobile-stat rate-down">↓ {downRate}</span>
-          <span className="server-list-mobile-stat rate-up">↑ {upRate}</span>
-          <span className="server-list-mobile-sep">·</span>
-          <span className="server-list-mobile-traffic" title={trafficLimitBytes > 0 ? `${totalTraffic} / ${limitTraffic} · ${trafficPercentLabel}` : totalTraffic}>{trafficLimitBytes > 0 ? `${totalTraffic}/${limitTraffic}` : totalTraffic}{trafficLimitBytes > 0 ? ` ${trafficPercentLabel}` : ''}</span>
-        </div>
-      </article>
-    )
-  }
 
   const cpuPercent = Number.isFinite(server.cpu_usage_percent) ? Number(server.cpu_usage_percent) : 0
   const memPercent = resourcePercent(server.memory_used_bytes, server.memory_total_bytes)
