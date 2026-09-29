@@ -1005,6 +1005,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   white-space: nowrap;
   border-radius: var(--radius-full);
 }
+.controller-update-prompt > button.primary {
+  border-radius: var(--radius-sm);
+  background-image: none !important;
+  box-shadow: none !important;
+  text-shadow: none;
+}
 .controller-update-prompt-later { color: var(--muted); }
 .icon-button {
   display: inline-flex;
@@ -30634,12 +30640,16 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   .dialog-chrome-foot > button[type="submit"],
   button.primary
 ) {
+  appearance: none;
+  -webkit-appearance: none;
   background: var(--primary) !important;
+  background-image: none !important;
   color: var(--primary-contrast) !important;
   border-color: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
+  text-shadow: none !important;
   transition: background-color var(--duration-control) ease, color var(--duration-control) ease !important;
 }
 
