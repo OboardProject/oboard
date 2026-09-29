@@ -218,10 +218,8 @@ import { collectRegionStats, orderRegions, orderServerRegions } from './region-o
 import {
   CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
   controllerUpdateDisplayPhase,
-  controllerUpdateFlowPercent,
   controllerUpdateAnimationMode,
   controllerUpdatePendingToast,
-  controllerUpdateStatusLine,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
   isControllerUpdateForceFinishConfirmation,
@@ -4837,7 +4835,6 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const backupShown = phase === 'backing_up' ? monotonicPercent(backupShownRef.current, progressPercent || 0) : 0
   if (phase === 'backing_up') backupShownRef.current = backupShown
   const downloadPercent = download && download.total_bytes > 0 ? Math.max(0, Math.min(100, download.bytes * 100 / download.total_bytes)) : undefined
-  const flowPercent = controllerUpdateFlowPercent(phase, backupShown, downloadPercent)
   const title = phase === 'confirm' ? '更新主控' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
   const backupLabel = phase === 'backing_up' ? `备份 ${backupShown}%` : ''
   const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
@@ -4854,7 +4851,6 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       : null
   const animationMode = controllerUpdateAnimationMode(phase)
   const statusTone = animationMode === 'success' ? 'success' : animationMode === 'failed' ? 'failed' : phase === 'cancelled' ? 'muted' : 'running'
-  const statusLine = controllerUpdateStatusLine({ phase, connectionInterrupted, downloadPercent, backupPercent: backupShown, targetVersion, failure: failure ? localizeErrorMessage(failure) : '' })
   const progressStages = [
     { key: 'checking', label: '检查版本' },
     { key: 'downloading', label: '下载更新' },
@@ -4889,16 +4885,25 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
           {['检查', '下载', '准备', '安装'].map((label, index) => <div key={label} className={`controller-update-stepper-item ${index < majorIndex || phase === 'complete' ? 'done' : index === majorIndex ? 'active' : ''}`}><span>{index < majorIndex || phase === 'complete' ? <Check size={14} /> : index + 1}</span><small>{label}</small></div>)}
         </div>
         <section className="controller-update-progress-card" aria-label="主控更新进度">
-          <div className="controller-update-progress-summary"><div><span className="controller-update-progress-kicker">更新进度</span><strong>{Math.round(flowPercent)}<small>%</small></strong></div><span className={`controller-update-progress-state ${statusTone}`}>{phase === 'complete' ? '已完成' : phase === 'failed' ? '未完成' : phase === 'cancelled' || phase === 'stopped' ? '已停止' : '进行中'}</span></div>
-          <div className="controller-update-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(flowPercent)} aria-label="主控更新进度"><span style={{ transform: `scaleX(${Math.max(0.02, flowPercent / 100)})` }} /></div>
-          <ol className="controller-update-progress-stages">{progressStages.map((stage, index) => <li key={stage.key} className={index < stageIndex || phase === 'complete' ? 'done' : index === stageIndex && waiting ? 'active' : ''}><span className="controller-update-progress-marker">{index < stageIndex || phase === 'complete' ? <Check size={12} /> : ''}</span><span>{stage.label}</span>{index === stageIndex && waiting && <small>{stage.key === 'downloading' && downloadPercent !== undefined ? `${downloadPercent.toFixed(1)}%` : stage.key === 'backing_up' ? `${backupShown}%` : '•••'}</small>}</li>)}</ol>
+          <ol className="controller-update-progress-stages">{progressStages.map((stage, index) => {
+            const done = index < stageIndex || phase === 'complete'
+            const active = index === stageIndex && waiting
+            const progress = done ? backupSkipped && stage.key === 'backing_up' ? '已跳过' : '100%'
+              : active ? stage.key === 'downloading' && downloadPercent !== undefined ? `${downloadPercent.toFixed(1)}%`
+                : stage.key === 'backing_up' ? `${backupShown}%` : '进行中'
+                : ''
+            return <li key={stage.key} className={done ? 'done' : active ? 'active' : ''} aria-current={active ? 'step' : undefined}>
+              <span className="controller-update-progress-marker">{done ? <Check size={12} /> : ''}</span>
+              <span>{stage.label}</span>
+              {progress && <small role={active ? 'status' : undefined}>{progress}</small>}
+            </li>
+          })}</ol>
         </section>
-        <div className="controller-update-live-card"><div className="controller-update-live-head"><span className="controller-update-live-lights" aria-hidden="true"><i /><i /><i /></span><span>更新状态</span><strong>LIVE <i /></strong></div><div className="controller-update-live-body"><span aria-hidden="true">›</span><div><strong>{statusLine}</strong>{elapsedLabel && <small>{elapsedLabel}</small>}</div></div></div>
       </div>
       <div className="controller-update-immersive-dock">
         <button type="button" className={`controller-update-lightfield-status ${statusTone}`} aria-expanded={detailsOpen} aria-controls={detailsId} title={detailsOpen ? '收起详情' : '查看详情、日志和操作'} onClick={() => setDetailsOpen(open => !open)}>
           <span className="controller-update-lightfield-dot" aria-hidden="true" />
-          <span className="controller-update-lightfield-text" aria-live="polite">{statusLine}</span>
+          <span className="controller-update-lightfield-text">{detailsOpen ? '收起更新详情' : '查看更新详情与操作'}</span>
           <ChevronDown size={14} aria-hidden="true" className={detailsOpen ? 'open' : ''} />
         </button>
         <AnimatePresence initial={false}>{detailsOpen && <m.div

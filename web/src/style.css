@@ -9986,18 +9986,8 @@ body:has(.controller-update-immersive-layer) {
 .controller-update-stepper-item.active { padding: 4px 12px 4px 9px; border-radius: 999px; background: #f4f4f4; color: #171717; font-weight: 650; }
 .controller-update-stepper-item.active > span { background: #cacaca; color: #171717; }
 
-.controller-update-progress-card,
-.controller-update-live-card { border: 1px solid #373737; border-radius: 28px; background: #1a1a1a; box-shadow: 0 20px 54px rgba(0,0,0,.32); overflow: hidden; }
-.controller-update-progress-summary { display: flex; justify-content: space-between; align-items: flex-start; padding: 26px 30px 16px; }
-.controller-update-progress-kicker { display: block; margin-bottom: 5px; color: #858585; font-size: 12px; letter-spacing: .04em; }
-.controller-update-progress-summary strong { display: block; font-size: clamp(56px, 10vw, 82px); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.06em; }
-.controller-update-progress-summary strong small { margin-left: 5px; color: #777; font-size: .48em; letter-spacing: 0; }
-.controller-update-progress-state { margin-top: 5px; padding: 5px 9px; border-radius: 999px; background: #333; color: #aaa; font-size: 11px; }
-.controller-update-progress-state.success { color: #21bf8e; }
-.controller-update-progress-state.failed { color: #ef8e8e; }
-.controller-update-progress-track { height: 2px; margin: 0 30px 20px; background: #363636; overflow: hidden; }
-.controller-update-progress-track > span { display: block; height: 100%; width: 100%; transform-origin: left; background: #f4f4f4; transition: transform 360ms ease-out; }
-.controller-update-progress-stages { margin: 0; padding: 16px 30px 24px; list-style: none; border-top: 1px solid #343434; }
+.controller-update-progress-card { border: 1px solid #373737; border-radius: 28px; background: #1a1a1a; box-shadow: 0 20px 54px rgba(0,0,0,.32); overflow: hidden; }
+.controller-update-progress-stages { margin: 0; padding: 22px 30px; list-style: none; }
 .controller-update-progress-stages li { min-height: 35px; display: flex; align-items: center; gap: 14px; color: #565656; font-size: 14px; }
 .controller-update-progress-stages li.done { color: #959595; }
 .controller-update-progress-stages li.active { color: #f5f5f5; font-weight: 650; }
@@ -10005,16 +9995,6 @@ body:has(.controller-update-immersive-layer) {
 .controller-update-progress-stages li.done .controller-update-progress-marker { width: 17px; height: 17px; margin-left: -3px; margin-right: -3px; background: #555; color: #eee; }
 .controller-update-progress-stages li.active .controller-update-progress-marker { background: #fff; box-shadow: 0 0 10px rgba(255,255,255,.3); }
 .controller-update-progress-stages li small { margin-left: auto; color: #888; font: 11px ui-monospace, SFMono-Regular, monospace; }
-
-.controller-update-live-head { display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid #303030; color: #888; font-size: 12px; letter-spacing: .05em; }
-.controller-update-live-lights { display: flex; gap: 6px; }
-.controller-update-live-lights i { width: 8px; height: 8px; border-radius: 50%; background: #555; }
-.controller-update-live-head > strong { display: flex; align-items: center; gap: 10px; margin-left: auto; color: #1ab98b; font: 11px ui-monospace, SFMono-Regular, monospace; letter-spacing: .16em; }
-.controller-update-live-head > strong i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
-.controller-update-live-body { min-height: 80px; display: flex; align-items: center; gap: 16px; padding: 20px 24px; background: linear-gradient(110deg, #171d1f, #191919 68%); }
-.controller-update-live-body > span { color: #42bce9; font: 30px ui-monospace, SFMono-Regular, monospace; }
-.controller-update-live-body strong { display: block; color: #eee; font: 600 15px/1.4 ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
-.controller-update-live-body small { display: block; margin-top: 5px; color: #888; font-size: 11px; }
 
 .controller-update-immersive-dock {
   position: relative;
@@ -10152,7 +10132,6 @@ body:has(.controller-update-immersive-layer) {
 
 @media (prefers-reduced-motion: reduce) {
   .controller-update-lightfield-status.running .controller-update-lightfield-dot { animation: none; }
-  .controller-update-progress-track > span { transition: none; }
   .controller-update-lightfield-status,
   .controller-update-lightfield-status > svg { transition: none; }
 }
@@ -10167,8 +10146,6 @@ body:has(.controller-update-immersive-layer) {
   .controller-update-stepper-item { gap: 5px; padding: 0 4px; }
   .controller-update-stepper-item + .controller-update-stepper-item::before { margin-right: 2px; }
   .controller-update-stepper-item small { display: none; }
-  .controller-update-progress-summary { padding: 24px 24px 16px; }
-  .controller-update-progress-track { margin-inline: 24px; }
   .controller-update-progress-stages { padding-inline: 24px; }
   .dialog-panel .controller-update-lightfield-status { font-size: 12px; }
   .controller-update-details-actions > button { flex: 1 1 auto; }
