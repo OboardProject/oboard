@@ -42,9 +42,9 @@ func TestRemoteAccessEffectiveIntegration(t *testing.T) {
 		server bool
 		code   string
 	}{
-		{false, false, "remote_access_global_disabled"},
-		{false, true, "remote_access_global_disabled"},
-		{true, false, "remote_access_server_disabled"},
+		{false, false, "remote_access_server_disabled"},
+		{false, true, ""},
+		{true, false, ""},
 		{true, true, ""},
 	}
 	for _, c := range matrix {
@@ -65,6 +65,16 @@ func TestRemoteAccessEffectiveIntegration(t *testing.T) {
 				t.Fatalf("global %v server %v expected %s got %v", c.global, c.server, c.code, err)
 			}
 		}
+	}
+	newServer := &model.Server{Name: "New server", AgentID: "a2", AgentTokenHash: security.HashSecret("tok2"), ChainSecret: "chain2", ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, newServer); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertServerRemoteAccessStatus(ctx, newServer.ID, model.RemoteAccessReport{Capabilities: []string{model.RemoteAccessCapabilityExec}, LocalMode: model.RemoteAccessModeStandard}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.assertRemotePrivilegeAllowed(ctx, newServer, model.PrivilegeRemoteShell); err != nil {
+		t.Fatalf("global MCP must apply to a newly enrolled server: %v", err)
 	}
 }
 
@@ -150,11 +160,11 @@ func TestMachineReadAndChangesetWithManage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Configured.MCPEnabled != false || view.Global.MCPEnabled != true || view.Effective.MCPEnabled != false {
+	if view.Configured.MCPEnabled != false || view.Global.MCPEnabled != true || view.Effective.MCPEnabled != true {
 		t.Fatalf("machine view incorrect %#v", view)
 	}
-	if len(view.MCPExecution.Blockers) == 0 || view.MCPExecution.Blockers[0].Code != "remote_access_server_disabled" {
-		t.Fatalf("expected server_disabled blocker %#v", view.MCPExecution)
+	if len(view.MCPExecution.Blockers) != 0 {
+		t.Fatalf("global switch must cover the server %#v", view.MCPExecution)
 	}
 	client := testOAuthClient(t, db, "oc_machine", "Machine", []string{"http://127.0.0.1/cb"})
 	grant, _ := createTestGrant(t, srv, *admin, client, []string{"oboard:read", "oboard:operate"})
@@ -208,7 +218,7 @@ func TestMachineReadAndChangesetWithManage(t *testing.T) {
 		}
 	}
 }
-func TestGlobalDoesNotAutoEnableServer(t *testing.T) {
+func TestGlobalOverridesServerAndPreservesIndividualChoice(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "global.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -220,10 +230,13 @@ func TestGlobalDoesNotAutoEnableServer(t *testing.T) {
 	db.CreateServer(ctx, srvModel)
 	db.SetSetting(ctx, settingMCPEnabled, "false")
 	db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: srvModel.ID, RemoteTerminalEnabled: true, MCPEnabled: false})
+	if err := db.UpsertServerRemoteAccessStatus(ctx, srvModel.ID, model.RemoteAccessReport{Capabilities: []string{model.RemoteAccessCapabilityExec}, LocalMode: model.RemoteAccessModeStandard}); err != nil {
+		t.Fatal(err)
+	}
 	// Global false, server false
 	server, _ := db.GetServer(ctx, srvModel.ID)
-	if err := srv.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteShell); err == nil || err.(interface{ Code() string }).Code() != "remote_access_global_disabled" {
-		t.Fatalf("expected global disabled")
+	if err := srv.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteShell); err == nil || err.(interface{ Code() string }).Code() != "remote_access_server_disabled" {
+		t.Fatalf("expected server disabled")
 	}
 	// Now flip global true, server should still be false (not auto enabled)
 	db.SetSetting(ctx, settingMCPEnabled, "true")
@@ -231,8 +244,8 @@ func TestGlobalDoesNotAutoEnableServer(t *testing.T) {
 	if policy.MCPEnabled {
 		t.Fatal("global true must not auto enable server policy")
 	}
-	if err := srv.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteShell); err == nil || err.(interface{ Code() string }).Code() != "remote_access_server_disabled" {
-		t.Fatalf("expected server disabled after global true, got %v", err)
+	if err := srv.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteShell); err != nil {
+		t.Fatalf("global switch must cover server without grant: %v", err)
 	}
 	// Now update server to true via direct domain service (simulating web PATCH while global is true)
 	patch := RemoteAccessPolicyPatch{MCPEnabled: boolPtr(true)}
@@ -243,15 +256,15 @@ func TestGlobalDoesNotAutoEnableServer(t *testing.T) {
 	if !view.Server.MCPEnabled || !view.Effective.MCPEnabled {
 		t.Fatalf("after server enable, effective should be true: %#v", view)
 	}
-	// Global false -> server true should retain configured true but effective false
+	// Global false restores the server choice.
 	db.SetSetting(ctx, settingMCPEnabled, "false")
 	policy, _ = db.GetServerRemoteAccessPolicy(ctx, srvModel.ID)
 	if !policy.MCPEnabled {
 		t.Fatal("server policy must stay true after global false")
 	}
 	view, _ = srv.remoteAccessViewFromContext(ctx, srvModel)
-	if view.Server.MCPEnabled != true || view.Effective.MCPEnabled != false {
-		t.Fatalf("effective should be false while configured true: %#v", view)
+	if view.Server.MCPEnabled != true || view.Effective.MCPEnabled != true {
+		t.Fatalf("individual choice should remain effective: %#v", view)
 	}
 }
 
@@ -269,7 +282,7 @@ func TestDiagnosticToolRemediation(t *testing.T) {
 	db.CreateUser(ctx, admin)
 	srvModel := &model.Server{Name: "Aether", AgentID: "a1", AgentTokenHash: security.HashSecret("tok"), ChainSecret: "chain", ListenIP: "0.0.0.0", Status: model.ServerOnline}
 	db.CreateServer(ctx, srvModel)
-	db.SetSetting(ctx, settingMCPEnabled, "true")
+	db.SetSetting(ctx, settingMCPEnabled, "false")
 	db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: srvModel.ID, RemoteTerminalEnabled: true, MCPEnabled: false})
 	db.UpsertServerRemoteAccessStatus(ctx, srvModel.ID, model.RemoteAccessReport{Capabilities: []string{model.RemoteAccessCapabilityExec}, LocalMode: model.RemoteAccessModeStandard})
 	// Without manage, diagnostic should show remediation requiring manage
@@ -293,7 +306,7 @@ func TestDiagnosticToolRemediation(t *testing.T) {
 	if diag.Remediation == nil || diag.Remediation["requires_capability"] != model.PrivilegeServerRemoteAccessManage {
 		t.Fatalf("remediation %#v", diag.Remediation)
 	}
-	if diag.EffectiveMCPEnabled != false || diag.ServerMCPEnabled != false || diag.GlobalMCPEnabled != true {
+	if diag.EffectiveMCPEnabled != false || diag.ServerMCPEnabled != false || diag.GlobalMCPEnabled != false {
 		t.Fatalf("effective %#v", diag)
 	}
 }
@@ -308,7 +321,7 @@ func TestRemoteAccessRevokesMCPSessionOnDisable(t *testing.T) {
 	ctx := context.Background()
 	srvModel := &model.Server{Name: "Aether", AgentID: "a1", AgentTokenHash: security.HashSecret("tok"), ChainSecret: "chain", ListenIP: "0.0.0.0", Status: model.ServerOnline}
 	db.CreateServer(ctx, srvModel)
-	db.SetSetting(ctx, settingMCPEnabled, "true")
+	db.SetSetting(ctx, settingMCPEnabled, "false")
 	db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: srvModel.ID, RemoteTerminalEnabled: true, MCPEnabled: true})
 	db.UpsertServerRemoteAccessStatus(ctx, srvModel.ID, model.RemoteAccessReport{Capabilities: []string{model.RemoteAccessCapabilityInteractiveMCP}, LocalMode: model.RemoteAccessModeStandard})
 	// Manually insert a terminal session
@@ -353,7 +366,7 @@ func TestMCPDiagnosticTool(t *testing.T) {
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetSetting(ctx, settingMCPEnabled, "true"); err != nil {
+	if err := db.SetSetting(ctx, settingMCPEnabled, "false"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPEnabled: false}); err != nil {

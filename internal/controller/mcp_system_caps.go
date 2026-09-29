@@ -127,19 +127,28 @@ func (s *Server) mcpHostAccessCapabilities(ctx context.Context, principal applic
 			return result
 		}
 		allowedServers := make([]int64, 0, len(servers))
+		globalEnabled := settingBool(settings, setting, false)
+		scopedServers := 0
 		for _, server := range servers {
 			ref := mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(server.ID, 10)}
 			if grant.Grant.ResourceBoundary.AllowsResource(ref) && policy.ResourceBoundary.AllowsResource(ref) {
-				allowedServers = append(allowedServers, server.ID)
+				scopedServers++
+				serverPolicy, err := s.store.GetServerRemoteAccessPolicy(ctx, server.ID)
+				if err != nil {
+					continue
+				}
+				if globalEnabled || serverPolicy.MCPEnabled {
+					allowedServers = append(allowedServers, server.ID)
+				}
 			}
 		}
 		result["servers"] = allowedServers
 		if len(allowedServers) == 0 {
-			result["reason"] = "privileged_resource_denied"
-			return result
-		}
-		if !settingBool(settings, setting, false) {
-			result["reason"] = "remote_access_global_disabled"
+			if scopedServers == 0 {
+				result["reason"] = "privileged_resource_denied"
+			} else {
+				result["reason"] = "remote_access_server_disabled"
+			}
 			return result
 		}
 		result["authorized"] = true

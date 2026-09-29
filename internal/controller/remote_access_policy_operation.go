@@ -77,21 +77,28 @@ func (s *Server) registerRemoteAccessPolicyOperation() {
 			changes["mcp_enabled"] = map[string]any{"old": before.MCPEnabled, "new": *request.MCPEnabled}
 		}
 		if len(changes) == 0 {
-			return map[string]any{"server_id": server.ID, "server_name": server.Name, "no_change": true, "effective_mcp": before.MCPEnabled}, nil
+			global, err := s.globalRemoteAccessPolicyFromContext(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"server_id": server.ID, "server_name": server.Name, "no_change": true, "effective_mcp": mcpRemoteEnabled(global, before)}, nil
 		}
 		// Preview includes global effective after change
-		global, _ := s.globalRemoteAccessPolicyFromContext(ctx)
+		global, err := s.globalRemoteAccessPolicyFromContext(ctx)
+		if err != nil {
+			return nil, err
+		}
 		effectiveMCP := global.MCPEnabled
 		if request.MCPEnabled != nil {
-			effectiveMCP = effectiveMCP && *request.MCPEnabled
+			effectiveMCP = effectiveMCP || *request.MCPEnabled
 		} else {
-			effectiveMCP = effectiveMCP && before.MCPEnabled
+			effectiveMCP = effectiveMCP || before.MCPEnabled
 		}
 		effectiveRemote := global.RemoteTerminalEnabled
 		if request.RemoteTerminalEnabled != nil {
-			effectiveRemote = effectiveRemote && *request.RemoteTerminalEnabled
+			effectiveRemote = effectiveRemote || *request.RemoteTerminalEnabled
 		} else {
-			effectiveRemote = effectiveRemote && before.RemoteTerminalEnabled
+			effectiveRemote = effectiveRemote || before.RemoteTerminalEnabled
 		}
 		return map[string]any{
 			"server_id": server.ID, "server_name": server.Name,

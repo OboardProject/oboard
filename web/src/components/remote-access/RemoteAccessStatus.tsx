@@ -5,7 +5,6 @@ import { Switch } from '../ui/switch'
 type RequestFn = (path: string, init?: RequestInit) => Promise<any>
 
 const reasonCopy: Record<string, string> = {
-  remote_access_global_disabled: '全局已关闭',
   remote_access_server_disabled: '服务器已关闭',
   agent_offline: 'Agent 离线',
   agent_upgrade_required: 'Agent 版本不支持，请先升级',
@@ -67,10 +66,10 @@ export function RemoteAccessStatus({
   return (
     <>
       {caps.map(cap => (
-        <FormField key={cap.key} label={`启用${cap.label}`} hint={`${cap.label} 在此服务器的开关。全局与服务器均需开启才生效。`}>
+        <FormField key={cap.key} label={`启用${cap.label}`} hint={`${cap.label} 在此服务器的开关。全局开启时覆盖此设置；关闭全局后按此设置生效。`}>
           <Switch
-            checked={cap.server}
-            disabled={disabled}
+            checked={cap.effective}
+            disabled={disabled || cap.global}
             onChange={checked => void patch({ [cap.patchKey]: checked }, checked ? `此服务器已开启${cap.label}` : `此服务器已关闭${cap.label}`)}
             ariaLabel={`在此服务器启用${cap.label}`}
           />

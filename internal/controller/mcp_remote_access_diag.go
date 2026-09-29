@@ -14,7 +14,7 @@ func (s *Server) registerRemoteAccessDiagnosticTools(server *mcp.Server) {
 	server.AddTool(&mcp.Tool{
 		Name:        "server_remote_access_get",
 		Title:       "Get Server Remote Access Status",
-		Description: "返回服务器全局与逐台远程访问策略、有效状态、Privileged Grant、Agent 状态与阻断原因。用于诊断 remote_access_global_disabled / remote_access_server_disabled 等失败，不需要额外 Privileged Grant 即可查询自身边界内的服务器。",
+		Description: "返回服务器全局与逐台远程访问策略、有效状态、Privileged Grant、Agent 状态与阻断原因。全局开启覆盖逐台设置；关闭全局后逐台设置生效。不需要额外 Privileged Grant 即可查询自身边界内的服务器。",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"server_id": map[string]any{"type": "integer", "minimum": 1},
 		}, "server_id")),
@@ -75,15 +75,12 @@ func (s *Server) mcpRemoteAccessBlockerDetails(ctx context.Context, server *mode
 		"server_id":                         server.ID,
 		"global_mcp_enabled":                global.MCPEnabled,
 		"server_mcp_enabled":                policy.MCPEnabled,
-		"effective_mcp_enabled":             global.MCPEnabled && policy.MCPEnabled,
+		"effective_mcp_enabled":             mcpRemoteEnabled(global, policy),
 		"global_remote_terminal_enabled":    global.RemoteTerminalEnabled,
 		"server_remote_terminal_enabled":    policy.RemoteTerminalEnabled,
-		"effective_remote_terminal_enabled": global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled,
+		"effective_remote_terminal_enabled": remoteTerminalEnabled(global, policy),
 	}
-	if !global.MCPEnabled {
-		return "remote_access_global_disabled", "MCP remote control is globally disabled", details
-	}
-	if !policy.MCPEnabled {
+	if !mcpRemoteEnabled(global, policy) {
 		return "remote_access_server_disabled", "MCP remote control is disabled for this server", details
 	}
 	return "", "", details

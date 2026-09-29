@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { AnimatePresence } from 'motion/react'
-import { Server as ServerIcon, Settings2, X, AlertTriangle } from 'lucide-react'
+import { Server as ServerIcon, Settings2, X, ChevronDown } from 'lucide-react'
 import { SettingsGroup, SettingsSwitchRow } from '../settings/SettingsLayout'
 import { MotionDialogPanel } from '../ui/motion'
 import { Switch } from '../ui/switch'
@@ -25,13 +25,8 @@ function settingEnabled(value: unknown, fallback = false) {
 function serverPolicy(view: any, server: ServerSummary, globalTerminal: boolean, globalMcp: boolean): ServerRemoteAccess {
   const remote = Boolean(view?.server?.remote_terminal_enabled)
   const mcp = Boolean(view?.server?.mcp_enabled)
-  // Prefer backend effective if present, otherwise compute as global && server (per spec §2)
-  const effectiveRemote = view?.effective?.remote_terminal !== undefined
-    ? Boolean(view.effective.remote_terminal)
-    : globalTerminal && remote
-  const effectiveMcp = view?.effective?.mcp_enabled !== undefined
-    ? Boolean(view.effective.mcp_enabled)
-    : globalMcp && mcp
+  const effectiveRemote = globalTerminal || remote
+  const effectiveMcp = globalMcp || mcp
   return {
     ...server,
     remote,
@@ -154,6 +149,7 @@ function RemoteAccessServerDialog({
   const [globalTerminal, setGlobalTerminal] = useState(initialGlobalTerminal)
   const [globalMcp, setGlobalMcp] = useState(initialGlobalMcp)
   const [savingGlobal, setSavingGlobal] = useState('')
+  const [listOpen, setListOpen] = useState(() => typeof window === 'undefined' || typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width: 620px)').matches)
 
   useEffect(() => {
     setGlobalTerminal(initialGlobalTerminal)
@@ -204,16 +200,13 @@ function RemoteAccessServerDialog({
   useEffect(() => {
     setRows(current => current.map(row => ({
       ...row,
-      effectiveRemote: globalTerminal && row.remote,
-      effectiveMcp: globalMcp && row.mcp,
+      effectiveRemote: globalTerminal || row.remote,
+      effectiveMcp: globalMcp || row.mcp,
     })))
   }, [globalTerminal, globalMcp])
 
   const selectedRows = rows.filter(row => selected.has(row.id))
   const allSelected = rows.length > 0 && selected.size === rows.length
-
-  const mcpConfiguredCount = rows.filter(row => row.mcp).length
-  const remoteConfiguredCount = rows.filter(row => row.remote).length
 
   const saveGlobal = async (key: 'terminal' | 'mcp', body: Record<string, boolean>, checked: boolean, success: string) => {
     if (savingGlobal) return
@@ -256,7 +249,7 @@ function RemoteAccessServerDialog({
       const next = updated.get(row.id)
       if (!next) return row
       // Preserve computed effective with latest global switches
-      return { ...next, effectiveRemote: globalTerminal && next.remote, effectiveMcp: globalMcp && next.mcp }
+      return { ...next, effectiveRemote: globalTerminal || next.remote, effectiveMcp: globalMcp || next.mcp }
     }))
     if (failures > 0) notify(`${failures} 台服务器保存失败`, 'error')
     else notify(success, 'success')
@@ -272,38 +265,10 @@ function RemoteAccessServerDialog({
 
   const controlsLocked = Boolean(busy || savingGlobal)
 
-  const renderMcpHint = (row: ServerRemoteAccess) => {
-    if (row.error) return null
-    if (row.mcp && globalMcp) {
-      if (row.status === 'offline' || row.status === 'unknown' || row.status === '' || row.status === undefined) {
-        // Keep policy distinction: offline does not flip switch; show authorized but offline
-        // Only show offline hint when status is explicitly offline; unknown still counts as not online but we treat as authorized
-        if (row.status === 'offline') return <span className="muted remote-access-hint">已授权 · Agent 离线</span>
-        return <span className="muted remote-access-hint" style={{ color: 'var(--success, #16a34a)' }}>已生效</span>
-      }
-      if (row.status === 'offline') return <span className="muted remote-access-hint">已授权 · Agent 离线</span>
-      return <span className="muted remote-access-hint" style={{ color: 'var(--success, #16a34a)' }}>已生效</span>
-    }
-    if (row.mcp && !globalMcp) return <span className="muted remote-access-hint" style={{ color: '#d97706' }}>未生效 · 全局已关闭</span>
-    if (!row.mcp && globalMcp) return <span className="muted remote-access-hint">此服务器未授权</span>
-    return <span className="muted remote-access-hint">未授权</span>
-  }
-
-  const renderRemoteHint = (row: ServerRemoteAccess) => {
-    if (row.error) return null
-    if (row.remote && globalTerminal) {
-      if (row.status === 'offline') return <span className="muted remote-access-hint">已授权 · Agent 离线</span>
-      return <span className="muted remote-access-hint" style={{ color: 'var(--success, #16a34a)' }}>已生效</span>
-    }
-    if (row.remote && !globalTerminal) return <span className="muted remote-access-hint" style={{ color: '#d97706' }}>未生效 · 全局已关闭</span>
-    if (!row.remote && globalTerminal) return <span className="muted remote-access-hint">此服务器未授权</span>
-    return <span className="muted remote-access-hint">未授权</span>
-  }
-
   return (
     <MotionDialogPanel onCancel={onClose} className="remote-access-server-dialog" aria-labelledby="remote-access-server-title">
       <header className="dialog-head">
-        <div className="settings-heading"><h2 id="remote-access-server-title">服务器远程控制</h2><FieldHelp label="服务器远程控制" hint="全局和单台服务器都开启时才可连接。关闭全局不会改变单台服务器的选择。" /></div>
+        <div className="settings-heading"><h2 id="remote-access-server-title">服务器远程控制</h2><FieldHelp label="服务器远程控制" hint="全局开启时覆盖现有和新接入服务器；关闭全局后按各服务器的设置生效。" /></div>
         <button type="button" className="ghost dialog-close icon-button" onClick={onClose} disabled={controlsLocked} aria-label="关闭" title="关闭"><X size={16} /></button>
       </header>
       <div className="dialog-body remote-access-server-body">
@@ -311,7 +276,7 @@ function RemoteAccessServerDialog({
           <div className="remote-access-global-item">
             <div>
               <strong>Web 远程终端</strong>
-              <FieldHelp label="Web 远程终端" hint="开启后，可连接下方已授权服务器的终端。" />
+              <FieldHelp label="Web 远程终端" hint="开启后对所有现有和新接入服务器生效。" />
             </div>
             <Switch
               checked={globalTerminal}
@@ -323,7 +288,7 @@ function RemoteAccessServerDialog({
           <div className="remote-access-global-item">
             <div>
               <strong>MCP 远程控制</strong>
-              <FieldHelp label="MCP 远程控制" hint="开启后，MCP 客户端可操作下方已授权的服务器。" />
+              <FieldHelp label="MCP 远程控制" hint="开启后对所有现有和新接入服务器生效，仍需 MCP 授权。" />
             </div>
             <Switch
               checked={globalMcp}
@@ -333,49 +298,40 @@ function RemoteAccessServerDialog({
             />
           </div>
         </div>
-        {/* Global MCP status banners per spec §7 */}
-        {!loading && !loadError && rows.length > 0 && globalMcp && mcpConfiguredCount === 0 ? (
-          <div className="remote-access-global-warning" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--warning-bg, #fef3c7)', border: '1px solid #f59e0b', color: '#92400e', fontSize: 13 }}>
-            <AlertTriangle size={16} aria-hidden="true" />
-            <span>MCP 远程控制总开关已开启，但当前没有任何服务器授权 MCP 远程控制。</span>
-          </div>
-        ) : null}
-        {!loading && !loadError && rows.length > 0 && globalMcp && mcpConfiguredCount > 0 ? (
-          <div className="muted" style={{ fontSize: 12, padding: '4px 2px' }}>
-            MCP 远程控制 已启用 · {mcpConfiguredCount} / {rows.length} 台服务器可被 MCP 远程控制
-          </div>
-        ) : null}
-        {!loading && !loadError && rows.length > 0 && !globalMcp && mcpConfiguredCount > 0 ? (
-          <div className="muted" style={{ fontSize: 12, padding: '4px 2px' }}>
-            MCP 远程控制 全局已关闭 · 已配置 {mcpConfiguredCount} / {rows.length} 台（开启全局后立即生效）
-          </div>
-        ) : null}
+        <p className="remote-access-policy-note">全局开启覆盖所有现有和新接入服务器；关闭后按逐台设置生效。</p>
         {loading ? <p className="muted remote-access-server-loading">正在读取服务器设置…</p> : loadError ? <div className="remote-access-server-empty"><ServerIcon size={20} aria-hidden="true" /><p>{loadError}</p></div> : rows.length === 0 ? <div className="remote-access-server-empty"><ServerIcon size={20} aria-hidden="true" /><p>暂无服务器</p></div> : <>
-          <div className="remote-access-bulk-bar">
+          <button type="button" className="remote-access-list-toggle" aria-expanded={listOpen} aria-controls="remote-access-server-controls" onClick={() => setListOpen(open => !open)}>
+            <span>逐台设置 <span className="muted">{rows.length} 台服务器</span></span>
+            <ChevronDown size={18} aria-hidden="true" />
+          </button>
+          {listOpen ? <div id="remote-access-server-controls" className="remote-access-list-content">
+          {globalTerminal && globalMcp ? <p className="remote-access-list-note">两项全局设置已覆盖逐台设置。关闭对应全局开关后可编辑。</p> : null}
+          {!globalTerminal || !globalMcp ? <div className="remote-access-bulk-bar">
             <label><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map(row => row.id)))} disabled={controlsLocked} />全选</label>
             <span>{selected.size > 0 ? `已选 ${selected.size} / ${rows.length} 台` : `共 ${rows.length} 台服务器`}</span>
             <div>
-              <button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { remote_terminal_enabled: true }, '已批量开启远程控制')}>开启远程</button>
-              <button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { remote_terminal_enabled: false }, '已批量关闭远程控制')}>关闭远程</button>
-              <button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { mcp_enabled: true }, '已批量开启 MCP')}>开启 MCP</button>
-              <button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { mcp_enabled: false }, '已批量关闭 MCP')}>关闭 MCP</button>
+              {!globalTerminal ? <><button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { remote_terminal_enabled: true }, '已批量开启远程控制')}>开启远程</button>
+              <button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { remote_terminal_enabled: false }, '已批量关闭远程控制')}>关闭远程</button></> : null}
+              {!globalMcp ? <><button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { mcp_enabled: true }, '已批量开启 MCP')}>开启 MCP</button>
+              <button type="button" className="ghost" disabled={controlsLocked || selected.size === 0} onClick={() => void patchRows(selectedRows, { mcp_enabled: false }, '已批量关闭 MCP')}>关闭 MCP</button></> : null}
             </div>
-          </div>
-          <div className="remote-access-server-list">
+          </div> : null}
+          <div className={globalTerminal && globalMcp ? 'remote-access-server-list is-global' : 'remote-access-server-list'}>
             <div className="remote-access-server-row remote-access-server-row-head" aria-hidden="true"><span /><span>服务器</span><span>远程</span><span>MCP 远程控制</span></div>
             {rows.map(row => <div className="remote-access-server-row" key={row.id}>
-              <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleSelected(row.id)} disabled={controlsLocked} aria-label={`选择 ${row.name || `服务器 ${row.id}`}`} />
+              <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleSelected(row.id)} disabled={controlsLocked || (globalTerminal && globalMcp)} aria-label={`选择 ${row.name || `服务器 ${row.id}`}`} />
               <div className="remote-access-server-name"><strong>{row.name || `服务器 ${row.id}`}</strong><span>{row.status === 'online' ? '在线' : row.status === 'offline' ? '离线' : '未连接'}{row.error ? ` · ${row.error}` : ''}</span></div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                <Switch checked={row.remote} disabled={controlsLocked} onChange={checked => void patchRows([row], { remote_terminal_enabled: checked }, `${row.name || `服务器 ${row.id}`} 已更新`)} ariaLabel={`${row.name || `服务器 ${row.id}`}远程`} />
-                {renderRemoteHint(row)}
+              <div className="remote-access-server-control">
+                <span className="remote-access-mobile-label">Web 终端</span>
+                <Switch checked={row.effectiveRemote} disabled={controlsLocked || globalTerminal} onChange={checked => void patchRows([row], { remote_terminal_enabled: checked }, `${row.name || `服务器 ${row.id}`} 已更新`)} ariaLabel={`${row.name || `服务器 ${row.id}`}远程`} />
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                <Switch checked={row.mcp} disabled={controlsLocked} onChange={checked => void patchRows([row], { mcp_enabled: checked }, `${row.name || `服务器 ${row.id}`} 已更新`)} ariaLabel={`${row.name || `服务器 ${row.id}`}MCP`} />
-                {renderMcpHint(row)}
+              <div className="remote-access-server-control">
+                <span className="remote-access-mobile-label">MCP 控制</span>
+                <Switch checked={row.effectiveMcp} disabled={controlsLocked || globalMcp} onChange={checked => void patchRows([row], { mcp_enabled: checked }, `${row.name || `服务器 ${row.id}`} 已更新`)} ariaLabel={`${row.name || `服务器 ${row.id}`}MCP`} />
               </div>
             </div>)}
           </div>
+          </div> : null}
         </>}
       </div>
       <footer className="dialog-actions"><button type="button" onClick={onClose} disabled={controlsLocked}>{busy ? '保存中…' : '完成'}</button></footer>

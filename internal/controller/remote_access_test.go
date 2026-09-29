@@ -181,6 +181,9 @@ func TestHumanTerminalsCloseWhenServerTerminalDisabled(t *testing.T) {
 	}
 	srv := newTestServer(db, "test-secret", "")
 	srv.terminalHub.sessions["human-1"] = &terminalSession{ID: "human-1", ServerID: node.ID, OwnerType: InteractiveOwnerHuman}
+	if err := db.SetSetting(ctx, settingRemoteTerminalEnabled, "false"); err != nil {
+		t.Fatal(err)
+	}
 	disabled := false
 	if _, err := srv.updateServerRemoteAccessPolicy(ctx, node, RemoteAccessPolicyPatch{RemoteTerminalEnabled: &disabled}, "user", "127.0.0.1", ""); err != nil {
 		t.Fatal(err)
@@ -203,9 +206,20 @@ func TestHumanTerminalsCloseWhenGlobalTerminalDisabled(t *testing.T) {
 	}
 	srv := newTestServer(db, "test-secret", "")
 	srv.terminalHub.sessions["human-global"] = &terminalSession{ID: "human-global", ServerID: node.ID, OwnerType: InteractiveOwnerHuman}
+	authorized := &model.Server{Name: "human-pty-individual", AgentID: "agent-human-individual", AgentTokenHash: security.HashSecret("token"), ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, authorized); err != nil {
+		t.Fatal(err)
+	}
+	srv.terminalHub.sessions["human-individual"] = &terminalSession{ID: "human-individual", ServerID: authorized.ID, OwnerType: InteractiveOwnerHuman}
+	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: false}); err != nil {
+		t.Fatal(err)
+	}
 	srv.handleGlobalRemoteAccessChange(ctx, []string{settingRemoteTerminalEnabled}, map[string]string{settingRemoteTerminalEnabled: "false"})
 	if srv.terminalHub.countForServer(node.ID) != 0 {
 		t.Fatal("disabling global remote terminal left a human PTY open")
+	}
+	if srv.terminalHub.countForServer(authorized.ID) != 1 {
+		t.Fatal("server authorized for remote terminal lost its PTY")
 	}
 }
 
@@ -222,6 +236,9 @@ func TestSettingsUpdateCandidateClosesHumanTerminals(t *testing.T) {
 	}
 	srv := newTestServer(db, "test-secret", "")
 	srv.terminalHub.sessions["human-settings"] = &terminalSession{ID: "human-settings", ServerID: node.ID, OwnerType: InteractiveOwnerHuman}
+	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: false}); err != nil {
+		t.Fatal(err)
+	}
 	input, _ := json.Marshal(map[string]any{"changes": map[string]any{settingRemoteTerminalEnabled: false}})
 	if _, err := srv.settingsUpdateCandidate(ctx, input, true); err != nil {
 		t.Fatal(err)

@@ -176,14 +176,17 @@ func TestHermesStableTerminalToolsAuthorizeWithoutRelist(t *testing.T) {
 	if err := db.SetSetting(ctx, settingMCPEnabled, "false"); err != nil {
 		t.Fatal(err)
 	}
-	assertOpenDenied("remote_access_global_disabled")
-	if err := db.SetSetting(ctx, settingMCPEnabled, "true"); err != nil {
-		t.Fatal(err)
+	capabilities, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "system_get_capabilities", Arguments: map[string]any{}})
+	if err != nil || capabilities.IsError || !strings.Contains(mcpResultText(capabilities), "\"interactive_terminal\":{\"authorized\":true") {
+		t.Fatalf("server grant must remain available with global switch off: err=%v result=%s", err, mcpResultText(capabilities))
 	}
 	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	assertOpenDenied("remote_access_server_disabled")
+	if err := db.SetSetting(ctx, settingMCPEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
