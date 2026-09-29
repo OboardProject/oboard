@@ -387,7 +387,7 @@ func realtimeResourceRole(resource string) model.Role {
 		return model.RoleNone
 	case "all", "account", "notifications", "subscriptions", "traffic":
 		return model.RoleViewer
-	case "servers", "server_runtime", "server_metrics", "tasks", "deployments", "configuration", "probes", "topology", "audit", "mtu", "port_forwards", "tunnels":
+	case "servers", "server_runtime", "server_metrics", "tasks", "deployments", "configuration", "probes", "topology", "audit", "mtu", "port_forwards", "tunnels", "plugins":
 		return model.RoleOperator
 	default:
 		return model.RoleAdmin

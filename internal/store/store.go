@@ -789,12 +789,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migratePluginSchema(ctx); err != nil {
 		return err
 	}
-	if err := s.MigratePluginExtensionsSchema(ctx); err != nil {
-		return err
-	}
-	if err := s.MigratePluginWebhookSchema(ctx); err != nil {
-		return err
-	}
 	if err := s.migrateAgentUpdateIndexes(ctx); err != nil {
 		return err
 	}
@@ -6355,6 +6349,11 @@ func (s *Store) SupersedePendingOperationalTasks(ctx context.Context, serverID i
 		model.AgentTaskTypeProbePortForwards,
 		model.AgentTaskTypeProbeExternalEgress,
 		model.AgentTaskTypeProbeLatencyTargets,
+		model.AgentTaskTypeNetworkPing,
+		model.AgentTaskTypeNetworkTrace,
+		model.AgentTaskTypeNetworkTCP,
+		model.AgentTaskTypeNetworkDNS,
+		model.AgentTaskTypeNetworkHTTP,
 	} {
 		if err := s.SupersedePendingTasksByServerType(ctx, serverID, taskType, reason); err != nil {
 			return err

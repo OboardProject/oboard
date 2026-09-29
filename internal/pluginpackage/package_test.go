@@ -3,37 +3,50 @@ package pluginpackage
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/binary"
-	"io/fs"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/OboardProject/oboard/internal/plugin"
 )
 
-type entry struct {
-	name string
-	data []byte
-	mode fs.FileMode
+const testManifest = `{"id":"acme.minimal","name":"Minimal","version":"1.0.0","description":"","runtime":"oboard-js","entry":"main.js","capabilities":[],"triggers":{"schedule":false}}`
+
+func files() map[string][]byte {
+	return map[string][]byte{
+		plugin.ManifestFile: []byte(testManifest),
+		plugin.EntryFile:    []byte("function main(run) { log.info('hi'); return { ok: true } }"),
+	}
 }
 
-func archive(t *testing.T, entries []entry, method uint16, modified time.Time) []byte {
+type entry struct {
+	name    string
+	body    []byte
+	mode    uint32
+	method  uint16
+	declare uint64
+}
+
+func archive(t *testing.T, entries []entry) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
 	for _, e := range entries {
-		h := &zip.FileHeader{Name: e.name, Method: method, Modified: modified}
-		if e.mode != 0 {
-			h.SetMode(e.mode)
+		header := &zip.FileHeader{Name: e.name, Method: zip.Deflate}
+		if e.method != 0 {
+			header.Method = e.method
 		}
-		f, err := w.CreateHeader(h)
+		if e.mode != 0 {
+			header.SetMode(0)
+			header.ExternalAttrs = e.mode << 16
+		}
+		writer, err := w.CreateHeader(header)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasSuffix(h.Name, "/") {
-			if _, err := f.Write(e.data); err != nil {
-				t.Fatal(err)
-			}
-		}
+		_, _ = writer.Write(e.body)
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
@@ -41,210 +54,104 @@ func archive(t *testing.T, entries []entry, method uint16, modified time.Time) [
 	return buf.Bytes()
 }
 
-func required() []entry {
-	return []entry{{name: "manifest.json", data: []byte(`{"id":"example"}`)}, {name: "main.js", data: []byte(`function main() { return "ok"; }`)}}
+func baseEntries() []entry {
+	return []entry{{name: plugin.ManifestFile, body: []byte(testManifest)}, {name: plugin.EntryFile, body: []byte("function main() { return 1 }")}}
 }
 
-func TestRoundTrip(t *testing.T) {
-	manifest := []byte("{\n  \"id\": \"example\"\n}\n")
-	source := []byte("// 中文\nfunction main() { return 42; }\n")
-	for _, ui := range [][]byte{nil, []byte(`{"pages":[]}`)} {
-		data, err := Build(manifest, source, ui)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := Parse(data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(got.Manifest, manifest) || !bytes.Equal(got.Source, source) || !bytes.Equal(got.UI, ui) || (got.UI == nil) != (ui == nil) {
-			t.Fatalf("original contents not preserved: %+v", got)
-		}
-		if len(got.SHA256) != 64 {
-			t.Fatalf("invalid SHA256: %q", got.SHA256)
-		}
-		again, err := Build(manifest, source, ui)
-		if err != nil || !bytes.Equal(data, again) {
-			t.Fatalf("build is not deterministic: %v", err)
-		}
-	}
-}
-
-func TestRejectUnsafeEntries(t *testing.T) {
-	for _, name := range []string{"../main.js", "/main.js", "dir/../main.js", "dir/main.js", `dir\main.js`, `C:\main.js`, "./main.js", "main.js/", "main.js\x00", "MAIN.JS", "asset.png", ""} {
-		t.Run(name, func(t *testing.T) {
-			entries := append(required(), entry{name: name, data: []byte("x")})
-			if _, err := Parse(archive(t, entries, zip.Store, time.Time{})); err == nil {
-				t.Fatalf("accepted unsafe file name %q", name)
-			}
-		})
-	}
-	for _, mode := range []fs.FileMode{fs.ModeSymlink | 0600, fs.ModeDir | 0700, fs.ModeNamedPipe | 0600, fs.ModeSocket | 0600, fs.ModeDevice | 0600} {
-		entries := required()
-		entries[1].mode = mode
-		if _, err := Parse(archive(t, entries, zip.Store, time.Time{})); err == nil {
-			t.Fatalf("accepted non-regular file mode %v", mode)
-		}
-	}
-}
-
-func TestRejectMissingDuplicateAndExcessFiles(t *testing.T) {
-	for _, entries := range [][]entry{nil, required()[:1], required()[1:], append(required(), required()[0]), append(required(), required()[1]), append(required(), entry{name: "ui.json", data: []byte(`{}`)}, entry{name: "ui.json", data: []byte(`{}`)})} {
-		if _, err := Parse(archive(t, entries, zip.Store, time.Time{})); err == nil {
-			t.Fatalf("accepted missing or duplicate entries: %+v", entries)
-		}
-	}
-	entries := required()
-	for len(entries) <= MaxFiles {
-		entries = append(entries, entry{name: "ui.json", data: []byte(`{}`)})
-	}
-	if _, err := Parse(archive(t, entries, zip.Store, time.Time{})); err == nil || !strings.Contains(err.Error(), "file count") {
-		t.Fatalf("file-count check did not run: %v", err)
-	}
-}
-
-func TestContentValidation(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		file int
-		data []byte
-	}{
-		{"manifest-json", 0, []byte(`{"id":`)},
-		{"manifest-empty", 0, []byte{}},
-		{"manifest-trailing", 0, []byte(`{} {}`)},
-		{"manifest-utf8", 0, []byte{'"', 0xff, '"'}},
-		{"source-utf8", 1, []byte{0xff}},
-		{"ui-json", 2, []byte(`{`)},
-		{"ui-empty", 2, []byte{}},
-		{"ui-utf8", 2, []byte{'"', 0xff, '"'}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			entries := append(required(), entry{name: "ui.json", data: []byte(`{}`)})
-			entries[tc.file].data = tc.data
-			if _, err := Parse(archive(t, entries, zip.Deflate, time.Time{})); err == nil {
-				t.Fatal("Parse accepted invalid content")
-			}
-			if _, err := Build(entries[0].data, entries[1].data, entries[2].data); err == nil {
-				t.Fatal("Build accepted invalid content")
-			}
-		})
-	}
-	// Only presence, not JavaScript semantics or manifest schema, is enforced.
-	data, err := Build([]byte(`null`), nil, nil)
+func TestPackageRoundTripAndDeterministicDigest(t *testing.T) {
+	data, err := Build(files())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Parse(data); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSizeLimitsAndCompressionBomb(t *testing.T) {
-	entries := []entry{
-		{name: "manifest.json", data: append([]byte(`{}`), bytes.Repeat([]byte(" "), MaxManifestSize-2)...)},
-		{name: "main.js", data: bytes.Repeat([]byte(" "), MaxSourceSize)},
-		{name: "ui.json", data: append([]byte(`{}`), bytes.Repeat([]byte(" "), MaxUISize-2)...)},
-	}
-	if _, err := Parse(archive(t, entries, zip.Deflate, time.Time{})); err != nil {
-		t.Fatalf("exact limits rejected: %v", err)
-	}
-	if _, err := Build(entries[0].data, entries[1].data, entries[2].data); err != nil {
-		t.Fatalf("exact limits rejected by Build: %v", err)
-	}
-	for i := range entries {
-		over := append([]entry(nil), entries...)
-		over[i].data = append(bytes.Clone(over[i].data), ' ')
-		data := archive(t, over, zip.Deflate, time.Time{})
-		if len(data) > 4096 {
-			t.Fatalf("fixture should be highly compressed: %d", len(data))
-		}
-		if _, err := Parse(data); err == nil {
-			t.Fatalf("accepted compressed oversized %s", over[i].name)
-		}
-		if _, err := Build(over[0].data, over[1].data, over[2].data); err == nil {
-			t.Fatalf("Build accepted oversized %s", over[i].name)
-		}
-	}
-	bomb := required()
-	bomb[1].data = bytes.Repeat([]byte(" "), MaxUncompressedSize+1)
-	if _, err := Parse(archive(t, bomb, zip.Deflate, time.Time{})); err == nil {
-		t.Fatal("accepted compressed total-size bomb")
-	}
-	data := archive(t, required(), zip.Store, time.Time{})
-	// A valid ZIP can carry a large executable prefix; this exercises the upload
-	// check independently of ZIP syntax and uncompressed-file restrictions.
-	exact := append(make([]byte, MaxUploadSize-len(data)), data...)
-	if _, err := Parse(exact); err != nil {
-		t.Fatalf("exact upload limit rejected: %v", err)
-	}
-	if _, err := Parse(append([]byte{0}, exact...)); err == nil || !strings.Contains(err.Error(), "upload limit") {
-		t.Fatalf("upload limit not enforced: %v", err)
-	}
-}
-
-func TestDigestIndependentOfZIPMetadata(t *testing.T) {
-	entries := append(required(), entry{name: "ui.json", data: []byte(`{"pages":[]}`)})
-	original, err := Parse(archive(t, entries, zip.Store, time.Time{}))
+	pkg, err := Parse(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reordered := []entry{entries[2], entries[1], entries[0]}
-	for i := range reordered {
-		reordered[i].mode = 0644
+	if pkg.Manifest.ID != "acme.minimal" || pkg.SignatureState != "unsigned" || pkg.Publisher.Identity != "local" || len(pkg.SHA256) != 64 {
+		t.Fatalf("unexpected package: %+v", pkg)
 	}
-	other, err := Parse(archive(t, reordered, zip.Deflate, time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)))
+	reordered := archive(t, []entry{{name: plugin.EntryFile, body: files()[plugin.EntryFile]}, {name: plugin.ManifestFile, body: files()[plugin.ManifestFile], method: zip.Store}})
+	other, err := Parse(reordered)
+	if err != nil || other.SHA256 != pkg.SHA256 {
+		t.Fatalf("digest depends on archive layout: %v", err)
+	}
+}
+
+func TestPackageRejectsUnsafeArchives(t *testing.T) {
+	cases := map[string][]entry{
+		"traversal":        append(baseEntries(), entry{name: "../evil.js", body: []byte("x")}),
+		"absolute":         append(baseEntries(), entry{name: "/etc/passwd", body: []byte("x")}),
+		"subdirectory":     append(baseEntries(), entry{name: "lib/x.js", body: []byte("x")}),
+		"backslash":        append(baseEntries(), entry{name: "..\\x", body: []byte("x")}),
+		"symlink":          append(baseEntries(), entry{name: LicenseFile, body: []byte("/etc/passwd"), mode: 0o120777}),
+		"duplicate":        append(baseEntries(), entry{name: plugin.EntryFile, body: []byte("function main(){}")}),
+		"install.sh":       append(baseEntries(), entry{name: "install.sh", body: []byte("#!/bin/sh")}),
+		"postinstall":      append(baseEntries(), entry{name: "package.json", body: []byte(`{"scripts":{"postinstall":"x"}}`)}),
+		"native so":        append(baseEntries(), entry{name: "addon.so", body: []byte("\x7fELF")}),
+		"native node":      append(baseEntries(), entry{name: "addon.node", body: []byte("\x7fELF")}),
+		"node_modules":     append(baseEntries(), entry{name: "node_modules", body: []byte("x")}),
+		"missing entry":    {{name: plugin.ManifestFile, body: []byte(testManifest)}},
+		"missing manifest": {{name: plugin.EntryFile, body: []byte("function main(){}")}},
+		"elf main":         {{name: plugin.ManifestFile, body: []byte(testManifest)}, {name: plugin.EntryFile, body: []byte("\x7fELF\x02\x01")}},
+		"bomb":             {{name: plugin.ManifestFile, body: []byte(testManifest)}, {name: plugin.EntryFile, body: bytes.Repeat([]byte(" "), plugin.MaxSourceBytes+1)}},
+		"no main":          {{name: plugin.ManifestFile, body: []byte(testManifest)}, {name: plugin.EntryFile, body: []byte("function start(){}")}},
+		"syntax":           {{name: plugin.ManifestFile, body: []byte(testManifest)}, {name: plugin.EntryFile, body: []byte("function main( {")}},
+		"module import":    {{name: plugin.ManifestFile, body: []byte(testManifest)}, {name: plugin.EntryFile, body: []byte("import fs from 'fs'\nfunction main(){}")}},
+		"bad icon":         append(baseEntries(), entry{name: IconFile, body: []byte("<svg onload=alert(1)>")}),
+	}
+	for name, entries := range cases {
+		if _, err := Parse(archive(t, entries)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := Parse(bytes.Repeat([]byte("x"), MaxArchiveBytes+1)); err == nil {
+		t.Fatal("oversized archive accepted")
+	}
+	many := baseEntries()
+	for i := 0; i < MaxEntries; i++ {
+		many = append(many, entry{name: "LICENSE", body: []byte("x")})
+	}
+	if _, err := Parse(archive(t, many)); err == nil {
+		t.Fatal("too many entries accepted")
+	}
+}
+
+func TestPublisherSignature(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if original.SHA256 != other.SHA256 {
-		t.Fatal("digest depends on ZIP order or metadata")
+	set := files()
+	signature, err := Sign(set, "Acme", private)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i := range entries {
-		changed := append([]entry(nil), entries...)
-		changed[i].data = append(bytes.Clone(changed[i].data), ' ')
-		p, err := Parse(archive(t, changed, zip.Store, time.Time{}))
-		if err != nil || p.SHA256 == original.SHA256 {
-			t.Fatalf("digest failed to bind %s: %v", entries[i].name, err)
-		}
+	set[SignatureFile] = signature
+	pkg, err := Validate(set)
+	if err != nil {
+		t.Fatal(err)
 	}
-	withoutUI, err := Parse(archive(t, required(), zip.Store, time.Time{}))
-	if err != nil || withoutUI.SHA256 == original.SHA256 {
-		t.Fatalf("digest failed to bind optional UI: %v", err)
+	if pkg.SignatureState != "verified" || pkg.Publisher.Identity != PublisherIdentity(public) || pkg.Publisher.Name != "Acme" {
+		t.Fatalf("signature not verified: %+v", pkg.Publisher)
 	}
-}
-
-func TestMalformedArchive(t *testing.T) {
-	valid := archive(t, required(), zip.Store, time.Time{})
-	corrupt := bytes.Clone(valid)
-	start := bytes.Index(corrupt, required()[1].data)
-	corrupt[start] ^= 1
-	for _, data := range [][]byte{nil, []byte("not a zip"), valid[:len(valid)-1], corrupt} {
-		if _, err := Parse(data); err == nil {
-			t.Fatal("accepted invalid or corrupted archive")
-		}
+	tampered := map[string][]byte{}
+	for name, content := range set {
+		tampered[name] = content
 	}
-}
-
-func TestDishonestUncompressedSize(t *testing.T) {
-	entries := required()
-	entries[1].data = bytes.Repeat([]byte(" "), MaxSourceSize+1)
-	data := archive(t, entries, zip.Deflate, time.Time{})
-	// Lie in the central directory to bypass the early advertised-size check.
-	pos := 0
-	for {
-		i := bytes.Index(data[pos:], []byte{'P', 'K', 1, 2})
-		if i < 0 {
-			t.Fatal("missing central-directory entry")
-		}
-		pos += i
-		nameLen := int(binary.LittleEndian.Uint16(data[pos+28:]))
-		if string(data[pos+46:pos+46+nameLen]) == "main.js" {
-			binary.LittleEndian.PutUint32(data[pos+24:], 1)
-			break
-		}
-		pos += 46 + nameLen
+	tampered[plugin.EntryFile] = []byte("function main() { return 'changed' }")
+	if _, err := Validate(tampered); plugin.CodeOf(err) != plugin.CodeSignatureInvalid {
+		t.Fatalf("tampered package accepted: %v", err)
 	}
-	if _, err := Parse(data); err == nil {
-		t.Fatal("accepted oversized stream with dishonest size header")
+	var doc map[string]string
+	_ = json.Unmarshal(signature, &doc)
+	doc["publisher"] = "Someone Else"
+	forged, _ := json.Marshal(doc)
+	set[SignatureFile] = forged
+	if pkg, err := Validate(set); err != nil || pkg.Publisher.Identity != PublisherIdentity(public) {
+		t.Fatalf("publisher identity must come from the key, not the display name: %+v %v", pkg, err)
+	}
+	set[SignatureFile] = []byte(strings.Replace(string(signature), `"format": "oboard-plugin-signature-v1"`, `"format": "other"`, 1))
+	if _, err := Validate(set); plugin.CodeOf(err) != plugin.CodeSignatureInvalid {
+		t.Fatalf("unknown signature format accepted: %v", err)
 	}
 }

@@ -92,17 +92,14 @@ index idx_plan_revision_node_sort_position on subscription_plan_revision_nodes
 index idx_plan_revision_nodes_node on subscription_plan_revision_nodes
 index idx_plan_revision_nodes_revision on subscription_plan_revision_nodes
 index idx_plan_revision_rules_revision on subscription_plan_revision_rules
-index idx_plugin_grants_plugin on plugin_grants
-index idx_plugin_revisions_one_draft on plugin_revisions
-index idx_plugin_run_actions_operation on plugin_run_actions
-index idx_plugin_run_logs_run on plugin_run_logs
-index idx_plugin_runs_plugin on plugin_runs
+index idx_plugin_audit_created on plugin_audit_events
+index idx_plugin_audit_instance on plugin_audit_events
+index idx_plugin_instances_name on plugin_instances
+index idx_plugin_runs_installation on plugin_runs
+index idx_plugin_runs_instance on plugin_runs
 index idx_plugin_runs_queue on plugin_runs
-index idx_plugin_trigger_states_due on plugin_trigger_states
-index idx_plugin_triggers_plugin_name on plugin_trigger_bindings
-index idx_plugin_webhook_deliveries_expiry on plugin_webhook_deliveries
-index idx_plugin_webhooks_plugin on plugin_webhooks
-index idx_plugins_owner_name on plugins
+index idx_plugin_schedules_due on plugin_schedules
+index idx_plugin_schedules_instance on plugin_schedules
 index idx_port_forwards_source on port_forwards
 index idx_proxy_credentials_active_scope on proxy_credentials
 index idx_proxy_path_port_allocations_server on proxy_path_port_allocations
@@ -364,6 +361,7 @@ table agent_fleet_update_state
     failed INTEGER notnull=1 default=0 pk=0
     last_pause_reason TEXT notnull=1 default='' pk=0
     updated_at TEXT notnull=1 default=- pk=0
+    manual_roll_task_floor INTEGER notnull=0 default=- pk=0
 table agent_tasks
     id INTEGER notnull=0 default=- pk=1
     server_id INTEGER notnull=1 default=- pk=0
@@ -1584,186 +1582,133 @@ table passkey_credentials
     credential_json TEXT notnull=1 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
     last_used_at TEXT notnull=0 default=- pk=0
-table plugin_grants
+table plugin_audit_events
     id INTEGER notnull=0 default=- pk=1
-    plugin_id INTEGER notnull=1 default=- pk=0
-    revision_id INTEGER notnull=1 default=- pk=0
-    binding_id INTEGER notnull=0 default=- pk=0
-    grant_revision INTEGER notnull=1 default=1 pk=0
-    capabilities_json TEXT notnull=1 default=- pk=0
-    resource_scope_json TEXT notnull=1 default=- pk=0
-    constraints_json TEXT notnull=1 default='{}' pk=0
-    source_digest TEXT notnull=1 default=- pk=0
-    binding_digest TEXT notnull=1 default='' pk=0
-    expires_at TEXT notnull=0 default=- pk=0
-    revoked_at TEXT notnull=0 default=- pk=0
-    approved_by_user_id INTEGER notnull=1 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
-table plugin_installation_secrets
-    plugin_id INTEGER notnull=1 default=- pk=1
-    name TEXT notnull=1 default=- pk=2
-    value_encrypted TEXT notnull=1 default=- pk=0
-    updated_at TEXT notnull=1 default=- pk=0
+    installation_id INTEGER notnull=1 default=- pk=0
+    instance_id INTEGER notnull=1 default=- pk=0
+    plugin_key TEXT notnull=1 default=- pk=0
+    plugin_version TEXT notnull=1 default=- pk=0
+    run_uuid TEXT notnull=1 default='' pk=0
+    capability TEXT notnull=1 default=- pk=0
+    resource TEXT notnull=1 default='' pk=0
+    result TEXT notnull=1 default=- pk=0
+    error_code TEXT notnull=1 default='' pk=0
+    duration_ms INTEGER notnull=1 default=0 pk=0
+    detail_json TEXT notnull=1 default='{}' pk=0
+table plugin_grants
+    instance_id INTEGER notnull=0 default=- pk=1
+    package_id INTEGER notnull=1 default=- pk=0
+    grant_json TEXT notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+    approved_by_user_id INTEGER notnull=1 default=0 pk=0
+    approved_at TEXT notnull=1 default=- pk=0
 table plugin_installations
-    plugin_id INTEGER notnull=0 default=- pk=1
-    package_id TEXT notnull=1 default=- pk=0
-    active_revision_id INTEGER notnull=0 default=- pk=0
-    installed INTEGER notnull=1 default=1 pk=0
-    config_json TEXT notnull=1 default='{}' pk=0
+    id INTEGER notnull=0 default=- pk=1
+    plugin_key TEXT notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    description TEXT notnull=1 default='' pk=0
+    active_package_id INTEGER notnull=1 default=0 pk=0
+    publisher_identity TEXT notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=0 pk=0
+    draft_manifest_json TEXT notnull=1 default='' pk=0
+    draft_source TEXT notnull=1 default='' pk=0
+    draft_updated_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
-table plugin_package_versions
-    revision_id INTEGER notnull=0 default=- pk=1
-    plugin_id INTEGER notnull=1 default=- pk=0
+table plugin_instances
+    id INTEGER notnull=0 default=- pk=1
+    installation_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=0 pk=0
+    auto_paused INTEGER notnull=1 default=0 pk=0
+    permission_review_required INTEGER notnull=1 default=0 pk=0
+    values_json TEXT notnull=1 default='{}' pk=0
+    custom_json TEXT notnull=1 default='[]' pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+    failure_streak INTEGER notnull=1 default=0 pk=0
+    last_run_at TEXT notnull=0 default=- pk=0
+    last_success_at TEXT notnull=0 default=- pk=0
+    last_error_code TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table plugin_packages
+    id INTEGER notnull=0 default=- pk=1
+    installation_id INTEGER notnull=1 default=- pk=0
+    plugin_key TEXT notnull=1 default=- pk=0
     version TEXT notnull=1 default=- pk=0
     sha256 TEXT notnull=1 default=- pk=0
     manifest_json TEXT notnull=1 default=- pk=0
-    ui_json TEXT notnull=1 default='null' pk=0
+    source TEXT notnull=1 default=- pk=0
+    icon_png BLOB notnull=0 default=- pk=0
+    readme TEXT notnull=1 default='' pk=0
+    license TEXT notnull=1 default='' pk=0
+    publisher_identity TEXT notnull=1 default=- pk=0
+    publisher_name TEXT notnull=1 default='' pk=0
+    signature_state TEXT notnull=1 default=- pk=0
     source_kind TEXT notnull=1 default=- pk=0
     source_repository TEXT notnull=1 default='' pk=0
     source_commit TEXT notnull=1 default='' pk=0
+    created_by_user_id INTEGER notnull=1 default=0 pk=0
     created_at TEXT notnull=1 default=- pk=0
-table plugin_revisions
-    id INTEGER notnull=0 default=- pk=1
-    plugin_id INTEGER notnull=1 default=- pk=0
-    revision_number INTEGER notnull=1 default=- pk=0
-    status TEXT notnull=1 default=- pk=0
-    schema_version INTEGER notnull=1 default=- pk=0
-    runtime TEXT notnull=1 default=- pk=0
-    sdk_version TEXT notnull=1 default=- pk=0
-    source TEXT notnull=1 default=- pk=0
-    source_digest TEXT notnull=1 default=- pk=0
-    manifest_json TEXT notnull=1 default=- pk=0
-    author_user_id INTEGER notnull=1 default=- pk=0
-    published_at TEXT notnull=0 default=- pk=0
-    published_by_user_id INTEGER notnull=0 default=- pk=0
-    created_at TEXT notnull=1 default=- pk=0
-table plugin_run_actions
-    id INTEGER notnull=0 default=- pk=1
-    run_id INTEGER notnull=1 default=- pk=0
-    action_key TEXT notnull=1 default=- pk=0
-    capability TEXT notnull=1 default=- pk=0
-    target_json TEXT notnull=1 default=- pk=0
-    payload_digest TEXT notnull=1 default=- pk=0
-    status TEXT notnull=1 default=- pk=0
-    operation_id TEXT notnull=1 default='' pk=0
-    changeset_id TEXT notnull=1 default='' pk=0
-    task_id INTEGER notnull=0 default=- pk=0
-    result_json TEXT notnull=1 default='{}' pk=0
-    error_code TEXT notnull=1 default='' pk=0
-    lease_generation INTEGER notnull=1 default=0 pk=0
-    created_at TEXT notnull=1 default=- pk=0
-    updated_at TEXT notnull=1 default=- pk=0
-table plugin_run_attempts
-    id INTEGER notnull=0 default=- pk=1
-    run_id INTEGER notnull=1 default=- pk=0
-    generation INTEGER notnull=1 default=- pk=0
-    worker_id TEXT notnull=1 default=- pk=0
-    status TEXT notnull=1 default=- pk=0
-    resource_json TEXT notnull=1 default='{}' pk=0
-    error_code TEXT notnull=1 default='' pk=0
-    started_at TEXT notnull=1 default=- pk=0
-    finished_at TEXT notnull=0 default=- pk=0
 table plugin_run_logs
-    id INTEGER notnull=0 default=- pk=1
-    run_id INTEGER notnull=1 default=- pk=0
-    seq INTEGER notnull=1 default=- pk=0
+    run_id INTEGER notnull=1 default=- pk=1
+    seq INTEGER notnull=1 default=- pk=2
     level TEXT notnull=1 default=- pk=0
     message TEXT notnull=1 default=- pk=0
-    fields_json TEXT notnull=1 default='{}' pk=0
     created_at TEXT notnull=1 default=- pk=0
 table plugin_runs
     id INTEGER notnull=0 default=- pk=1
     uuid TEXT notnull=1 default=- pk=0
-    plugin_id INTEGER notnull=1 default=- pk=0
-    revision_id INTEGER notnull=1 default=- pk=0
-    binding_id INTEGER notnull=0 default=- pk=0
-    grant_id INTEGER notnull=0 default=- pk=0
+    installation_id INTEGER notnull=1 default=- pk=0
+    instance_id INTEGER notnull=1 default=- pk=0
+    package_id INTEGER notnull=1 default=- pk=0
+    plugin_key TEXT notnull=1 default=- pk=0
+    plugin_version TEXT notnull=1 default=- pk=0
+    trigger TEXT notnull=1 default=- pk=0
+    trigger_json TEXT notnull=1 default='{}' pk=0
     caller_principal TEXT notnull=1 default='' pk=0
-    trigger_kind TEXT notnull=1 default=- pk=0
     idempotency_key TEXT notnull=1 default=- pk=0
     status TEXT notnull=1 default=- pk=0
-    mode TEXT notnull=1 default=- pk=0
-    snapshot_json TEXT notnull=1 default=- pk=0
-    result_json TEXT notnull=1 default='{}' pk=0
     error_code TEXT notnull=1 default='' pk=0
-    skip_reason TEXT notnull=1 default='' pk=0
+    error_message TEXT notnull=1 default='' pk=0
+    cancel_requested INTEGER notnull=1 default=0 pk=0
+    queued_at TEXT notnull=1 default=- pk=0
+    started_at TEXT notnull=0 default=- pk=0
+    finished_at TEXT notnull=0 default=- pk=0
+    capability_call_count INTEGER notnull=1 default=0 pk=0
+    http_call_count INTEGER notnull=1 default=0 pk=0
+    agent_operation_count INTEGER notnull=1 default=0 pk=0
+    result_json TEXT notnull=1 default='' pk=0
     lease_owner TEXT notnull=1 default='' pk=0
     lease_generation INTEGER notnull=1 default=0 pk=0
     lease_until TEXT notnull=0 default=- pk=0
     recovery_generation INTEGER notnull=1 default=1 pk=0
-    created_at TEXT notnull=1 default=- pk=0
-    started_at TEXT notnull=0 default=- pk=0
-    finished_at TEXT notnull=0 default=- pk=0
-table plugin_secrets
+table plugin_schedules
     id INTEGER notnull=0 default=- pk=1
-    name TEXT notnull=1 default=- pk=0
-    purpose TEXT notnull=1 default=- pk=0
-    resource_scope_json TEXT notnull=1 default='{}' pk=0
-    value_encrypted TEXT notnull=1 default=- pk=0
-    revoked_at TEXT notnull=0 default=- pk=0
-    created_by_user_id INTEGER notnull=1 default=- pk=0
-    created_at TEXT notnull=1 default=- pk=0
-table plugin_state
-    plugin_id INTEGER notnull=1 default=- pk=1
-    key TEXT notnull=1 default=- pk=2
-    value_json TEXT notnull=1 default=- pk=0
-    version INTEGER notnull=1 default=1 pk=0
-    updated_at TEXT notnull=1 default=- pk=0
-table plugin_trigger_bindings
-    id INTEGER notnull=0 default=- pk=1
-    plugin_id INTEGER notnull=1 default=- pk=0
-    revision_id INTEGER notnull=1 default=- pk=0
-    name TEXT notnull=1 default=- pk=0
-    enabled INTEGER notnull=1 default=0 pk=0
+    instance_id INTEGER notnull=1 default=- pk=0
     kind TEXT notnull=1 default=- pk=0
-    spec_json TEXT notnull=1 default=- pk=0
-    params_json TEXT notnull=1 default='{}' pk=0
-    env_json TEXT notnull=1 default='{}' pk=0
-    binding_revision INTEGER notnull=1 default=1 pk=0
-    created_by_user_id INTEGER notnull=1 default=- pk=0
-    created_at TEXT notnull=1 default=- pk=0
-    updated_at TEXT notnull=1 default=- pk=0
-table plugin_trigger_states
-    binding_id INTEGER notnull=0 default=- pk=1
-    armed INTEGER notnull=1 default=1 pk=0
-    condition_json TEXT notnull=1 default='{}' pk=0
-    current_cycle_key TEXT notnull=1 default='' pk=0
+    interval TEXT notnull=1 default='' pk=0
+    cron TEXT notnull=1 default='' pk=0
+    timezone TEXT notnull=1 default='' pk=0
+    event TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=0 pk=0
+    next_due_at TEXT notnull=0 default=- pk=0
     last_fired_at TEXT notnull=0 default=- pk=0
     last_skipped_at TEXT notnull=0 default=- pk=0
     last_skip_reason TEXT notnull=1 default='' pk=0
-    next_due_at TEXT notnull=0 default=- pk=0
-    hold_until TEXT notnull=0 default=- pk=0
-    updated_at TEXT notnull=1 default=- pk=0
-table plugin_webhook_deliveries
-    webhook_id TEXT notnull=1 default=- pk=1
-    nonce TEXT notnull=1 default=- pk=2
-    generation INTEGER notnull=1 default=- pk=0
-    received_at INTEGER notnull=1 default=- pk=0
-    expires_at INTEGER notnull=1 default=- pk=0
-    status TEXT notnull=1 default='received' pk=0
-    run_id INTEGER notnull=0 default=- pk=0
-table plugin_webhooks
-    id TEXT notnull=0 default=- pk=1
-    plugin_id INTEGER notnull=1 default=- pk=0
-    binding_id INTEGER notnull=1 default=- pk=0
-    binding_revision INTEGER notnull=1 default=- pk=0
-    revision_id INTEGER notnull=1 default=- pk=0
-    grant_id INTEGER notnull=1 default=- pk=0
-    enabled INTEGER notnull=1 default=0 pk=0
-    generation INTEGER notnull=1 default=1 pk=0
-    secret_encrypted TEXT notnull=1 default=- pk=0
-    created_by_user_id INTEGER notnull=1 default=- pk=0
-    rate_window INTEGER notnull=1 default=0 pk=0
-    rate_count INTEGER notnull=1 default=0 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
-table plugins
-    id INTEGER notnull=0 default=- pk=1
-    name TEXT notnull=1 default=- pk=0
-    description TEXT notnull=1 default='' pk=0
-    owner_user_id INTEGER notnull=1 default=- pk=0
-    status TEXT notnull=1 default='draft' pk=0
-    created_at TEXT notnull=1 default=- pk=0
+table plugin_secrets
+    instance_id INTEGER notnull=1 default=- pk=1
+    name TEXT notnull=1 default=- pk=2
+    value_encrypted TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table plugin_state
+    instance_id INTEGER notnull=1 default=- pk=1
+    key TEXT notnull=1 default=- pk=2
+    value_json TEXT notnull=1 default=- pk=0
+    version INTEGER notnull=1 default=1 pk=0
     updated_at TEXT notnull=1 default=- pk=0
 table port_forward_probe_results
     id INTEGER notnull=0 default=- pk=1
@@ -2066,12 +2011,6 @@ table server_offline_notices
     notify_at TEXT notnull=1 default=- pk=0
     group_key TEXT notnull=1 default='' pk=0
     notified INTEGER notnull=1 default=0 pk=0
-    updated_at TEXT notnull=1 default=- pk=0
-table server_plugin_policies
-    server_id INTEGER notnull=0 default=- pk=1
-    plugins_enabled INTEGER notnull=1 default=0 pk=0
-    plugins_power_enabled INTEGER notnull=1 default=0 pk=0
-    created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
 table server_remote_access_policies
     server_id INTEGER notnull=0 default=- pk=1
@@ -2855,8 +2794,6 @@ trigger configuration_operations_preparation_failure on configuration_sync_state
 trigger configuration_operations_semantic_noop on configuration_sync_states
 trigger configuration_operations_superseded on configuration_sync_states
 trigger configuration_operations_sync_result on configuration_sync_states
-trigger plugin_webhook_run_cancel on plugin_webhooks
-trigger plugin_webhook_run_guard on plugin_runs
 trigger proxy_credentials_user_delete on users
 trigger proxy_credentials_user_rotation on users
 trigger routing_rev_access_changes_delete on access_changes

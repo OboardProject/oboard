@@ -65,7 +65,6 @@ func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/approval-policies/", s.auth(s.apiV1ApprovalPolicy, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/tool-audits", s.auth(s.apiV1ToolAudits, model.RoleAdmin))
 	s.registerPluginRoutes(mux)
-	s.registerPluginWebhookRoutes(mux)
 }
 
 func (s *Server) apiV1LatencyProbes(w http.ResponseWriter, r *http.Request) {

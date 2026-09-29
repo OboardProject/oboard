@@ -43,10 +43,13 @@ type Source struct {
 	URL    string `json:"url"`
 }
 
+// Result holds the allowed root files of one pinned commit. Validation is
+// done by pluginpackage.Validate exactly as for an uploaded package.
 type Result struct {
-	Archive []byte
-	Package *pluginpackage.Package
-	Source  Source
+	Files      map[string][]byte
+	Repository string
+	Commit     string
+	Source     Source
 }
 
 var (
@@ -164,10 +167,9 @@ func fetch(parent context.Context, repositoryURL, ref string, transport http.Rou
 	if tree.Truncated || tree.SHA != commit.Tree.SHA {
 		return Result{}, ErrContent
 	}
-	limits := map[string]int{"manifest.json": pluginpackage.MaxManifestSize, "main.js": pluginpackage.MaxSourceSize, "ui.json": pluginpackage.MaxUISize}
-	files := make(map[string][]byte, 3)
+	files := map[string][]byte{}
 	for _, entry := range tree.Tree {
-		limit, wanted := limits[entry.Path]
+		limit, wanted := pluginpackage.FileLimit(entry.Path)
 		if !wanted {
 			continue
 		}
@@ -216,15 +218,7 @@ func fetch(parent context.Context, repositoryURL, ref string, transport http.Rou
 	if _, ok := files["main.js"]; !ok {
 		return Result{}, ErrMissingFile
 	}
-	archive, err := pluginpackage.Build(files["manifest.json"], files["main.js"], files["ui.json"])
-	if err != nil {
-		return Result{}, ErrContent
-	}
-	pkg, err := pluginpackage.Parse(archive)
-	if err != nil {
-		return Result{}, ErrContent
-	}
-	return Result{Archive: archive, Package: pkg, Source: source}, nil
+	return Result{Files: files, Repository: source.URL, Commit: source.Commit, Source: source}, nil
 }
 
 func getJSON(ctx context.Context, client *http.Client, path string, limit int64, target any) error {

@@ -66,9 +66,9 @@ func newFixture(ui bool) *fixture {
 	entries := []map[string]any{}
 	contents := map[string]string{"manifest.json": `{"id":"sample"}`, "main.js": `function main() { return 1; }`}
 	if ui {
-		contents["ui.json"] = `{"pages":[]}`
+		contents["LICENSE"] = "MIT"
 	}
-	for _, name := range []string{"manifest.json", "main.js", "ui.json"} {
+	for _, name := range []string{"manifest.json", "main.js", "LICENSE"} {
 		content, ok := contents[name]
 		if !ok {
 			continue
@@ -78,7 +78,7 @@ func newFixture(ui bool) *fixture {
 		entries = append(entries, map[string]any{"path": name, "mode": "100644", "type": "blob", "size": len(content), "sha": sha})
 		f.bodies[testBase+"/git/blobs/"+sha] = map[string]any{"sha": sha, "encoding": "base64", "size": len(content), "content": base64.StdEncoding.EncodeToString([]byte(content))}
 	}
-	entries = append(entries, map[string]any{"path": "README.md", "mode": "120000", "type": "blob"}, map[string]any{"path": "docs", "mode": "040000", "type": "tree"})
+	entries = append(entries, map[string]any{"path": "NOTES.md", "mode": "120000", "type": "blob"}, map[string]any{"path": "package.json", "mode": "100644", "type": "blob", "size": 2, "sha": strings.Repeat("c", 40)}, map[string]any{"path": "docs", "mode": "040000", "type": "tree"})
 	f.bodies[testBase+"/git/trees/"+testTree] = map[string]any{"sha": testTree, "truncated": false, "tree": entries}
 	return f
 }
@@ -134,12 +134,14 @@ func TestFetchPinsMutableRefAndOnlyImportsRootFiles(t *testing.T) {
 			if result.Source.Commit != testCommit || result.Source.Ref != resolvedRef || result.Source.URL != "https://github.com/owner/repo" {
 				t.Fatalf("wrong source: %+v", result.Source)
 			}
-			if (result.Package.UI != nil) != ui {
-				t.Fatal("optional UI presence lost")
+			if _, ok := result.Files["LICENSE"]; ok != ui {
+				t.Fatal("optional file presence lost")
 			}
-			parsed, err := pluginpackage.Parse(result.Archive)
-			if err != nil || parsed.SHA256 != result.Package.SHA256 {
-				t.Fatal("invalid package")
+			if string(result.Files["main.js"]) != "function main() { return 1; }" || result.Commit != testCommit || result.Repository != "https://github.com/owner/repo" {
+				t.Fatalf("unexpected fetched files: %+v", result)
+			}
+			if _, ok := result.Files["package.json"]; ok {
+				t.Fatal("a file outside the plugin package set was fetched")
 			}
 			wantCalls := 6
 			if ui {
@@ -267,7 +269,7 @@ func TestRejectUnsafeContents(t *testing.T) {
 				tree["tree"] = entries[1:]
 				want = ErrMissingFile
 			case "oversize":
-				entry["size"] = pluginpackage.MaxManifestSize + 1
+				entry["size"] = manifestLimit() + 1
 				want = ErrTooLarge
 			case "negative-size":
 				entry["size"] = -1
@@ -292,7 +294,7 @@ func TestRejectUnsafeContents(t *testing.T) {
 				want = ErrRepository
 			}
 			result, err := fetch(context.Background(), "https://github.com/owner/repo", "", f.transport(t))
-			if !errors.Is(err, want) || result.Package != nil {
+			if !errors.Is(err, want) || result.Files != nil {
 				t.Fatalf("got %v, want %v", err, want)
 			}
 		})
@@ -372,7 +374,7 @@ func TestOversizeBlobEnvelope(t *testing.T) {
 	underlying := f.transport(t)
 	_, err := fetch(context.Background(), "https://github.com/owner/repo", "", roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if strings.Contains(r.URL.Path, "/git/blobs/") {
-			res := response(200, strings.Repeat("x", pluginpackage.MaxManifestSize*2+4097))
+			res := response(200, strings.Repeat("x", manifestLimit()*2+4097))
 			res.ContentLength = -1
 			return res, nil
 		}
@@ -427,4 +429,9 @@ func TestProductionTransportBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func manifestLimit() int {
+	limit, _ := pluginpackage.FileLimit("manifest.json")
+	return limit
 }

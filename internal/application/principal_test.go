@@ -3,8 +3,6 @@ package application
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/OboardProject/oboard/internal/model"
 )
 
 func TestAllowsInt64EmptyFilterRemainsUnrestricted(t *testing.T) {
@@ -35,19 +33,6 @@ func TestAllowsInt64PartialFilterDeniesUnmentionedTypes(t *testing.T) {
 	}
 	if principal.AllowsInt64("group_ids", 1) {
 		t.Fatal("unmentioned group_ids must be denied")
-	}
-}
-
-func TestPluginPrincipalEmptyFilterDeniesAllServers(t *testing.T) {
-	for _, raw := range []json.RawMessage{nil, json.RawMessage(`{}`), json.RawMessage(`null`)} {
-		principal := Principal{Type: model.APIPrincipalPlugin, ResourceFilter: raw}
-		if principal.AllowsInt64("server_ids", 1) || principal.AllowsCreate("server") || principal.AllowsGlobal() || principal.AllowsDestructiveOperations() {
-			t.Fatalf("plugin principal with empty filter %s must deny by default", raw)
-		}
-	}
-	human := Principal{ResourceFilter: nil}
-	if !human.AllowsInt64("server_ids", 1) {
-		t.Fatal("non-plugin empty filter must stay unrestricted")
 	}
 }
 

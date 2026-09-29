@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/plugin"
 )
 
 func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
@@ -539,23 +537,22 @@ func TestControllerInstallPluginRuntimeIsOptional(t *testing.T) {
 
 func TestPluginRuntimeInstallCommandUsesUpdateChannel(t *testing.T) {
 	t.Setenv("OBOARD_UPDATE_CHANNEL", "dev")
-	command := (&Server{}).pluginRuntimeInstallCommand()
+	command := pluginRuntimeInstallCommand()
 	if !strings.Contains(command, "OBOARD_ACTION=enable-plugins") || !strings.Contains(command, "VERSION=dev") {
 		t.Fatalf("unexpected install command: %s", command)
 	}
 }
 
-func TestEnsurePluginRuntimeForEnableRejectsMissingRuntime(t *testing.T) {
-	s := &Server{}
-	if s.pluginRuntimeInstalled() {
-		t.Skip("host already has a plugin runtime unit or connected worker")
+func TestPluginRuntimeStatusWithoutWorkerIsNotInstalled(t *testing.T) {
+	host := &pluginHost{server: &Server{}}
+	status := host.RuntimeStatus()
+	for _, path := range []string{"/etc/systemd/system/oboard-plugin-worker.service", "/etc/init.d/oboard-plugin-worker"} {
+		if _, err := os.Stat(path); err == nil {
+			t.Skip("host already has a plugin runtime unit")
+		}
 	}
-	if err := s.ensurePluginRuntimeForEnable(false); err != nil {
-		t.Fatal(err)
-	}
-	err := s.ensurePluginRuntimeForEnable(true)
-	if err == nil || plugin.CodeOf(err) != model.PluginErrorRuntimeUnavailable {
-		t.Fatalf("got %v", err)
+	if status.Installed || status.WorkerConnected || status.IsolationAvailable || status.InstallCommand == "" {
+		t.Fatalf("unexpected runtime status without a worker: %+v", status)
 	}
 }
 

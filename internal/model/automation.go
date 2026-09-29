@@ -11,7 +11,6 @@ const (
 	APIPrincipalServiceAccount APIPrincipalType = "service_account"
 	APIPrincipalOAuth          APIPrincipalType = "oauth"
 	APIPrincipalInternalAI     APIPrincipalType = "internal_ai"
-	APIPrincipalPlugin         APIPrincipalType = "plugin"
 )
 
 type APIPrincipal struct {

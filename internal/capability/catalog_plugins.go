@@ -4,92 +4,122 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/OboardProject/oboard/internal/mcpauth"
 )
 
-func pluginDescriptors(positiveID, stringValue, boolValue map[string]any, nullableString, nullableInteger func() map[string]any) []Descriptor {
-	pluginID := map[string]any{"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[0-9]+$"}
-	plugin := closedObject(map[string]any{
-		"id": positiveID, "name": stringValue, "description": stringValue,
-		"owner_user_id": positiveID, "status": stringValue,
-		"created_at": stringValue, "updated_at": stringValue,
-	})
-	revision := closedObject(map[string]any{
-		"id": positiveID, "plugin_id": positiveID, "revision_number": positiveID,
-		"status": stringValue, "runtime": stringValue, "sdk_version": stringValue,
-		"source_digest": stringValue, "created_at": stringValue,
-	})
-	trigger := closedObject(map[string]any{
-		"id": positiveID, "plugin_id": positiveID, "revision_id": positiveID,
-		"name": stringValue, "enabled": boolValue, "kind": stringValue,
-		"binding_revision": positiveID,
-	})
-	run := closedObject(map[string]any{
-		"id": positiveID, "uuid": stringValue, "plugin_id": positiveID,
-		"revision_id": positiveID, "status": stringValue, "mode": stringValue,
-		"error_code": stringValue, "skip_reason": stringValue,
-	})
-	webhookID := map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}
-	webhook := closedObject(map[string]any{
-		"id": webhookID, "plugin_id": positiveID, "binding_id": positiveID,
-		"binding_revision": positiveID, "revision_id": positiveID, "grant_id": positiveID,
-		"enabled": boolValue, "generation": positiveID, "created_by_user_id": positiveID,
-		"created_at": stringValue, "updated_at": stringValue,
-	})
-	integerValue := map[string]any{"type": "integer"}
-	runtimeStatus := closedObject(map[string]any{
-		"enabled": boolValue, "host_actions_enabled": boolValue, "scheduler_paused": boolValue,
-		"recovery_generation": integerValue, "runtime_installed": boolValue, "install_command": stringValue,
-		"worker_connected": boolValue, "isolation_available": boolValue, "isolation_mode": stringValue,
-		"isolation_reason": stringValue, "active_runs": integerValue, "queued_runs": integerValue,
-		"max_concurrency": integerValue,
-	}, "enabled", "runtime_installed", "worker_connected", "isolation_available")
-	pluginRef := func(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
-		object, err := canonicalMap(input)
+// pluginDescriptors is the single management contract for plugins across
+// Web, REST and MCP. Security operations (install, update, enable, grant,
+// secrets, runtime policy) are AdminOnly and not MCP tools: a plugin can
+// never authorize itself and machine clients cannot install code.
+func pluginDescriptors() []Descriptor {
+	text := map[string]any{"type": "string"}
+	boolean := map[string]any{"type": "boolean"}
+	integer := map[string]any{"type": "integer"}
+	id := map[string]any{"type": "string", "pattern": "^[1-9][0-9]{0,18}$"}
+	jsonValue := map[string]any{"type": []string{"string", "number", "integer", "boolean", "array", "object", "null"}}
+	freeObject := map[string]any{"type": "object", "additionalProperties": jsonValue}
+	freeArray := map[string]any{"type": "array", "items": jsonValue}
+	confirmed := map[string]any{"type": "boolean", "const": true}
+	digest := map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"}
+	idempotency := map[string]any{"type": "string", "minLength": 1, "maxLength": 128}
+	customVar := closedObject(map[string]any{"name": text, "type": text, "value": jsonValue}, "name", "type")
+	scheduleInput := map[string]any{
+		"kind": map[string]any{"type": "string", "enum": []string{"interval", "cron", "event"}}, "interval": text, "cron": text,
+		"timezone": text, "event": map[string]any{"type": "string", "enum": []string{"server.online", "server.offline"}}, "enabled": boolean,
+	}
+	pluginRef := refResolver("plugin_id", "plugin")
+	instanceRef := refResolver("instance_id", "plugin_instance")
+	runRef := refResolver("run_id", "plugin_run")
+	scheduleRef := refResolver("schedule_id", "plugin_schedule")
+	source := map[string]any{"type": "object", "additionalProperties": jsonValue, "description": "{kind:\"upload\",package_base64} 或 {kind:\"github\",repository_url,ref|commit}"}
+	read := func(name, description, permission string, input map[string]any, required []string, output map[string]any, refs func(context.Context, any) ([]mcpauth.ResourceRef, error)) Descriptor {
+		return Descriptor{Name: name, Description: description, InputSchema: schemaObject(input, required...), OutputSchema: rawSchema(output), RequiredScopes: []string{"plugins:read"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: permission, ResolveResourceRefs: refs}
+	}
+	write := func(name, description, permission, scope string, risk int, input map[string]any, required []string, output map[string]any, refs func(context.Context, any) ([]mcpauth.ResourceRef, error)) Descriptor {
+		return Descriptor{Name: name, Description: description, InputSchema: schemaObject(input, required...), OutputSchema: rawSchema(output), RequiredScopes: []string{scope}, ResourceTypes: []string{"plugin"}, RiskClass: risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: permission, ResolveResourceRefs: refs}
+	}
+	admin := func(name, description, permission, scope string, input map[string]any, required []string, output map[string]any) Descriptor {
+		return Descriptor{Name: name, Description: description + "。仅交互式管理员可在面板执行，MCP 不可调用", InputSchema: schemaObject(input, required...), OutputSchema: rawSchema(output), RequiredScopes: []string{scope}, ResourceTypes: []string{"plugin"}, RiskClass: 4, ApprovalPolicy: "required", DataClassification: DataSensitive, MCPEnabled: false, MinimumAccess: mcpauth.AccessOperate, RBACPermission: permission, AdminOnly: true, ResolveResourceRefs: noRefs}
+	}
+	descriptors := []Descriptor{
+		read("plugins.list", "列出已安装插件及各实例状态", "plugins.read", nil, nil, closedObject(map[string]any{"plugins": arrayOf(freeObject)}, "plugins"), noRefs),
+		read("plugins.get", "读取插件详情：当前版本清单、权限、版本历史与各实例配置状态；不返回密钥", "plugins.read", map[string]any{"plugin_id": id}, []string{"plugin_id"}, freeObject, pluginRef),
+		read("plugins.catalog", "读取插件能力目录、Environment 类型与永久禁止的能力类别", "plugins.read", nil, nil, freeObject, noRefs),
+		read("plugins.runtime.status", "读取插件运行环境：安装、Worker、隔离、队列与全局限额；未安装时返回主机安装命令", "plugins.read", nil, nil, freeObject, noRefs),
+		read("plugins.servers", "列出可在插件 server 环境变量中选择的服务器（稳定 ID，仅作选择器，不是授权）", "plugins.read", nil, nil, closedObject(map[string]any{"servers": arrayOf(freeObject)}, "servers"), noRefs),
+		read("plugin_instances.get", "读取一个插件实例的环境配置、密钥是否已配置、授权范围、触发器与状态", "plugins.read", map[string]any{"instance_id": id}, []string{"instance_id"}, freeObject, instanceRef),
+		read("plugin_instances.state", "读取插件实例的私有状态键值与配额占用", "plugins.read", map[string]any{"instance_id": id}, []string{"instance_id"}, closedObject(map[string]any{"entries": freeArray, "usage": freeObject}, "entries", "usage"), instanceRef),
+		read("plugin_instances.audit", "读取插件实例的敏感能力调用审计（不含请求/响应内容与密钥）", "plugins.read", map[string]any{"instance_id": id, "before_id": id, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}}, []string{"instance_id"}, closedObject(map[string]any{"events": freeArray}, "events"), instanceRef),
+		read("plugin_runs.list", "按插件或实例列出执行记录", "plugins.read", map[string]any{"plugin_id": id, "instance_id": id, "before_id": id, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}}, nil, closedObject(map[string]any{"runs": freeArray}, "runs"), noRefs),
+		read("plugin_runs.get", "读取一次执行的状态、触发来源、错误码与结果", "plugins.read", map[string]any{"run_id": id}, []string{"run_id"}, closedObject(map[string]any{"run": freeObject}, "run"), runRef),
+		read("plugin_runs.logs", "读取一次执行的日志（已按密钥脱敏）", "plugins.read", map[string]any{"run_id": id, "after_seq": integer}, []string{"run_id"}, closedObject(map[string]any{"logs": freeArray}, "logs"), runRef),
+		write("plugin_instances.create", "为已安装插件新增一个停用、未授权的实例", "plugins.configure", "plugins:configure", 2, map[string]any{"plugin_id": id, "name": text}, []string{"plugin_id", "name"}, freeObject, pluginRef),
+		write("plugin_instances.update", "重命名实例或解除自动暂停（启停实例属于管理员安全操作）", "plugins.configure", "plugins:configure", 2, map[string]any{"instance_id": id, "name": text, "resume": boolean}, []string{"instance_id"}, freeObject, instanceRef),
+		write("plugin_instances.environment.update", "按清单 Schema 校验并保存实例环境变量与自定义变量；环境变量只是配置，不扩大任何权限。密钥不能经此写入", "plugins.configure", "plugins:configure", 2, map[string]any{"instance_id": id, "expected_revision": map[string]any{"type": "integer", "minimum": 1}, "values": freeObject, "custom": arrayOf(customVar)}, []string{"instance_id", "expected_revision"}, freeObject, instanceRef),
+		write("plugin_instances.run", "手动执行一次实例；需已启用、已授权且配置完整。每次 SDK 调用仍复核调用者权限", "plugins.execute", "plugins:execute", 3, map[string]any{"instance_id": id, "idempotency_key": idempotency}, []string{"instance_id", "idempotency_key"}, closedObject(map[string]any{"run": freeObject}, "run"), instanceRef),
+		write("plugin_runs.cancel", "取消排队或执行中的插件运行，撤销租约并终止 Runner", "plugins.execute", "plugins:execute", 2, map[string]any{"run_id": id}, []string{"run_id"}, closedObject(map[string]any{"run": freeObject}, "run"), runRef),
+		write("plugin_schedules.create", "为实例新增 interval、cron 或 event 触发器；同一实例并发为 1，重叠时合并跳过", "plugins.configure", "plugins:configure", 3, mergeProperties(map[string]any{"instance_id": id}, scheduleInput), []string{"instance_id", "kind"}, freeObject, instanceRef),
+		write("plugin_schedules.update", "修改或启停触发器", "plugins.configure", "plugins:configure", 3, mergeProperties(map[string]any{"schedule_id": id}, scheduleInput), []string{"schedule_id", "kind"}, freeObject, scheduleRef),
+		write("plugin_schedules.delete", "删除触发器", "plugins.configure", "plugins:configure", 2, map[string]any{"schedule_id": id}, []string{"schedule_id"}, closedObject(map[string]any{"deleted": boolean}, "deleted"), scheduleRef),
+		write("plugin_instances.state.delete", "删除插件实例的一个私有状态键", "plugins.configure", "plugins:configure", 2, map[string]any{"instance_id": id, "key": text}, []string{"instance_id", "key"}, closedObject(map[string]any{"deleted": boolean}, "deleted"), instanceRef),
+		write("plugins.drafts.create", "在编辑器中新建本地插件草稿（不可执行，发布需管理员）", "plugins.develop", "plugins:develop", 2, map[string]any{"manifest": freeObject, "source": text}, []string{"manifest", "source"}, freeObject, noRefs),
+		write("plugins.drafts.save", "保存本地插件的清单与源码草稿；不执行代码，不影响已发布版本", "plugins.develop", "plugins:develop", 2, map[string]any{"plugin_id": id, "manifest": freeObject, "source": text}, []string{"plugin_id", "manifest", "source"}, closedObject(map[string]any{"saved": boolean}, "saved"), pluginRef),
+		{Name: "plugins.drafts.diagnose", Description: "静态检查清单、Environment Schema 与源码语法，并提示调用了未声明能力；从不执行插件代码", InputSchema: schemaObject(map[string]any{"manifest": freeObject, "source": text}, "manifest", "source"), OutputSchema: rawSchema(freeObject), RequiredScopes: []string{"plugins:read"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "plugins.read", ResolveResourceRefs: noRefs},
+		admin("plugins.packages.preview", "校验插件包或 GitHub 来源并预览发布者、签名、权限与更新差异；不执行代码", "plugins.install", "plugins:install", map[string]any{"source": source}, []string{"source"}, freeObject),
+		admin("plugins.packages.install", "按已预览摘要安装或更新插件；新权限不会自动授予，发布者变化会被拒绝", "plugins.install", "plugins:install", map[string]any{"source": source, "expected_sha256": digest, "confirm": confirmed}, []string{"source", "expected_sha256", "confirm"}, freeObject),
+		admin("plugins.versions.activate", "切换到已保存的其他版本，适用同样的权限差异规则", "plugins.install", "plugins:install", map[string]any{"plugin_id": id, "package_id": id, "confirm": confirmed}, []string{"plugin_id", "package_id", "confirm"}, freeObject),
+		admin("plugins.drafts.publish", "把本地草稿发布为新的不可变版本（本地 / 未签名）", "plugins.install", "plugins:install", map[string]any{"plugin_id": id, "confirm": confirmed}, []string{"plugin_id", "confirm"}, freeObject),
+		admin("plugins.set_enabled", "启用或停用整个插件；停用会取消排队并终止运行", "plugins.install", "plugins:install", map[string]any{"plugin_id": id, "enabled": boolean}, []string{"plugin_id", "enabled"}, freeObject),
+		admin("plugins.uninstall", "卸载插件：删除代码、实例配置、授权、密钥、状态与触发器，取消运行；保留执行历史与审计", "plugins.install", "plugins:install", map[string]any{"plugin_id": id, "confirm": confirmed}, []string{"plugin_id", "confirm"}, closedObject(map[string]any{"uninstalled": boolean}, "uninstalled")),
+		admin("plugin_instances.set_enabled", "启用或停用插件实例", "plugins.install", "plugins:install", map[string]any{"instance_id": id, "enabled": boolean}, []string{"instance_id", "enabled"}, freeObject),
+		admin("plugin_instances.delete", "删除插件实例及其配置、授权、密钥、状态与触发器", "plugins.install", "plugins:install", map[string]any{"instance_id": id, "confirm": confirmed}, []string{"instance_id", "confirm"}, closedObject(map[string]any{"deleted": boolean}, "deleted")),
+		admin("plugin_instances.grant.update", "为当前版本授予能力与资源范围（服务器、HTTP 主机、通知渠道）；不能超出清单声明", "plugins.authorize", "plugins:authorize", map[string]any{"instance_id": id, "expected_revision": integer, "grant": freeObject}, []string{"instance_id", "grant"}, freeObject),
+		admin("plugin_instances.grant.revoke", "撤销实例全部授权，运行中的插件下一次调用即被拒绝", "plugins.authorize", "plugins:authorize", map[string]any{"instance_id": id}, []string{"instance_id"}, closedObject(map[string]any{"revoked": boolean}, "revoked")),
+		admin("plugin_instances.secrets.update", "写入或清除实例密钥；只写不读，明文永不返回", "plugins.authorize", "plugins:authorize", map[string]any{"instance_id": id, "name": text, "value": text}, []string{"instance_id", "name", "value"}, closedObject(map[string]any{"configured": boolean}, "configured")),
+		admin("plugins.runtime.settings.update", "启停插件执行、暂停调度或调整全局限额与保留期；未安装运行环境时不能启用", "plugins.settings", "plugins:settings", map[string]any{"enabled": boolean, "scheduler_paused": boolean, "max_concurrency": map[string]any{"type": "integer", "minimum": 1, "maximum": 8}, "max_timeout_seconds": map[string]any{"type": "integer", "minimum": 5, "maximum": 120}, "log_retention_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "run_retention_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}}, nil, freeObject),
+	}
+	// Resource types follow the reference each descriptor resolves, so an
+	// MCP boundary always knows every plugin resource type it may meet.
+	for i := range descriptors {
+		switch name := descriptors[i].Name; {
+		case strings.HasPrefix(name, "plugin_runs."):
+			descriptors[i].ResourceTypes = []string{"plugin_run"}
+		case strings.HasPrefix(name, "plugin_schedules."):
+			descriptors[i].ResourceTypes = []string{"plugin_schedule", "plugin_instance"}
+		case strings.HasPrefix(name, "plugin_instances."):
+			descriptors[i].ResourceTypes = []string{"plugin_instance", "plugin"}
+		}
+	}
+	return descriptors
+}
+
+func mergeProperties(a, b map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range a {
+		out[key] = value
+	}
+	for key, value := range b {
+		out[key] = value
+	}
+	return out
+}
+
+func refResolver(field, resourceType string) func(context.Context, any) ([]mcpauth.ResourceRef, error) {
+	return func(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
+		values, err := canonicalMap(input)
 		if err != nil {
 			return nil, err
 		}
-		id, ok := int64Value(object["plugin_id"])
+		raw, ok := values[field].(string)
 		if !ok {
-			if raw, ok := object["id"].(string); ok {
-				parsed, convErr := strconv.ParseInt(raw, 10, 64)
-				if convErr != nil || parsed <= 0 {
-					return nil, errors.New("plugin_id must be a positive integer string")
-				}
-				id = parsed
-				ok = true
-			} else {
-				id, ok = int64Value(object["id"])
-			}
+			return nil, errors.New(field + " must be a positive integer string")
 		}
-		if !ok || id <= 0 {
-			return nil, errors.New("plugin_id must be a positive integer ID")
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n <= 0 {
+			return nil, errors.New("invalid " + field)
 		}
-		return []mcpauth.ResourceRef{{Type: "plugin", ID: strconv.FormatInt(id, 10)}}, nil
-	}
-	return []Descriptor{
-		{Name: "plugin_webhooks.list", Description: "管理员查看插件 Webhook 端点，不返回密钥。MCP 不可调用", InputSchema: schemaObject(map[string]any{"plugin_id": positiveID}, "plugin_id"), OutputSchema: schemaObject(map[string]any{"webhooks": arrayOf(webhook)}, "webhooks"), RequiredScopes: []string{"plugins:authorize"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, MCPEnabled: false, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.authorize", AdminOnly: true, ResolveResourceRefs: pluginRef},
-		{Name: "plugin_webhooks.create", Description: "管理员创建默认关闭、固定触发器与授权的 Webhook，一次性返回密钥。MCP 不可调用", InputSchema: schemaObject(map[string]any{"binding_id": positiveID, "grant_id": positiveID}, "binding_id", "grant_id"), OutputSchema: schemaObject(map[string]any{"webhook": webhook, "secret": stringValue}, "webhook", "secret"), SensitiveOutput: []string{"secret"}, RequiredScopes: []string{"plugins:authorize"}, ResourceTypes: []string{"plugin"}, RiskClass: 4, ApprovalPolicy: "required", DataClassification: DataSensitive, MCPEnabled: false, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.authorize", AdminOnly: true, ResolveResourceRefs: noRefs},
-		{Name: "plugin_webhooks.update", Description: "管理员启停 Webhook 或轮换密钥，撤销旧执行租约。MCP 不可调用", InputSchema: schemaObject(map[string]any{"id": webhookID, "expected_generation": positiveID, "enabled": boolValue, "rotate_secret": boolValue}, "id", "expected_generation", "enabled"), OutputSchema: schemaObject(map[string]any{"webhook": webhook, "secret": stringValue}, "webhook"), SensitiveOutput: []string{"secret"}, RequiredScopes: []string{"plugins:authorize"}, ResourceTypes: []string{"plugin"}, RiskClass: 4, ApprovalPolicy: "required", DataClassification: DataSensitive, MCPEnabled: false, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.authorize", AdminOnly: true, ResolveResourceRefs: noRefs},
-		{Name: "plugins.list", Description: "列出授权范围内的插件身份与状态", InputSchema: schemaObject(map[string]any{"status": stringValue, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}}), OutputSchema: schemaObject(map[string]any{"plugins": arrayOf(plugin)}, "plugins"), RequiredScopes: []string{"plugins:read"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "plugins.read", ResolveResourceRefs: noRefs},
-		{Name: "plugins.get", Description: "读取插件详情、当前草稿与已发布版本摘要", InputSchema: schemaObject(map[string]any{"id": pluginID}, "id"), OutputSchema: schemaObject(map[string]any{"plugin": plugin, "draft": revision, "published": revision}), RequiredScopes: []string{"plugins:read"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "plugins.read", ResolveResourceRefs: pluginRef},
-		{Name: "plugins.create", Description: "创建插件草稿，不授予执行权限", InputSchema: schemaObject(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "description": map[string]any{"type": "string", "maxLength": 2000}}, "name"), OutputSchema: schemaObject(map[string]any{"plugin": plugin}, "plugin"), RequiredScopes: []string{"plugins:write"}, ResourceTypes: []string{"plugin"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.draft", ResolveResourceRefs: noRefs},
-		{Name: "plugins.update", Description: "更新插件名称、说明或启用状态；归档后不可再启用", InputSchema: schemaObject(map[string]any{"id": pluginID, "name": stringValue, "description": stringValue, "status": map[string]any{"type": "string", "enum": []string{"enabled", "disabled", "archived"}}, "expected_updated_at": stringValue}, "id"), OutputSchema: schemaObject(map[string]any{"plugin": plugin}, "plugin"), RequiredScopes: []string{"plugins:write"}, ResourceTypes: []string{"plugin"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.draft", ResolveResourceRefs: pluginRef},
-		{Name: "plugins.revisions.save", Description: "保存不可发布的草稿源码与运行规范", InputSchema: schemaObject(map[string]any{"plugin_id": pluginID, "source": map[string]any{"type": "string", "minLength": 1, "maxLength": 262144}, "manifest": closedObject(map[string]any{}), "expected_revision_id": nullableInteger()}, "plugin_id", "source", "manifest"), OutputSchema: schemaObject(map[string]any{"revision": revision}, "revision"), RequiredScopes: []string{"plugins:write"}, ResourceTypes: []string{"plugin"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.draft", ResolveResourceRefs: pluginRef},
-		{Name: "plugins.revisions.publish", Description: "发布指定草稿版本。发布不继承旧版本高风险授权", InputSchema: schemaObject(map[string]any{"plugin_id": pluginID, "revision_id": pluginID}, "plugin_id", "revision_id"), OutputSchema: schemaObject(map[string]any{"revision": revision}, "revision"), RequiredScopes: []string{"plugins:publish"}, ResourceTypes: []string{"plugin"}, RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.publish", ResolveResourceRefs: pluginRef},
-		{Name: "plugins.validate", Description: "校验清单、参数 Schema 与兼容性，不编译或执行用户源码", InputSchema: schemaObject(map[string]any{"plugin_id": pluginID, "revision_id": nullableInteger(), "source": stringValue, "manifest": closedObject(map[string]any{}), "params": closedObject(map[string]any{})}), OutputSchema: schemaObject(map[string]any{"valid": boolValue, "errors": arrayOf(stringValue)}, "valid"), RequiredScopes: []string{"plugins:read"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "plugins.read", ResolveResourceRefs: pluginRef},
-		{Name: "plugins.simulate", Description: "在隔离 Runner 中用模拟 SDK 运行，不产生真实动作", InputSchema: schemaObject(map[string]any{"plugin_id": pluginID, "revision_id": nullableInteger(), "params": closedObject(map[string]any{}), "env": closedObject(map[string]any{})}, "plugin_id"), OutputSchema: schemaObject(map[string]any{"run": run}, "run"), RequiredScopes: []string{"plugins:execute"}, ResourceTypes: []string{"plugin"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.execute", ResolveResourceRefs: pluginRef},
-		{Name: "plugins.run", Description: "手动执行已获准版本，权限与调用者取交集", InputSchema: schemaObject(map[string]any{"plugin_id": pluginID, "revision_id": pluginID, "params": closedObject(map[string]any{}), "env": closedObject(map[string]any{}), "idempotency_key": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}, "plugin_id", "revision_id", "idempotency_key"), OutputSchema: schemaObject(map[string]any{"run": run}, "run"), RequiredScopes: []string{"plugins:execute"}, ResourceTypes: []string{"plugin"}, RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.execute", ResolveResourceRefs: pluginRef},
-		{Name: "plugins.runs.get", Description: "读取一次插件执行的状态、输入快照和动作阶段", InputSchema: schemaObject(map[string]any{"id": pluginID}, "id"), OutputSchema: schemaObject(map[string]any{"run": run}, "run"), RequiredScopes: []string{"plugins:read"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "plugins.logs", ResolveResourceRefs: noRefs},
-		{Name: "plugins.runs.cancel", Description: "停止 Runner 并阻止未派发的 SDK 动作", InputSchema: schemaObject(map[string]any{"id": pluginID}, "id"), OutputSchema: schemaObject(map[string]any{"run": run}, "run"), RequiredScopes: []string{"plugins:cancel"}, ResourceTypes: []string{"plugin"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.cancel", ResolveResourceRefs: noRefs},
-		{Name: "plugin_triggers.list", Description: "列出插件触发器及其下次执行与跳过原因", InputSchema: schemaObject(map[string]any{"plugin_id": nullableInteger()}), OutputSchema: schemaObject(map[string]any{"triggers": arrayOf(trigger)}, "triggers"), RequiredScopes: []string{"plugins:read"}, ResourceTypes: []string{"plugin"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "plugins.triggers", ResolveResourceRefs: noRefs},
-		{Name: "plugin_triggers.create", Description: "创建绑定到固定版本的触发器，默认关闭", InputSchema: schemaObject(map[string]any{"plugin_id": pluginID, "revision_id": pluginID, "name": stringValue, "kind": map[string]any{"type": "string", "enum": []string{"once", "interval", "cron", "event"}}, "spec": closedObject(map[string]any{}), "params": closedObject(map[string]any{}), "env": closedObject(map[string]any{})}, "plugin_id", "revision_id", "name", "kind", "spec"), OutputSchema: schemaObject(map[string]any{"trigger": trigger}, "trigger"), RequiredScopes: []string{"plugins:triggers"}, ResourceTypes: []string{"plugin"}, RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.triggers", ResolveResourceRefs: pluginRef},
-		{Name: "plugin_triggers.update", Description: "修改触发器绑定、启停或参数。修改后不对同一故障周期重放高风险动作", InputSchema: schemaObject(map[string]any{"id": pluginID, "enabled": boolValue, "revision_id": nullableInteger(), "spec": closedObject(map[string]any{}), "params": closedObject(map[string]any{}), "env": closedObject(map[string]any{}), "expected_binding_revision": positiveID}, "id"), OutputSchema: schemaObject(map[string]any{"trigger": trigger}, "trigger"), RequiredScopes: []string{"plugins:triggers"}, ResourceTypes: []string{"plugin"}, RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.triggers", ResolveResourceRefs: noRefs},
-		{Name: "plugin_grants.create", Description: "管理员批准插件版本、资源范围与自动运行约束。MCP 不可调用", InputSchema: schemaObject(map[string]any{"plugin_id": pluginID, "revision_id": pluginID, "binding_id": nullableInteger(), "capabilities": arrayOf(stringValue), "resource_scope": closedObject(map[string]any{}), "constraints": closedObject(map[string]any{})}, "plugin_id", "revision_id", "capabilities", "resource_scope"), OutputSchema: schemaObject(map[string]any{"grant_id": positiveID}, "grant_id"), RequiredScopes: []string{"plugins:authorize"}, ResourceTypes: []string{"plugin"}, RiskClass: 4, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataSensitive, MCPEnabled: false, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.authorize", AdminOnly: true, ResolveResourceRefs: pluginRef},
-		{Name: "plugin_grants.revoke", Description: "撤销插件授权，立即阻止后续 SDK 调用和未派发动作", InputSchema: schemaObject(map[string]any{"id": pluginID}, "id"), OutputSchema: schemaObject(map[string]any{"revoked": boolValue}, "revoked"), RequiredScopes: []string{"plugins:authorize"}, ResourceTypes: []string{"plugin"}, RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataSensitive, MCPEnabled: false, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.authorize", AdminOnly: true, ResolveResourceRefs: noRefs},
-		{Name: "plugin_runtime.status", Description: "读取插件运行环境是否已安装、Worker、沙箱诊断和调度暂停状态。未安装时返回主机安装命令 install_command", InputSchema: schemaObject(nil), OutputSchema: schemaObject(map[string]any{"status": runtimeStatus}, "status"), RequiredScopes: []string{"plugins:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "plugins.read", ResolveResourceRefs: noRefs},
-		{Name: "plugin_runtime.settings.update", Description: "管理员启停插件执行或调整系统限额。未安装运行环境时不能启用。MCP 不可调用", InputSchema: schemaObject(map[string]any{"enabled": boolValue, "host_actions_enabled": boolValue, "scheduler_paused": boolValue, "max_concurrency": map[string]any{"type": "integer", "minimum": 1, "maximum": 8}, "max_timeout_seconds": map[string]any{"type": "integer", "minimum": 5, "maximum": 300}}), OutputSchema: schemaObject(map[string]any{"status": runtimeStatus}, "status"), RequiredScopes: []string{"plugins:settings"}, RiskClass: 4, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: false, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.settings", AdminOnly: true, ResolveResourceRefs: noRefs},
-		{Name: "servers.plugin_policy.update", Description: "管理员设置单服务器是否允许插件操作或自动电源动作。MCP 不可调用", InputSchema: schemaObject(map[string]any{"server_id": pluginID, "plugins_enabled": boolValue, "plugins_power_enabled": boolValue}, "server_id"), OutputSchema: schemaObject(map[string]any{"policy": closedObject(map[string]any{})}, "policy"), RequiredScopes: []string{"plugins:authorize"}, ResourceTypes: []string{"server"}, RiskClass: 4, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataSensitive, MCPEnabled: false, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "plugins.host_power", AdminOnly: true, ResolveResourceRefs: noRefs},
+		return []mcpauth.ResourceRef{{Type: resourceType, ID: strconv.FormatInt(n, 10)}}, nil
 	}
 }

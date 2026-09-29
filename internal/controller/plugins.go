@@ -2,57 +2,160 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/plugin"
+	"github.com/OboardProject/oboard/internal/plugingithub"
+	"github.com/OboardProject/oboard/internal/pluginpackage"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
+const pluginPackageBodyLimit = 4 << 20
+
 func (s *Server) registerPluginRoutes(mux *http.ServeMux) {
-	s.registerPluginPackageRoutes(mux)
-	mux.HandleFunc("/api/v1/plugins", s.apiAuth(s.apiV1Plugins, model.RoleOperator))
-	mux.HandleFunc("/api/v1/plugins/import", s.apiAuth(s.apiV1PluginImport, model.RoleOperator))
-	mux.HandleFunc("/api/v1/plugins/", s.apiAuth(s.apiV1PluginItem, model.RoleOperator))
-	mux.HandleFunc("/api/v1/plugin-triggers", s.apiAuth(s.apiV1PluginTriggers, model.RoleOperator))
-	mux.HandleFunc("/api/v1/plugin-triggers/", s.apiAuth(s.apiV1PluginTriggerItem, model.RoleOperator))
-	mux.HandleFunc("/api/v1/plugin-grants", s.apiAuth(s.apiV1PluginGrants, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/plugin-grants/", s.apiAuth(s.apiV1PluginGrantItem, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/plugin-runs/", s.apiAuth(s.apiV1PluginRunItem, model.RoleOperator))
-	mux.HandleFunc("/api/v1/plugin-runtime/status", s.apiAuth(s.apiV1PluginRuntime, model.RoleOperator))
-	mux.HandleFunc("/api/v1/server-plugin-policies", s.apiAuth(s.apiV1ServerPluginPolicies, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/plugins", s.apiAuth(s.apiV1Plugins, model.RoleViewer))
+	mux.HandleFunc("/api/v1/plugins/", s.apiAuth(s.apiV1PluginItem, model.RoleViewer))
+	mux.HandleFunc("/api/v1/plugin-instances/", s.apiAuth(s.apiV1PluginInstance, model.RoleViewer))
+	mux.HandleFunc("/api/v1/plugin-schedules/", s.apiAuth(s.apiV1PluginSchedule, model.RoleOperator))
+	mux.HandleFunc("/api/v1/plugin-runs", s.apiAuth(s.apiV1PluginRuns, model.RoleViewer))
+	mux.HandleFunc("/api/v1/plugin-runs/", s.apiAuth(s.apiV1PluginRun, model.RoleViewer))
+	mux.HandleFunc("/api/v1/plugin-runtime", s.apiAuth(s.apiV1PluginRuntime, model.RoleViewer))
+}
+
+func pluginOK(w http.ResponseWriter, r *http.Request, status int, data any) {
+	v2Write(w, r, status, data, nil)
+}
+
+// pluginFail writes the structured plugin error, including per-field issues
+// for environment and manifest validation.
+func pluginFail(w http.ResponseWriter, r *http.Request, err error) {
+	coded := plugin.AsError(err)
+	requestID := requestID(r)
+	body := map[string]any{"code": coded.Code, "message": coded.Message, "request_id": requestID}
+	if coded.Field != "" || len(coded.Issues) > 0 {
+		body["details"] = map[string]any{"field": coded.Field, "issues": coded.Issues}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Request-ID", requestID)
+	w.WriteHeader(plugin.HTTPStatus(err))
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": body})
+}
+
+func pluginDecode(w http.ResponseWriter, r *http.Request, target any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "请求 JSON 无效"))
+		return false
+	}
+	return true
+}
+
+func pluginIDPart(raw string) (int64, error) {
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, plugin.Fail(plugin.CodeInvalidArgument, "invalid id")
+	}
+	return id, nil
+}
+
+// PackageSourceInput selects where a package comes from.
+type PackageSourceInput struct {
+	Kind          string `json:"kind"`
+	PackageBase64 string `json:"package_base64,omitempty"`
+	RepositoryURL string `json:"repository_url,omitempty"`
+	Ref           string `json:"ref,omitempty"`
+	Commit        string `json:"commit,omitempty"`
+}
+
+// resolvePackageCandidate validates a package from an upload or a pinned
+// GitHub commit. Nothing is executed; the source is only compiled.
+func (s *Server) resolvePackageCandidate(ctx context.Context, source PackageSourceInput, install bool) (plugin.PackageCandidate, error) {
+	var pkg *pluginpackage.Package
+	var err error
+	candidate := plugin.PackageCandidate{}
+	switch source.Kind {
+	case "upload":
+		data, decodeErr := base64.StdEncoding.DecodeString(source.PackageBase64)
+		if decodeErr != nil {
+			return candidate, plugin.Fail(plugin.CodeInvalidPackage, "package_base64 is not valid base64")
+		}
+		pkg, err = pluginpackage.Parse(data)
+		candidate.SourceKind = model.PluginSourceUpload
+	case "github":
+		ref := source.Ref
+		if install {
+			if len(source.Commit) != 40 {
+				return candidate, plugin.Fail(plugin.CodeInvalidArgument, "install requires the reviewed 40-character commit")
+			}
+			ref = source.Commit
+		}
+		fetched, fetchErr := plugingithub.Fetch(ctx, source.RepositoryURL, ref)
+		if fetchErr != nil {
+			return candidate, plugin.Fail(plugin.CodeInvalidPackage, "GitHub 仓库读取失败："+fetchErr.Error())
+		}
+		pkg, err = pluginpackage.Validate(fetched.Files)
+		candidate.SourceKind = model.PluginSourceGitHub
+		candidate.SourceRepository, candidate.SourceCommit = fetched.Repository, fetched.Commit
+		if install && fetched.Commit != source.Commit {
+			return candidate, plugin.Fail(plugin.CodeConflict, "仓库提交与预览不一致，请重新预览")
+		}
+	default:
+		return candidate, plugin.Fail(plugin.CodeInvalidArgument, "source.kind must be upload or github")
+	}
+	if err != nil {
+		return candidate, err
+	}
+	candidate.Manifest, candidate.Source, candidate.Icon = pkg.Manifest, pkg.Source, pkg.Icon
+	candidate.Readme, candidate.License, candidate.SHA256 = pkg.Readme, pkg.License, pkg.SHA256
+	candidate.PublisherIdentity, candidate.PublisherName, candidate.SignatureState = pkg.Publisher.Identity, pkg.Publisher.Name, pkg.SignatureState
+	if pkg.SignatureState != model.PluginSignatureVerified {
+		candidate.PublisherIdentity, candidate.SignatureState = model.PluginPublisherLocal, model.PluginSignatureUnsigned
+	}
+	return candidate, nil
+}
+
+// draftCandidate turns an editor draft into a local package candidate.
+func draftCandidate(input plugin.DraftInput) (plugin.PackageCandidate, error) {
+	pkg, err := pluginpackage.Validate(map[string][]byte{plugin.ManifestFile: input.Manifest, plugin.EntryFile: []byte(input.Source)})
+	if err != nil {
+		return plugin.PackageCandidate{}, err
+	}
+	return plugin.PackageCandidate{Manifest: pkg.Manifest, Source: pkg.Source, SHA256: pkg.SHA256, PublisherIdentity: model.PluginPublisherLocal, SignatureState: model.PluginSignatureUnsigned, SourceKind: model.PluginSourceEditor}, nil
+}
+
+// pluginCatalogView is the capability and environment catalog for the Web
+// permission review and editor.
+func pluginCatalogView() map[string]any {
+	return map[string]any{
+		"capabilities":      plugin.CapabilityCatalog(),
+		"forbidden":         plugin.ForbiddenCapabilityGroups(),
+		"environment_types": []string{plugin.EnvString, plugin.EnvText, plugin.EnvInteger, plugin.EnvNumber, plugin.EnvBoolean, plugin.EnvSelect, plugin.EnvMultiSelect, plugin.EnvServer, plugin.EnvServers, plugin.EnvSecret, plugin.EnvURL, plugin.EnvDuration, plugin.EnvJSON},
+		"custom_types":      []string{plugin.EnvString, plugin.EnvText, plugin.EnvInteger, plugin.EnvNumber, plugin.EnvBoolean, plugin.EnvServer, plugin.EnvServers, plugin.EnvSecret, plugin.EnvURL, plugin.EnvDuration, plugin.EnvJSON},
+		"events":            []string{plugin.EventServerOnline, plugin.EventServerOffline},
+		"runtime":           plugin.RuntimeJS,
+	}
 }
 
 func (s *Server) apiV1Plugins(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	switch r.Method {
 	case http.MethodGet:
-		items, err := s.plugins.ListPlugins(r.Context(), principal, strings.TrimSpace(r.URL.Query().Get("status")), intQuery(r, "limit", 100))
+		items, err := s.plugins.ListInstallations(r.Context(), principal)
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
 		pluginOK(w, r, http.StatusOK, map[string]any{"plugins": items})
-	case http.MethodPost:
-		var input struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		}
-		if !decodeV2(w, r, &input) {
-			return
-		}
-		item, err := s.plugins.CreatePlugin(r.Context(), principal, input.Name, input.Description)
-		if err != nil {
-			pluginErr(w, r, err)
-			return
-		}
-		pluginOK(w, r, http.StatusCreated, map[string]any{"plugin": item})
 	default:
 		method(w)
 	}
@@ -65,710 +168,753 @@ func (s *Server) apiV1PluginItem(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	id, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || id <= 0 {
-		pluginErr(w, r, plugin.Coded(model.PluginErrorInvalidInput, "invalid plugin id"))
+	ctx := r.Context()
+	switch parts[0] {
+	case "catalog":
+		if !s.plugins.Can(principal, plugin.PermRead) {
+			pluginFail(w, r, plugin.ErrPermissionDenied)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, pluginCatalogView())
+		return
+	case "servers":
+		servers, err := s.plugins.ServerOptions(ctx, principal)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, map[string]any{"servers": servers})
+		return
+	case "drafts":
+		s.apiV1PluginDrafts(w, r, principal, parts[1:])
+		return
+	case "packages":
+		s.apiV1PluginPackages(w, r, principal, parts[1:])
+		return
+	}
+	id, err := pluginIDPart(parts[0])
+	if err != nil {
+		pluginFail(w, r, err)
 		return
 	}
 	if len(parts) == 1 {
 		switch r.Method {
 		case http.MethodGet:
-			item, err := s.plugins.GetPlugin(r.Context(), principal, id)
+			detail, err := s.plugins.GetInstallation(ctx, principal, id)
 			if err != nil {
-				pluginErr(w, r, err)
+				pluginFail(w, r, err)
 				return
 			}
-			draft, _ := s.store.GetPluginDraft(r.Context(), id)
-			revs, _ := s.store.ListPluginRevisions(r.Context(), id)
-			var published *model.PluginRevision
-			for i := range revs {
-				if revs[i].Status == model.PluginRevisionPublished {
-					published = &revs[i]
-					break
-				}
-			}
-			pluginOK(w, r, http.StatusOK, map[string]any{"plugin": item, "draft": draft, "published": published, "revisions": revs})
+			pluginOK(w, r, http.StatusOK, detail)
 		case http.MethodPatch:
 			var input struct {
-				Name              string `json:"name"`
-				Description       string `json:"description"`
-				Status            string `json:"status"`
-				ExpectedUpdatedAt string `json:"expected_updated_at"`
+				Enabled bool `json:"enabled"`
 			}
-			if !decodeV2(w, r, &input) {
+			if !pluginDecode(w, r, &input, 1<<16) {
 				return
 			}
-			item, err := s.plugins.UpdatePlugin(r.Context(), principal, id, input.Name, input.Description, input.Status, input.ExpectedUpdatedAt)
+			if err := s.plugins.SetInstallationEnabled(ctx, principal, id, input.Enabled); err != nil {
+				pluginFail(w, r, err)
+				return
+			}
+			s.publishRealtime("plugins")
+			detail, err := s.plugins.GetInstallation(ctx, principal, id)
 			if err != nil {
-				pluginErr(w, r, err)
+				pluginFail(w, r, err)
 				return
 			}
-			pluginOK(w, r, http.StatusOK, map[string]any{"plugin": item})
+			pluginOK(w, r, http.StatusOK, detail)
 		default:
 			method(w)
 		}
 		return
 	}
-	switch parts[1] {
-	case "revisions":
-		if r.Method == http.MethodGet {
-			items, err := s.plugins.ListRevisions(r.Context(), principal, id)
-			if err != nil {
-				pluginErr(w, r, err)
-				return
-			}
-			pluginOK(w, r, http.StatusOK, map[string]any{"revisions": items})
-			return
-		}
-		if r.Method == http.MethodPost {
-			var input struct {
-				Source   string          `json:"source"`
-				Manifest json.RawMessage `json:"manifest"`
-			}
-			if !decodeV2(w, r, &input) {
-				return
-			}
-			rev, err := s.plugins.SaveDraft(r.Context(), principal, id, input.Source, input.Manifest)
-			if err != nil {
-				pluginErr(w, r, err)
-				return
-			}
-			pluginOK(w, r, http.StatusOK, map[string]any{"revision": rev})
-			return
-		}
-	case "validate":
+	switch {
+	case parts[1] == "uninstall" && r.Method == http.MethodPost:
 		var input struct {
-			Source   string          `json:"source"`
-			Manifest json.RawMessage `json:"manifest"`
-			Params   json.RawMessage `json:"params"`
+			Confirm bool `json:"confirm"`
 		}
-		if r.Method != http.MethodPost || !decodeV2(w, r, &input) {
-			if r.Method != http.MethodPost {
-				method(w)
-			}
+		if !pluginDecode(w, r, &input, 1<<16) {
 			return
 		}
-		result, err := s.plugins.ValidateRevision(r.Context(), principal, id, input.Source, input.Manifest, input.Params)
+		if !input.Confirm {
+			pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "confirm is required"))
+			return
+		}
+		if err := s.plugins.Uninstall(ctx, principal, id); err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		s.publishRealtime("plugins")
+		pluginOK(w, r, http.StatusOK, map[string]any{"uninstalled": true})
+	case parts[1] == "draft" && len(parts) == 2 && r.Method == http.MethodPut:
+		var input struct {
+			Manifest string `json:"manifest"`
+			Source   string `json:"source"`
+		}
+		if !pluginDecode(w, r, &input, 2<<20) {
+			return
+		}
+		if err := s.plugins.SaveDraft(ctx, principal, id, plugin.DraftInput{Manifest: json.RawMessage(input.Manifest), Source: input.Source}); err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, map[string]any{"saved": true})
+	case parts[1] == "draft" && len(parts) == 3 && parts[2] == "publish" && r.Method == http.MethodPost:
+		var input struct {
+			Confirm bool `json:"confirm"`
+		}
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		if !input.Confirm {
+			pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "confirm is required"))
+			return
+		}
+		result, err := s.plugins.Publish(ctx, principal, id, draftCandidate)
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
+		s.publishRealtime("plugins")
 		pluginOK(w, r, http.StatusOK, result)
-		return
-	case "simulate":
+	case parts[1] == "versions" && len(parts) == 4 && parts[3] == "activate" && r.Method == http.MethodPost:
+		packageID, err := pluginIDPart(parts[2])
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
 		var input struct {
-			RevisionID     int64           `json:"revision_id"`
-			Params         json.RawMessage `json:"params"`
-			Env            json.RawMessage `json:"env"`
-			IdempotencyKey string          `json:"idempotency_key"`
+			Confirm bool `json:"confirm"`
 		}
-		if r.Method != http.MethodPost || !decodeV2(w, r, &input) {
-			if r.Method != http.MethodPost {
-				method(w)
-			}
+		if !pluginDecode(w, r, &input, 1<<16) {
 			return
 		}
-		run, err := s.plugins.EnqueueSimulate(r.Context(), principal, id, input.RevisionID, input.Params, input.Env, input.IdempotencyKey)
+		if !input.Confirm {
+			pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "confirm is required"))
+			return
+		}
+		result, err := s.plugins.ActivateVersion(ctx, principal, id, packageID)
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
-		pluginOK(w, r, http.StatusAccepted, map[string]any{"run": run})
-		return
-	case "runs":
-		if r.Method == http.MethodGet {
-			items, err := s.plugins.ListRuns(r.Context(), principal, id, intQuery(r, "limit", 50))
-			if err != nil {
-				pluginErr(w, r, err)
-				return
-			}
-			pluginOK(w, r, http.StatusOK, map[string]any{"runs": items})
-			return
-		}
-		if r.Method == http.MethodPost {
-			var input struct {
-				RevisionID     int64           `json:"revision_id"`
-				Params         json.RawMessage `json:"params"`
-				Env            json.RawMessage `json:"env"`
-				IdempotencyKey string          `json:"idempotency_key"`
-			}
-			if !decodeV2(w, r, &input) {
-				return
-			}
-			run, err := s.plugins.EnqueueManualRun(r.Context(), principal, id, input.RevisionID, input.Params, input.Env, input.IdempotencyKey, model.PluginRunModeLive)
-			if err != nil {
-				pluginErr(w, r, err)
-				return
-			}
-			pluginOK(w, r, http.StatusAccepted, map[string]any{"run": run})
-			return
-		}
-	case "export":
-		bundle, err := s.plugins.Export(r.Context(), principal, id)
-		if err != nil {
-			pluginErr(w, r, err)
-			return
-		}
-		pluginOK(w, r, http.StatusOK, bundle)
-		return
-	case "publish":
+		s.publishRealtime("plugins")
+		pluginOK(w, r, http.StatusOK, result)
+	case parts[1] == "instances" && len(parts) == 2 && r.Method == http.MethodPost:
 		var input struct {
-			RevisionID int64 `json:"revision_id"`
+			Name string `json:"name"`
 		}
-		if r.Method != http.MethodPost || !decodeV2(w, r, &input) {
-			if r.Method != http.MethodPost {
-				method(w)
-			}
+		if !pluginDecode(w, r, &input, 1<<16) {
 			return
 		}
-		rev, err := s.plugins.Publish(r.Context(), principal, id, input.RevisionID)
+		instance, err := s.plugins.CreateInstance(ctx, principal, id, input.Name)
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
-		pluginOK(w, r, http.StatusOK, map[string]any{"revision": rev})
-		return
+		s.publishRealtime("plugins")
+		pluginOK(w, r, http.StatusCreated, instance)
+	default:
+		http.NotFound(w, r)
 	}
-	http.NotFound(w, r)
 }
 
-func (s *Server) apiV1PluginTriggers(w http.ResponseWriter, r *http.Request) {
-	principal, _ := apiPrincipal(r)
-	if r.Method == http.MethodGet {
-		pluginID, _ := strconv.ParseInt(r.URL.Query().Get("plugin_id"), 10, 64)
-		items, err := s.plugins.ListTriggers(r.Context(), principal, pluginID)
-		if err != nil {
-			pluginErr(w, r, err)
-			return
-		}
-		pluginOK(w, r, http.StatusOK, map[string]any{"triggers": items})
-		return
-	}
+func (s *Server) apiV1PluginDrafts(w http.ResponseWriter, r *http.Request, principal application.Principal, parts []string) {
 	if r.Method != http.MethodPost {
 		method(w)
 		return
 	}
-	var input model.PluginTriggerBinding
-	if !decodeV2(w, r, &input) {
+	var input struct {
+		Manifest string `json:"manifest"`
+		Source   string `json:"source"`
+	}
+	if !pluginDecode(w, r, &input, 2<<20) {
 		return
 	}
-	item, err := s.plugins.CreateTrigger(r.Context(), principal, input)
-	if err != nil {
-		pluginErr(w, r, err)
-		return
+	draft := plugin.DraftInput{Manifest: json.RawMessage(input.Manifest), Source: input.Source}
+	switch {
+	case len(parts) == 0:
+		installation, err := s.plugins.CreateDraftPlugin(r.Context(), principal, draft)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		s.publishRealtime("plugins")
+		pluginOK(w, r, http.StatusCreated, map[string]any{"plugin_id": installation.ID})
+	case len(parts) == 1 && parts[0] == "diagnose":
+		result, err := s.plugins.Diagnose(r.Context(), principal, draft, pluginpackage.CheckSource)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, result)
+	default:
+		http.NotFound(w, r)
 	}
-	pluginOK(w, r, http.StatusCreated, map[string]any{"trigger": item})
 }
 
-func (s *Server) apiV1PluginTriggerItem(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1PluginPackages(w http.ResponseWriter, r *http.Request, principal application.Principal, parts []string) {
+	if r.Method != http.MethodPost || len(parts) != 1 {
+		method(w)
+		return
+	}
+	switch parts[0] {
+	case "preview":
+		var input struct {
+			Source PackageSourceInput `json:"source"`
+		}
+		if !pluginDecode(w, r, &input, pluginPackageBodyLimit) {
+			return
+		}
+		if !s.plugins.Can(principal, plugin.PermInstall) {
+			pluginFail(w, r, plugin.Fail(plugin.CodePermissionDenied, "仅交互式管理员可安装插件"))
+			return
+		}
+		candidate, err := s.resolvePackageCandidate(r.Context(), input.Source, false)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		preview, err := s.plugins.PreviewPackage(r.Context(), principal, candidate)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, preview)
+	case "install":
+		var input struct {
+			Source         PackageSourceInput `json:"source"`
+			ExpectedSHA256 string             `json:"expected_sha256"`
+			Confirm        bool               `json:"confirm"`
+		}
+		if !pluginDecode(w, r, &input, pluginPackageBodyLimit) {
+			return
+		}
+		if !input.Confirm {
+			pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "confirm is required"))
+			return
+		}
+		if !s.plugins.Can(principal, plugin.PermInstall) {
+			pluginFail(w, r, plugin.Fail(plugin.CodePermissionDenied, "仅交互式管理员可安装插件"))
+			return
+		}
+		candidate, err := s.resolvePackageCandidate(r.Context(), input.Source, true)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		result, err := s.plugins.InstallPackage(r.Context(), principal, candidate, input.ExpectedSHA256)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		s.publishRealtime("plugins")
+		pluginOK(w, r, http.StatusOK, result)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) apiV1PluginInstance(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
-	parts := pathParts(r.URL.Path, "/api/v1/plugin-triggers/")
+	parts := pathParts(r.URL.Path, "/api/v1/plugin-instances/")
 	if len(parts) == 0 {
 		http.NotFound(w, r)
 		return
 	}
-	id, err := strconv.ParseInt(parts[0], 10, 64)
+	id, err := pluginIDPart(parts[0])
 	if err != nil {
-		pluginErr(w, r, plugin.Coded(model.PluginErrorInvalidInput, err.Error()))
+		pluginFail(w, r, err)
 		return
 	}
-	if r.Method == http.MethodGet {
-		item, err := s.plugins.GetTrigger(r.Context(), principal, id)
+	ctx := r.Context()
+	respond := func(value any, err error) {
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
-		state, _ := s.store.GetPluginTriggerState(r.Context(), id)
-		spec, _ := plugin.ParseTriggerSpec(item.SpecJSON)
-		slots, _ := plugin.NextSlots(spec, time.Now().UTC(), 5)
-		pluginOK(w, r, http.StatusOK, map[string]any{"trigger": item, "state": state, "next_slots": slots})
+		if r.Method != http.MethodGet {
+			s.publishRealtime("plugins")
+		}
+		pluginOK(w, r, http.StatusOK, value)
+	}
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodGet:
+			respond(s.plugins.GetInstance(ctx, principal, id))
+		case http.MethodPatch:
+			var input plugin.InstanceUpdate
+			if !pluginDecode(w, r, &input, 1<<16) {
+				return
+			}
+			respond(s.plugins.UpdateInstance(ctx, principal, id, input))
+		case http.MethodDelete:
+			respond(map[string]any{"deleted": true}, s.plugins.DeleteInstance(ctx, principal, id))
+		default:
+			method(w)
+		}
 		return
 	}
-	if r.Method != http.MethodPatch {
-		method(w)
-		return
-	}
-	var input model.PluginTriggerBinding
-	if !decodeV2(w, r, &input) {
-		return
-	}
-	input.ID = id
-	expected := int64Query(r, "expected_binding_revision", 0)
-	if expected == 0 {
-		expected = input.BindingRevision
-	}
-	item, err := s.plugins.UpdateTrigger(r.Context(), principal, input, expected)
-	if err != nil {
-		pluginErr(w, r, err)
-		return
-	}
-	pluginOK(w, r, http.StatusOK, map[string]any{"trigger": item})
-}
-
-func (s *Server) apiV1PluginGrants(w http.ResponseWriter, r *http.Request) {
-	principal, _ := apiPrincipal(r)
-	if r.Method == http.MethodGet {
-		pluginID, _ := strconv.ParseInt(r.URL.Query().Get("plugin_id"), 10, 64)
-		items, err := s.plugins.ListGrants(r.Context(), principal, pluginID)
-		if err != nil {
-			pluginErr(w, r, err)
+	switch {
+	case parts[1] == "environment" && r.Method == http.MethodPut:
+		var input struct {
+			ExpectedRevision int64                      `json:"expected_revision"`
+			Values           map[string]json.RawMessage `json:"values"`
+			Custom           []plugin.CustomVar         `json:"custom"`
+		}
+		if !pluginDecode(w, r, &input, 1<<20) {
 			return
 		}
-		pluginOK(w, r, http.StatusOK, map[string]any{"grants": items})
-		return
+		respond(s.plugins.SaveEnvironment(ctx, principal, id, input.ExpectedRevision, plugin.EnvironmentInput{Values: input.Values, Custom: input.Custom}))
+	case parts[1] == "secrets" && len(parts) == 3 && r.Method == http.MethodPut:
+		var input struct {
+			Value string `json:"value"`
+		}
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		err := s.plugins.SetSecret(ctx, principal, id, parts[2], input.Value)
+		respond(map[string]any{"configured": input.Value != ""}, err)
+	case parts[1] == "grant" && r.Method == http.MethodPut:
+		var input struct {
+			ExpectedRevision int64        `json:"expected_revision"`
+			Grant            plugin.Grant `json:"grant"`
+		}
+		if !pluginDecode(w, r, &input, 1<<18) {
+			return
+		}
+		respond(s.plugins.SetGrant(ctx, principal, id, input.ExpectedRevision, input.Grant))
+	case parts[1] == "grant" && r.Method == http.MethodDelete:
+		respond(map[string]any{"revoked": true}, s.plugins.RevokeGrant(ctx, principal, id))
+	case parts[1] == "runs" && r.Method == http.MethodPost:
+		var input struct {
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		run, err := s.plugins.RunManually(ctx, principal, id, input.IdempotencyKey)
+		respond(map[string]any{"run": run}, err)
+	case parts[1] == "runs" && r.Method == http.MethodGet:
+		runs, err := s.plugins.ListRuns(ctx, principal, store.PluginRunFilter{InstanceID: id, BeforeID: int64(intQuery(r, "before_id", 0)), Limit: intQuery(r, "limit", 50)})
+		respond(map[string]any{"runs": runs}, err)
+	case parts[1] == "schedules" && r.Method == http.MethodPost:
+		var input plugin.ScheduleInput
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		respond(s.plugins.CreateSchedule(ctx, principal, id, input))
+	case parts[1] == "state" && r.Method == http.MethodGet:
+		entries, usage, err := s.plugins.ListState(ctx, principal, id)
+		respond(map[string]any{"entries": entries, "usage": usage}, err)
+	case parts[1] == "state" && r.Method == http.MethodDelete:
+		respond(map[string]any{"deleted": true}, s.plugins.ClearState(ctx, principal, id, r.URL.Query().Get("key")))
+	case parts[1] == "audit" && r.Method == http.MethodGet:
+		events, err := s.plugins.ListAudit(ctx, principal, id, int64(intQuery(r, "before_id", 0)), intQuery(r, "limit", 100))
+		respond(map[string]any{"events": events}, err)
+	default:
+		http.NotFound(w, r)
 	}
-	if r.Method != http.MethodPost {
-		method(w)
-		return
-	}
-	var input model.PluginGrant
-	if !decodeV2(w, r, &input) {
-		return
-	}
-	item, err := s.plugins.CreateGrant(r.Context(), principal, input)
-	if err != nil {
-		pluginErr(w, r, err)
-		return
-	}
-	pluginOK(w, r, http.StatusCreated, map[string]any{"grant": item})
 }
 
-func (s *Server) apiV1PluginGrantItem(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1PluginSchedule(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
-	parts := pathParts(r.URL.Path, "/api/v1/plugin-grants/")
-	if len(parts) < 2 || parts[1] != "revoke" || r.Method != http.MethodPost {
+	parts := pathParts(r.URL.Path, "/api/v1/plugin-schedules/")
+	if len(parts) != 1 {
 		http.NotFound(w, r)
 		return
 	}
-	id, err := strconv.ParseInt(parts[0], 10, 64)
+	id, err := pluginIDPart(parts[0])
 	if err != nil {
-		pluginErr(w, r, plugin.Coded(model.PluginErrorInvalidInput, err.Error()))
+		pluginFail(w, r, err)
 		return
 	}
-	if err := s.plugins.RevokeGrant(r.Context(), principal, id); err != nil {
-		pluginErr(w, r, err)
-		return
+	switch r.Method {
+	case http.MethodPatch:
+		var input plugin.ScheduleInput
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		item, err := s.plugins.UpdateSchedule(r.Context(), principal, id, input)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, item)
+	case http.MethodDelete:
+		if err := s.plugins.DeleteSchedule(r.Context(), principal, id); err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, map[string]any{"deleted": true})
+	default:
+		method(w)
 	}
-	pluginOK(w, r, http.StatusOK, map[string]any{"revoked": true})
 }
 
-func (s *Server) apiV1PluginRunItem(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1PluginRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		method(w)
+		return
+	}
+	principal, _ := apiPrincipal(r)
+	runs, err := s.plugins.ListRuns(r.Context(), principal, store.PluginRunFilter{InstallationID: int64(intQuery(r, "plugin_id", 0)), InstanceID: int64(intQuery(r, "instance_id", 0)), BeforeID: int64(intQuery(r, "before_id", 0)), Limit: intQuery(r, "limit", 50)})
+	if err != nil {
+		pluginFail(w, r, err)
+		return
+	}
+	pluginOK(w, r, http.StatusOK, map[string]any{"runs": runs})
+}
+
+func (s *Server) apiV1PluginRun(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	parts := pathParts(r.URL.Path, "/api/v1/plugin-runs/")
 	if len(parts) == 0 {
 		http.NotFound(w, r)
 		return
 	}
-	id, err := strconv.ParseInt(parts[0], 10, 64)
+	id, err := pluginIDPart(parts[0])
 	if err != nil {
-		pluginErr(w, r, plugin.Coded(model.PluginErrorInvalidInput, err.Error()))
+		pluginFail(w, r, err)
 		return
 	}
-	if len(parts) == 1 && r.Method == http.MethodGet {
+	switch {
+	case len(parts) == 1 && r.Method == http.MethodGet:
 		run, err := s.plugins.GetRun(r.Context(), principal, id)
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
 		pluginOK(w, r, http.StatusOK, map[string]any{"run": run})
-		return
-	}
-	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
+	case len(parts) == 2 && parts[1] == "logs" && r.Method == http.MethodGet:
+		logs, err := s.plugins.ListRunLogs(r.Context(), principal, id, int64(intQuery(r, "after_seq", 0)))
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, map[string]any{"logs": logs})
+	case len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost:
 		run, err := s.plugins.CancelRun(r.Context(), principal, id)
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
+		s.publishRealtime("plugins")
 		pluginOK(w, r, http.StatusOK, map[string]any{"run": run})
-		return
+	default:
+		http.NotFound(w, r)
 	}
-	if len(parts) == 2 && parts[1] == "logs" && r.Method == http.MethodGet {
-		after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-		items, err := s.plugins.ListRunLogs(r.Context(), principal, id, after, intQuery(r, "limit", 200))
-		if err != nil {
-			pluginErr(w, r, err)
-			return
-		}
-		pluginOK(w, r, http.StatusOK, map[string]any{"logs": items})
-		return
-	}
-	if len(parts) == 2 && parts[1] == "actions" && r.Method == http.MethodGet {
-		items, err := s.plugins.ListRunActions(r.Context(), principal, id)
-		if err != nil {
-			pluginErr(w, r, err)
-			return
-		}
-		pluginOK(w, r, http.StatusOK, map[string]any{"actions": items})
-		return
-	}
-	http.NotFound(w, r)
 }
 
 func (s *Server) apiV1PluginRuntime(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		principal, _ := apiPrincipal(r)
-		status, err := s.loadPluginRuntimeStatus(r.Context(), principal)
+	principal, _ := apiPrincipal(r)
+	switch r.Method {
+	case http.MethodGet:
+		status, err := s.plugins.RuntimeStatus(r.Context(), principal)
 		if err != nil {
-			pluginErr(w, r, err)
+			pluginFail(w, r, err)
 			return
 		}
-		pluginOK(w, r, http.StatusOK, map[string]any{"status": status})
-		return
-	}
-	if r.Method != http.MethodPatch {
+		pluginOK(w, r, http.StatusOK, status)
+	case http.MethodPatch:
+		var input plugin.SettingsUpdate
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		status, err := s.plugins.UpdateSettings(r.Context(), principal, input)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		s.plugins.Wake()
+		pluginOK(w, r, http.StatusOK, status)
+	default:
 		method(w)
-		return
 	}
-	var input struct {
-		Enabled            *bool `json:"enabled"`
-		HostActionsEnabled *bool `json:"host_actions_enabled"`
-		SchedulerPaused    *bool `json:"scheduler_paused"`
-		MaxConcurrency     int   `json:"max_concurrency"`
-		MaxTimeoutSeconds  int   `json:"max_timeout_seconds"`
-	}
-	if !decodeV2(w, r, &input) {
-		return
-	}
-	principal, _ := apiPrincipal(r)
-	next := s.plugins.Settings(r.Context())
-	if input.Enabled != nil {
-		next.Enabled = *input.Enabled
-	}
-	if input.HostActionsEnabled != nil {
-		next.HostActionsEnabled = *input.HostActionsEnabled
-	}
-	if input.SchedulerPaused != nil {
-		next.SchedulerPaused = *input.SchedulerPaused
-	}
-	if input.MaxConcurrency > 0 {
-		next.MaxConcurrency = input.MaxConcurrency
-	}
-	if input.MaxTimeoutSeconds > 0 {
-		next.MaxTimeoutSeconds = input.MaxTimeoutSeconds
-	}
-	if err := s.ensurePluginRuntimeForEnable(next.Enabled); err != nil {
-		pluginErr(w, r, err)
-		return
-	}
-	if err := s.plugins.UpdateSettings(r.Context(), principal, next); err != nil {
-		pluginErr(w, r, err)
-		return
-	}
-	status, _ := s.loadPluginRuntimeStatus(r.Context(), principal)
-	pluginOK(w, r, http.StatusOK, map[string]any{"status": status})
 }
 
+// registerPluginAutomationOperations exposes the MCP-enabled executable
+// plugin capabilities through validated Changesets.
 func (s *Server) registerPluginAutomationOperations() {
-	s.registerPluginPackageAutomationOperations()
-	type idInput struct {
-		ID                      int64           `json:"id"`
-		PluginID                int64           `json:"plugin_id"`
-		RevisionID              int64           `json:"revision_id"`
-		Name                    string          `json:"name"`
-		Description             string          `json:"description"`
-		Status                  string          `json:"status"`
-		Source                  string          `json:"source"`
-		Manifest                json.RawMessage `json:"manifest"`
-		Params                  json.RawMessage `json:"params"`
-		Env                     json.RawMessage `json:"env"`
-		Kind                    string          `json:"kind"`
-		Spec                    json.RawMessage `json:"spec"`
-		Enabled                 *bool           `json:"enabled"`
-		IdempotencyKey          string          `json:"idempotency_key"`
-		ExpectedUpdatedAt       string          `json:"expected_updated_at"`
-		ExpectedBindingRevision int64           `json:"expected_binding_revision"`
-		Capabilities            json.RawMessage `json:"capabilities"`
-		ResourceScope           json.RawMessage `json:"resource_scope"`
-		Constraints             json.RawMessage `json:"constraints"`
-		BindingID               *int64          `json:"binding_id"`
-		HostActionsEnabled      *bool           `json:"host_actions_enabled"`
-		SchedulerPaused         *bool           `json:"scheduler_paused"`
-		MaxConcurrency          int             `json:"max_concurrency"`
-		MaxTimeoutSeconds       int             `json:"max_timeout_seconds"`
-		ServerID                int64           `json:"server_id"`
-		PluginsEnabled          *bool           `json:"plugins_enabled"`
-		PluginsPowerEnabled     *bool           `json:"plugins_power_enabled"`
-	}
-	register := func(name string, apply func(context.Context, application.Principal, idInput) (any, error)) {
+	register := func(name string, apply func(context.Context, application.Principal, json.RawMessage) (any, error)) {
 		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-			var request idInput
-			if err := strictAutomationInput(input, &request); err != nil {
+			var probe map[string]json.RawMessage
+			if err := json.Unmarshal(input, &probe); err != nil {
 				return nil, err
 			}
 			return map[string]any{"accepted": true}, nil
 		})
-		s.automation.Register(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-			var request idInput
-			if err := strictAutomationInput(input, &request); err != nil {
-				return nil, err
-			}
-			return apply(ctx, principal, request)
-		})
+		s.automation.Register(name, apply)
 	}
-	register("plugins.create", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.CreatePlugin(ctx, principal, in.Name, in.Description)
-		return map[string]any{"plugin": item}, err
-	})
-	register("plugins.update", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.UpdatePlugin(ctx, principal, in.ID, in.Name, in.Description, in.Status, in.ExpectedUpdatedAt)
-		return map[string]any{"plugin": item}, err
-	})
-	register("plugins.revisions.save", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.SaveDraft(ctx, principal, in.PluginID, in.Source, in.Manifest)
-		return map[string]any{"revision": item}, err
-	})
-	register("plugins.revisions.publish", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.Publish(ctx, principal, in.PluginID, in.RevisionID)
-		return map[string]any{"revision": item}, err
-	})
-	register("plugins.simulate", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.EnqueueSimulate(ctx, principal, in.PluginID, in.RevisionID, in.Params, in.Env, in.IdempotencyKey)
-		return map[string]any{"run": item}, err
-	})
-	register("plugins.run", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.EnqueueManualRun(ctx, principal, in.PluginID, in.RevisionID, in.Params, in.Env, in.IdempotencyKey, model.PluginRunModeLive)
-		return map[string]any{"run": item}, err
-	})
-	register("plugins.runs.cancel", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.CancelRun(ctx, principal, in.ID)
-		return map[string]any{"run": item}, err
-	})
-	register("plugin_triggers.create", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.CreateTrigger(ctx, principal, model.PluginTriggerBinding{PluginID: in.PluginID, RevisionID: in.RevisionID, Name: in.Name, Kind: in.Kind, SpecJSON: in.Spec, ParamsJSON: in.Params, EnvJSON: in.Env})
-		return map[string]any{"trigger": item}, err
-	})
-	register("plugin_triggers.update", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item := model.PluginTriggerBinding{ID: in.ID, RevisionID: in.RevisionID, Name: in.Name, SpecJSON: in.Spec, ParamsJSON: in.Params, EnvJSON: in.Env}
-		if in.Enabled != nil {
-			item.Enabled = *in.Enabled
+	idOf := func(raw string) (int64, error) { return pluginIDPart(raw) }
+	register("plugin_instances.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID string `json:"plugin_id"`
+			Name     string `json:"name"`
 		}
-		updated, err := s.plugins.UpdateTrigger(ctx, principal, item, in.ExpectedBindingRevision)
-		return map[string]any{"trigger": updated}, err
-	})
-	register("plugin_grants.create", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		item, err := s.plugins.CreateGrant(ctx, principal, model.PluginGrant{PluginID: in.PluginID, RevisionID: in.RevisionID, BindingID: in.BindingID, CapabilitiesJSON: in.Capabilities, ResourceScopeJSON: in.ResourceScope, ConstraintsJSON: in.Constraints})
-		return map[string]any{"grant_id": item.ID, "grant": item}, err
-	})
-	register("plugin_grants.revoke", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		err := s.plugins.RevokeGrant(ctx, principal, in.ID)
-		return map[string]any{"revoked": err == nil}, err
-	})
-	register("plugin_runtime.settings.update", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		next := s.plugins.Settings(ctx)
-		if in.Enabled != nil {
-			next.Enabled = *in.Enabled
-		}
-		if in.HostActionsEnabled != nil {
-			next.HostActionsEnabled = *in.HostActionsEnabled
-		}
-		if in.SchedulerPaused != nil {
-			next.SchedulerPaused = *in.SchedulerPaused
-		}
-		if in.MaxConcurrency > 0 {
-			next.MaxConcurrency = in.MaxConcurrency
-		}
-		if in.MaxTimeoutSeconds > 0 {
-			next.MaxTimeoutSeconds = in.MaxTimeoutSeconds
-		}
-		if err := s.ensurePluginRuntimeForEnable(next.Enabled); err != nil {
+		if err := strictAutomationInput(input, &in); err != nil {
 			return nil, err
 		}
-		if err := s.plugins.UpdateSettings(ctx, principal, next); err != nil {
-			return nil, err
-		}
-		status, err := s.loadPluginRuntimeStatus(ctx, principal)
-		return map[string]any{"status": status}, err
-	})
-	register("servers.plugin_policy.update", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
-		policy := model.ServerPluginPolicy{ServerID: in.ServerID}
-		if in.PluginsEnabled != nil {
-			policy.PluginsEnabled = *in.PluginsEnabled
-		}
-		if in.PluginsPowerEnabled != nil {
-			policy.PluginsPowerEnabled = *in.PluginsPowerEnabled
-		}
-		item, err := s.plugins.UpdateServerPolicy(ctx, principal, policy)
-		return map[string]any{"policy": item}, err
-	})
-}
-
-func (s *Server) queryPluginCapability(ctx context.Context, principal application.Principal, name string, input json.RawMessage) (any, error) {
-	switch name {
-	case "plugins.packages.preview", "plugins.github.preview", "plugins.versions.list", "plugins.config.get", "plugins.ui.get":
-		return s.queryPluginPackageCapability(ctx, principal, name, input)
-	case "plugins.list":
-		var request struct {
-			Status string `json:"status"`
-			Limit  int    `json:"limit"`
-		}
-		if err := strictAutomationInput(input, &request); err != nil {
-			return nil, err
-		}
-		items, err := s.plugins.ListPlugins(ctx, principal, request.Status, request.Limit)
-		return map[string]any{"plugins": items}, err
-	case "plugins.get":
-		var request struct {
-			ID int64 `json:"id"`
-		}
-		if err := strictAutomationInput(input, &request); err != nil {
-			return nil, err
-		}
-		item, err := s.plugins.GetPlugin(ctx, principal, request.ID)
+		id, err := idOf(in.PluginID)
 		if err != nil {
 			return nil, err
 		}
-		draft, _ := s.store.GetPluginDraft(ctx, request.ID)
-		return map[string]any{"plugin": item, "draft": draft}, nil
-	case "plugins.validate":
-		var request struct {
-			PluginID int64           `json:"plugin_id"`
-			Source   string          `json:"source"`
+		return s.plugins.CreateInstance(ctx, principal, id, in.Name)
+	})
+	register("plugin_instances.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			InstanceID string  `json:"instance_id"`
+			Name       *string `json:"name"`
+			Resume     bool    `json:"resume"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		return s.plugins.UpdateInstance(ctx, principal, id, plugin.InstanceUpdate{Name: in.Name, Resume: in.Resume})
+	})
+	register("plugin_instances.environment.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			InstanceID       string                     `json:"instance_id"`
+			ExpectedRevision int64                      `json:"expected_revision"`
+			Values           map[string]json.RawMessage `json:"values"`
+			Custom           []plugin.CustomVar         `json:"custom"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		return s.plugins.SaveEnvironment(ctx, principal, id, in.ExpectedRevision, plugin.EnvironmentInput{Values: in.Values, Custom: in.Custom})
+	})
+	register("plugin_instances.run", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			InstanceID     string `json:"instance_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		run, err := s.plugins.RunManually(ctx, principal, id, in.IdempotencyKey)
+		return map[string]any{"run": run}, err
+	})
+	register("plugin_runs.cancel", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			RunID string `json:"run_id"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.RunID)
+		if err != nil {
+			return nil, err
+		}
+		run, err := s.plugins.CancelRun(ctx, principal, id)
+		return map[string]any{"run": run}, err
+	})
+	scheduleInput := func(input json.RawMessage, idField string) (int64, plugin.ScheduleInput, error) {
+		var in map[string]json.RawMessage
+		if err := json.Unmarshal(input, &in); err != nil {
+			return 0, plugin.ScheduleInput{}, err
+		}
+		var rawID string
+		_ = json.Unmarshal(in[idField], &rawID)
+		delete(in, idField)
+		id, err := idOf(rawID)
+		if err != nil {
+			return 0, plugin.ScheduleInput{}, err
+		}
+		rest, _ := json.Marshal(in)
+		var schedule plugin.ScheduleInput
+		if err := strictAutomationInput(rest, &schedule); err != nil {
+			return 0, plugin.ScheduleInput{}, err
+		}
+		return id, schedule, nil
+	}
+	register("plugin_schedules.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		id, schedule, err := scheduleInput(input, "instance_id")
+		if err != nil {
+			return nil, err
+		}
+		return s.plugins.CreateSchedule(ctx, principal, id, schedule)
+	})
+	register("plugin_schedules.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		id, schedule, err := scheduleInput(input, "schedule_id")
+		if err != nil {
+			return nil, err
+		}
+		return s.plugins.UpdateSchedule(ctx, principal, id, schedule)
+	})
+	register("plugin_schedules.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			ScheduleID string `json:"schedule_id"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.ScheduleID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"deleted": true}, s.plugins.DeleteSchedule(ctx, principal, id)
+	})
+	register("plugin_instances.state.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			InstanceID string `json:"instance_id"`
+			Key        string `json:"key"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		id, err := idOf(in.InstanceID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"deleted": true}, s.plugins.ClearState(ctx, principal, id, in.Key)
+	})
+	register("plugins.drafts.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
 			Manifest json.RawMessage `json:"manifest"`
-			Params   json.RawMessage `json:"params"`
+			Source   string          `json:"source"`
 		}
-		if err := strictAutomationInput(input, &request); err != nil {
+		if err := strictAutomationInput(input, &in); err != nil {
 			return nil, err
 		}
-		return s.plugins.ValidateRevision(ctx, principal, request.PluginID, request.Source, request.Manifest, request.Params)
-	case "plugins.runs.get":
-		var request struct {
-			ID int64 `json:"id"`
+		installation, err := s.plugins.CreateDraftPlugin(ctx, principal, plugin.DraftInput{Manifest: in.Manifest, Source: in.Source})
+		return map[string]any{"plugin_id": strconv.FormatInt(installation.ID, 10)}, err
+	})
+	register("plugins.drafts.save", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var in struct {
+			PluginID string          `json:"plugin_id"`
+			Manifest json.RawMessage `json:"manifest"`
+			Source   string          `json:"source"`
 		}
-		if err := strictAutomationInput(input, &request); err != nil {
+		if err := strictAutomationInput(input, &in); err != nil {
 			return nil, err
 		}
-		item, err := s.plugins.GetRun(ctx, principal, request.ID)
-		return map[string]any{"run": item}, err
-	case "plugin_triggers.list":
-		var request struct {
-			PluginID int64 `json:"plugin_id"`
-		}
-		if err := strictAutomationInput(input, &request); err != nil {
+		id, err := idOf(in.PluginID)
+		if err != nil {
 			return nil, err
 		}
-		items, err := s.plugins.ListTriggers(ctx, principal, request.PluginID)
-		return map[string]any{"triggers": items}, err
-	case "plugin_runtime.status":
-		status, err := s.loadPluginRuntimeStatus(ctx, principal)
-		return map[string]any{"status": status}, err
+		return map[string]any{"saved": true}, s.plugins.SaveDraft(ctx, principal, id, plugin.DraftInput{Manifest: in.Manifest, Source: in.Source})
+	})
+}
+
+// queryPluginCapability answers the read-only MCP plugin capabilities.
+func (s *Server) queryPluginCapability(ctx context.Context, principal application.Principal, name string, input json.RawMessage) (any, error) {
+	decodeID := func(field string) (int64, error) {
+		var values map[string]json.RawMessage
+		if err := json.Unmarshal(orEmptyJSONObject(input), &values); err != nil {
+			return 0, err
+		}
+		var raw string
+		_ = json.Unmarshal(values[field], &raw)
+		return pluginIDPart(raw)
+	}
+	optionalID := func(values map[string]json.RawMessage, field string) int64 {
+		var raw string
+		if json.Unmarshal(values[field], &raw) != nil || raw == "" {
+			return 0
+		}
+		id, _ := strconv.ParseInt(raw, 10, 64)
+		return id
+	}
+	switch name {
+	case "plugins.list":
+		items, err := s.plugins.ListInstallations(ctx, principal)
+		return map[string]any{"plugins": items}, err
+	case "plugins.get":
+		id, err := decodeID("plugin_id")
+		if err != nil {
+			return nil, err
+		}
+		return s.plugins.GetInstallation(ctx, principal, id)
+	case "plugins.catalog":
+		if !s.plugins.Can(principal, plugin.PermRead) {
+			return nil, plugin.ErrPermissionDenied
+		}
+		return pluginCatalogView(), nil
+	case "plugins.runtime.status":
+		return s.plugins.RuntimeStatus(ctx, principal)
+	case "plugins.servers":
+		servers, err := s.plugins.ServerOptions(ctx, principal)
+		return map[string]any{"servers": servers}, err
+	case "plugins.drafts.diagnose":
+		var in struct {
+			Manifest json.RawMessage `json:"manifest"`
+			Source   string          `json:"source"`
+		}
+		if err := strictAutomationInput(input, &in); err != nil {
+			return nil, err
+		}
+		return s.plugins.Diagnose(ctx, principal, plugin.DraftInput{Manifest: in.Manifest, Source: in.Source}, pluginpackage.CheckSource)
+	case "plugin_instances.get":
+		id, err := decodeID("instance_id")
+		if err != nil {
+			return nil, err
+		}
+		return s.plugins.GetInstance(ctx, principal, id)
+	case "plugin_instances.state":
+		id, err := decodeID("instance_id")
+		if err != nil {
+			return nil, err
+		}
+		entries, usage, err := s.plugins.ListState(ctx, principal, id)
+		return map[string]any{"entries": entries, "usage": usage}, err
+	case "plugin_instances.audit":
+		var values map[string]json.RawMessage
+		_ = json.Unmarshal(orEmptyJSONObject(input), &values)
+		id, err := decodeID("instance_id")
+		if err != nil {
+			return nil, err
+		}
+		var limit int
+		_ = json.Unmarshal(values["limit"], &limit)
+		events, err := s.plugins.ListAudit(ctx, principal, id, optionalID(values, "before_id"), limit)
+		return map[string]any{"events": events}, err
+	case "plugin_runs.list":
+		var values map[string]json.RawMessage
+		_ = json.Unmarshal(orEmptyJSONObject(input), &values)
+		var limit int
+		_ = json.Unmarshal(values["limit"], &limit)
+		runs, err := s.plugins.ListRuns(ctx, principal, store.PluginRunFilter{InstallationID: optionalID(values, "plugin_id"), InstanceID: optionalID(values, "instance_id"), BeforeID: optionalID(values, "before_id"), Limit: limit})
+		return map[string]any{"runs": runs}, err
+	case "plugin_runs.get":
+		id, err := decodeID("run_id")
+		if err != nil {
+			return nil, err
+		}
+		run, err := s.plugins.GetRun(ctx, principal, id)
+		return map[string]any{"run": run}, err
+	case "plugin_runs.logs":
+		id, err := decodeID("run_id")
+		if err != nil {
+			return nil, err
+		}
+		var values map[string]json.RawMessage
+		_ = json.Unmarshal(orEmptyJSONObject(input), &values)
+		var after int64
+		_ = json.Unmarshal(values["after_seq"], &after)
+		logs, err := s.plugins.ListRunLogs(ctx, principal, id, after)
+		return map[string]any{"logs": logs}, err
 	default:
 		return nil, errors.New("unsupported query capability")
 	}
 }
 
-func (s *Server) apiV1PluginImport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		method(w)
-		return
+func orEmptyJSONObject(raw json.RawMessage) json.RawMessage {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return json.RawMessage(`{}`)
 	}
-	principal, _ := apiPrincipal(r)
-	var payload json.RawMessage
-	if !decodeV2(w, r, &payload) {
-		return
-	}
-	plugin, rev, err := s.plugins.Import(r.Context(), principal, payload)
-	if err != nil {
-		pluginErr(w, r, err)
-		return
-	}
-	pluginOK(w, r, http.StatusCreated, map[string]any{"plugin": plugin, "revision": rev})
-}
-
-func (s *Server) apiV1ServerPluginPolicies(w http.ResponseWriter, r *http.Request) {
-	principal, _ := apiPrincipal(r)
-	if r.Method == http.MethodGet {
-		serverID, _ := strconv.ParseInt(r.URL.Query().Get("server_id"), 10, 64)
-		if serverID <= 0 {
-			pluginErr(w, r, plugin.Coded(model.PluginErrorInvalidInput, "server_id is required"))
-			return
-		}
-		item, err := s.store.GetServerPluginPolicy(r.Context(), serverID)
-		if err != nil {
-			pluginErr(w, r, err)
-			return
-		}
-		pluginOK(w, r, http.StatusOK, map[string]any{"policy": item})
-		return
-	}
-	if r.Method != http.MethodPatch {
-		method(w)
-		return
-	}
-	var input model.ServerPluginPolicy
-	if !decodeV2(w, r, &input) {
-		return
-	}
-	item, err := s.plugins.UpdateServerPolicy(r.Context(), principal, input)
-	if err != nil {
-		pluginErr(w, r, err)
-		return
-	}
-	pluginOK(w, r, http.StatusOK, map[string]any{"policy": item})
-}
-
-func (s *Server) pluginRuntimeInstalled() bool {
-	if s.pluginWorkerConnected.Load() {
-		return true
-	}
-	if _, err := os.Stat("/etc/systemd/system/oboard-plugin-worker.service"); err == nil {
-		return true
-	}
-	_, err := os.Stat("/etc/init.d/oboard-plugin-worker")
-	return err == nil
-}
-
-func (s *Server) pluginRuntimeInstallCommand() string {
-	channel := strings.ToLower(strings.TrimSpace(os.Getenv("OBOARD_UPDATE_CHANNEL")))
-	version := "latest"
-	switch channel {
-	case "dev", "development", "nightly":
-		version = "dev"
-	case "pinned":
-		version = strings.TrimSpace(os.Getenv("OBOARD_VERSION"))
-		if version == "" {
-			version = "latest"
-		}
-	}
-	return "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/plugins/install.sh | sudo env OBOARD_ACTION=enable-plugins VERSION=" + version + " sh"
-}
-
-func (s *Server) loadPluginRuntimeStatus(ctx context.Context, principal application.Principal) (model.PluginRuntimeStatus, error) {
-	installed := s.pluginRuntimeInstalled()
-	command := ""
-	if !installed {
-		command = s.pluginRuntimeInstallCommand()
-	}
-	return s.plugins.RuntimeStatus(ctx, principal, s.pluginIsolation, s.pluginWorkerConnected.Load(), installed, command)
-}
-
-func (s *Server) ensurePluginRuntimeForEnable(enabled bool) error {
-	if !enabled || s.pluginRuntimeInstalled() {
-		return nil
-	}
-	return plugin.Coded(model.PluginErrorRuntimeUnavailable, "尚未安装插件运行环境，请先在主控主机上执行安装命令")
-}
-
-func pluginOK(w http.ResponseWriter, r *http.Request, status int, data any) {
-	v2Write(w, r, status, data, nil)
-}
-
-func pluginErr(w http.ResponseWriter, r *http.Request, err error) {
-	v2Error(w, r, pluginHTTPStatus(err), plugin.CodeOf(err), err.Error())
-}
-
-func pluginHTTPStatus(err error) int {
-	switch plugin.CodeOf(err) {
-	case "permission_denied", "approval_required":
-		return http.StatusForbidden
-	case "not_found":
-		return http.StatusNotFound
-	case "conflict", "idempotency_conflict":
-		return http.StatusConflict
-	case "runtime_unavailable":
-		return http.StatusConflict
-	case "invalid_input":
-		return http.StatusBadRequest
-	default:
-		return http.StatusBadRequest
-	}
+	return raw
 }

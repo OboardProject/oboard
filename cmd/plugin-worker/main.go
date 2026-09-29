@@ -1,3 +1,7 @@
+// oboard-plugin-worker leases plugin runs from the Controller over a Unix
+// socket and executes each one in a disposable, isolated runner. The worker
+// itself only speaks to the Controller socket; it never opens network
+// connections, and runners have no network namespace at all.
 package main
 
 import (
@@ -16,33 +20,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/OboardProject/oboard/internal/plugin"
 	"github.com/OboardProject/oboard/internal/pluginrpc"
 	"github.com/OboardProject/oboard/internal/pluginruntime"
+	"github.com/OboardProject/oboard/internal/pluginsandbox"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
 func main() {
 	if hasFlag(os.Args[1:], "-isolation-probe") {
-		for _, path := range []string{"/etc", "/home", "/run", "/sys", "/opt"} {
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
-				os.Exit(1)
-			}
-		}
-		if err := os.WriteFile("/probe", nil, 0600); err == nil {
-			os.Exit(1)
-		}
-		status, err := os.ReadFile("/proc/self/status")
-		if err != nil || !strings.Contains(string(status), "CapEff:\t0000000000000000") {
-			os.Exit(1)
-		}
-		file, err := os.CreateTemp("/tmp", "probe-")
-		if err != nil {
-			os.Exit(1)
-		}
-		_ = file.Close()
-		_ = os.Remove(file.Name())
+		pluginruntime.ServeIsolationProbe()
 		return
 	}
 	if hasFlag(os.Args[1:], "-runner") {
@@ -61,174 +48,157 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	workerID := "plw_" + random
-	client := unixHTTPClient(*socketPath)
+	worker := &worker{id: "plw_" + random, client: unixHTTPClient(*socketPath)}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	log.Printf("OBoard Plugin Worker %s started", workerID)
-	isolation := plugin.ProbeIsolation()
-	if !isolation.Available {
-		log.Printf("plugin isolation unavailable: %s", isolation.Reason)
+	log.Printf("OBoard Plugin Worker %s started", worker.id)
+	worker.isolation = pluginsandbox.ProbeIsolation()
+	if !worker.isolation.Available {
+		log.Printf("plugin isolation unavailable: %s", worker.isolation.Reason)
 	}
 	ticker := time.NewTicker(*pollInterval)
 	defer ticker.Stop()
 	for {
+		worker.heartbeat(ctx)
+		for worker.isolation.Available && worker.leaseAndRun(ctx) {
+			if ctx.Err() != nil {
+				return
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			beat(ctx, client, workerID, isolation)
-			leaseAndRun(ctx, client, workerID, isolation)
 		}
 	}
 }
 
-func beat(ctx context.Context, client *http.Client, workerID string, isolation plugin.IsolationStatus) {
-	body, _ := json.Marshal(pluginrpc.HeartbeatRequest{WorkerID: workerID, IsolationAvailable: isolation.Available, IsolationMode: isolation.Mode, IsolationReason: isolation.Reason})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://plugin/v1/plugins/heartbeat", bytes.NewReader(body))
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	resp.Body.Close()
+type worker struct {
+	id        string
+	client    *http.Client
+	isolation pluginsandbox.IsolationStatus
 }
 
-func leaseAndRun(ctx context.Context, client *http.Client, workerID string, isolation plugin.IsolationStatus) {
-	body, _ := json.Marshal(pluginrpc.LeaseRequest{WorkerID: workerID})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://plugin/v1/plugins/lease", bytes.NewReader(body))
+func (w *worker) post(ctx context.Context, path string, body any, out any, limit int64) error {
+	payload, err := json.Marshal(body)
 	if err != nil {
-		return
+		return err
 	}
-	resp, err := client.Do(req)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://plugin"+path, bytes.NewReader(payload))
 	if err != nil {
-		return
+		return err
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	request.Header.Set("Content-Type", "application/json")
+	response, err := w.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, limit))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode >= 300 {
+		return fmt.Errorf("controller answered %d", response.StatusCode)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func (w *worker) heartbeat(ctx context.Context) {
+	request := pluginrpc.HeartbeatRequest{WorkerID: w.id, ProtocolVersion: pluginrpc.ProtocolVersion, IsolationAvailable: w.isolation.Available, IsolationMode: w.isolation.Mode, IsolationReason: w.isolation.Reason}
+	_ = w.post(ctx, "/rpc/plugins/heartbeat", request, nil, 4096)
+}
+
+// leaseAndRun executes at most one run and reports whether it found work.
+func (w *worker) leaseAndRun(ctx context.Context) bool {
 	var leased pluginrpc.LeaseResponse
-	if json.Unmarshal(raw, &leased) != nil || leased.Run == nil {
-		return
+	if err := w.post(ctx, "/rpc/plugins/lease", pluginrpc.LeaseRequest{WorkerID: w.id}, &leased, 4<<20); err != nil || leased.Run == nil {
+		return false
 	}
-	if !isolation.Available {
-		complete(ctx, client, workerID, leased.Run, "failed", "runtime_unavailable", json.RawMessage(`{"error":"isolation unavailable"}`), nil)
-		return
-	}
-	runCtx, cancelRun := context.WithTimeout(ctx, time.Duration(leased.Run.Limits.TimeoutSeconds)*time.Second)
+	run := leased.Run
+	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
-	stopWatch := watchCancellation(runCtx, client, leased.Run, cancelRun, time.Second)
-	defer stopWatch()
-	logs := []pluginrpc.LogLine{}
-	result, runErr := pluginruntime.RunIsolated(runCtx, "", pluginruntime.RunnerRequest{
-		Source: leased.Run.Source, Params: leased.Run.Params, Env: leased.Run.Env, Limits: leased.Run.Limits,
-	}, func(capability string, arguments json.RawMessage, actionKey string) (pluginrpc.SDKResponse, error) {
-		payload, _ := json.Marshal(pluginrpc.SDKRequest{WorkerID: workerID, RunUUID: leased.Run.UUID, LeaseGeneration: leased.Run.LeaseGeneration, Capability: capability, ActionKey: actionKey, Arguments: arguments})
-		sdkReq, _ := http.NewRequestWithContext(runCtx, http.MethodPost, "http://plugin/v1/plugins/sdk", bytes.NewReader(payload))
-		sdkResp, err := client.Do(sdkReq)
-		if err != nil {
-			return pluginrpc.SDKResponse{OK: false, ErrorCode: "internal_error", Message: err.Error()}, nil
+	stopWatch := w.watchCancellation(runCtx, run, cancelRun)
+	report := pluginruntime.RunIsolated(runCtx, "", pluginruntime.RunnerRequest{Source: run.Source, Environment: run.Environment, Context: run.Context, Limits: run.Limits}, func(method string, arguments json.RawMessage) pluginrpc.CallResponse {
+		var response pluginrpc.CallResponse
+		request := pluginrpc.CallRequest{WorkerID: w.id, RunUUID: run.RunUUID, LeaseGeneration: run.LeaseGeneration, Method: method, Arguments: arguments}
+		if err := w.post(runCtx, "/rpc/plugins/call", request, &response, 2<<20); err != nil {
+			if runCtx.Err() != nil {
+				return pluginrpc.CallResponse{Code: "CANCELLED", Message: "the run was cancelled"}
+			}
+			return pluginrpc.CallResponse{Code: "RUNTIME_UNAVAILABLE", Message: "the capability gateway is unavailable"}
 		}
-		defer sdkResp.Body.Close()
-		out, _ := io.ReadAll(io.LimitReader(sdkResp.Body, 256<<10))
-		var decoded pluginrpc.SDKResponse
-		if json.Unmarshal(out, &decoded) != nil {
-			return pluginrpc.SDKResponse{OK: false, ErrorCode: "internal_error", Message: "invalid SDK gateway response"}, nil
-		}
-		return decoded, nil
-	}, func(level, message string, fields json.RawMessage) {
-		logs = append(logs, pluginrpc.LogLine{Seq: int64(len(logs) + 1), Level: level, Message: message, Fields: fields})
+		return response
 	})
 	stopWatch()
-	if err := runCtx.Err(); err != nil {
-		runErr = err
+	status := statusFor(report.Outcome.Code)
+	complete := pluginrpc.CompleteRequest{WorkerID: w.id, RunUUID: run.RunUUID, LeaseGeneration: run.LeaseGeneration, Status: status, ErrorCode: report.Outcome.Code, ErrorMessage: report.Outcome.Message, Result: report.Outcome.Result, Logs: report.Logs, DroppedLogs: report.Dropped}
+	completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := w.post(completeCtx, "/rpc/plugins/complete", complete, nil, 4096); err != nil {
+		log.Printf("report plugin run %s: %v", run.RunUUID, err)
 	}
-	status := "succeeded"
-	errorCode := ""
-	if runErr != nil {
-		status = "failed"
-		errorCode = plugin.CodeOf(runErr)
-		if errorCode == "" {
-			errorCode = "internal_error"
-		}
-		if runErr == context.Canceled {
-			status = "cancelled"
-			errorCode = "cancelled"
-		} else if strings.Contains(runErr.Error(), "timed out") || runErr == context.DeadlineExceeded || runCtx.Err() == context.DeadlineExceeded {
-			status = "timed_out"
-			errorCode = "operation_expired"
-		}
-		result = json.RawMessage(`{"error":` + jsonQuote(runErr.Error()) + `}`)
-	}
-	complete(ctx, client, workerID, leased.Run, status, errorCode, result, logs)
+	return true
 }
 
-func watchCancellation(ctx context.Context, client *http.Client, run *pluginrpc.RunLease, cancelRun context.CancelFunc, interval time.Duration) func() {
+// statusFor maps a runtime outcome code to the PluginRun terminal status.
+func statusFor(code string) string {
+	switch code {
+	case "":
+		return "succeeded"
+	case "RUN_TIMEOUT":
+		return "timeout"
+	case "CANCELLED":
+		return "cancelled"
+	case "RESOURCE_LIMIT", "LIMIT_EXCEEDED", "STATE_QUOTA_EXCEEDED":
+		return "resource_limit"
+	case "CAPABILITY_DENIED", "RESOURCE_DENIED", "PERMISSION_REVIEW_REQUIRED":
+		return "permission_denied"
+	default:
+		return "failed"
+	}
+}
+
+func (w *worker) watchCancellation(ctx context.Context, run *pluginrpc.RunLease, cancelRun context.CancelFunc) func() {
 	watchCtx, stop := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			if runCancelled(watchCtx, client, run) {
-				if watchCtx.Err() == nil {
-					cancelRun()
-				}
-				return
-			}
 			select {
 			case <-watchCtx.Done():
 				return
 			case <-ticker.C:
+			}
+			var state pluginrpc.CancelCheckResponse
+			checkCtx, cancel := context.WithTimeout(watchCtx, 2*time.Second)
+			err := w.post(checkCtx, "/rpc/plugins/cancel-check", pluginrpc.CancelCheckRequest{RunUUID: run.RunUUID, LeaseGeneration: run.LeaseGeneration}, &state, 4096)
+			cancel()
+			if watchCtx.Err() != nil {
+				return
+			}
+			// An unreachable Controller also stops the run: a runner must
+			// never outlive the authority that leased it.
+			if err != nil || state.Cancelled {
+				cancelRun()
+				return
 			}
 		}
 	}()
 	return func() { stop(); <-done }
 }
 
-func runCancelled(ctx context.Context, client *http.Client, run *pluginrpc.RunLease) bool {
-	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	body, _ := json.Marshal(pluginrpc.CancelCheckRequest{RunUUID: run.UUID, LeaseGeneration: run.LeaseGeneration})
-	req, err := http.NewRequestWithContext(checkCtx, http.MethodPost, "http://plugin/v1/plugins/cancel-check", bytes.NewReader(body))
-	if err != nil {
-		return true
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return true
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return true
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if err != nil {
-		return true
-	}
-	var state struct {
-		Cancelled *bool `json:"cancelled"`
-	}
-	if json.Unmarshal(raw, &state) != nil || state.Cancelled == nil {
-		return true
-	}
-	return *state.Cancelled
-}
-
-func complete(ctx context.Context, client *http.Client, workerID string, run *pluginrpc.RunLease, status, errorCode string, result json.RawMessage, logs []pluginrpc.LogLine) {
-	body, _ := json.Marshal(pluginrpc.CompleteRequest{WorkerID: workerID, RunUUID: run.UUID, LeaseGeneration: run.LeaseGeneration, Status: status, ErrorCode: errorCode, Result: result, Logs: logs})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://plugin/v1/plugins/complete", bytes.NewReader(body))
-	resp, err := client.Do(req)
-	if err == nil {
-		resp.Body.Close()
-	}
-}
-
 func unixHTTPClient(socketPath string) *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return dialer.DialContext(ctx, "unix", socketPath)
-	}, DisableCompression: true, MaxIdleConns: 4, IdleConnTimeout: 30 * time.Second}
-	return &http.Client{Transport: transport, Timeout: 35 * time.Second}
+	}, Proxy: nil, DisableCompression: true, MaxIdleConns: 4, IdleConnTimeout: 30 * time.Second}
+	return &http.Client{Transport: transport, Timeout: 60 * time.Second}
 }
 
 func env(key, fallback string) string {
@@ -245,9 +215,4 @@ func hasFlag(args []string, name string) bool {
 		}
 	}
 	return false
-}
-
-func jsonQuote(value string) string {
-	raw, _ := json.Marshal(value)
-	return string(raw)
 }

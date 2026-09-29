@@ -1,358 +1,428 @@
 package plugin
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
-
-	"github.com/santhosh-tekuri/jsonschema/v6"
-
-	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/pluginnetwork"
+	"time"
+	"unicode/utf8"
 )
 
-var allowedSDK = map[string]bool{
-	SDKConfigGet:                     true,
-	SDKManagementQuery:               true,
-	SDKManagementPreview:             true,
-	SDKManagementApply:               true,
-	SDKNetworkRequest:                true,
-	model.PluginSDKServersGet:        true,
-	model.PluginSDKServersList:       true,
-	model.PluginSDKServersStatus:     true,
-	model.PluginSDKMetricsLatest:     true,
-	model.PluginSDKIncidentsGet:      true,
-	model.PluginSDKServicesStatus:    true,
-	model.PluginSDKServicesRestart:   true,
-	model.PluginSDKHostPoweroff:      true,
-	model.PluginSDKHostReboot:        true,
-	model.PluginSDKNotificationsSend: true,
-	model.PluginSDKOperationsGet:     true,
-	model.PluginSDKOperationsWait:    true,
-	model.PluginSDKStateGet:          true,
-	model.PluginSDKStateCAS:          true,
+const (
+	RuntimeJS    = "oboard-js"
+	EntryFile    = "main.js"
+	ManifestFile = "manifest.json"
+
+	MaxManifestBytes   = 64 << 10
+	MaxSourceBytes     = 512 << 10
+	maxNameBytes       = 80
+	maxDescribeBytes   = 2000
+	maxHTTPHosts       = 32
+	maxEnvFields       = 64
+	maxCustomEnvFields = 32
+)
+
+const (
+	EventServerOnline  = "server.online"
+	EventServerOffline = "server.offline"
+)
+
+var (
+	pluginIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$`)
+	versionPattern  = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
+	envNamePattern  = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
+	httpMethods     = map[string]bool{"GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
+	supportedEvents = map[string]bool{EventServerOnline: true, EventServerOffline: true}
+)
+
+// Manifest is the only declaration source for a plugin: identity, runtime,
+// capabilities, HTTP scope, environment, triggers, resources and limits.
+// Nothing is inferred from source code.
+type Manifest struct {
+	ID           string                `json:"id"`
+	Name         string                `json:"name"`
+	Version      string                `json:"version"`
+	Description  string                `json:"description"`
+	Runtime      string                `json:"runtime"`
+	Entry        string                `json:"entry"`
+	Capabilities []string              `json:"capabilities"`
+	HTTP         *HTTPScope            `json:"http,omitempty"`
+	Resources    *ResourceRequirements `json:"resources,omitempty"`
+	Environment  []EnvField            `json:"environment,omitempty"`
+	Triggers     Triggers              `json:"triggers"`
+	Limits       DeclaredLimits        `json:"limits"`
 }
 
-var reservedEnv = map[string]bool{
-	"OBOARD_RUN_ID":            true,
-	"OBOARD_PLUGIN_ID":         true,
-	"OBOARD_REVISION_ID":       true,
-	"OBOARD_TRIGGER_ID":        true,
-	"OBOARD_SCHEDULED_AT":      true,
-	"OBOARD_EVENT_SUBJECT_ID":  true,
-	"OBOARD_SUBJECT_SERVER_ID": true,
-	"OBOARD_TARGET_SERVER_ID":  true,
-	"OBOARD_RUN_MODE":          true,
-	"RUN_ID":                   true,
-	"PLUGIN_ID":                true,
-	"REVISION_ID":              true,
-	"TRIGGER_ID":               true,
-	"SERVER_ID":                true,
+// HTTPScope declares the hosts and methods http.request may ever reach.
+// Hosts are exact hostnames or "*.example.com" wildcards (subdomains only).
+type HTTPScope struct {
+	Hosts   []string `json:"hosts"`
+	Methods []string `json:"methods"`
 }
 
-func ParseManifest(raw json.RawMessage) (model.PluginManifest, error) {
-	if len(raw) == 0 {
-		return model.PluginManifest{}, Coded(codeInvalidInput, "manifest is required")
+type ResourceRequirements struct {
+	Servers *ServerRequirement `json:"servers,omitempty"`
+}
+
+type ServerRequirement struct {
+	Min    int    `json:"min"`
+	Max    int    `json:"max,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// Triggers declares which automatic triggers an administrator may bind.
+// Manual runs are always available.
+type Triggers struct {
+	Schedule bool     `json:"schedule"`
+	Events   []string `json:"events,omitempty"`
+}
+
+// DeclaredLimits may only lower host ceilings.
+type DeclaredLimits struct {
+	Timeout         string `json:"timeout,omitempty"`
+	MemoryMiB       int    `json:"memory_mib,omitempty"`
+	SDKCalls        int    `json:"sdk_calls,omitempty"`
+	HTTPRequests    int    `json:"http_requests,omitempty"`
+	AgentOperations int    `json:"agent_operations,omitempty"`
+	LogBytes        int    `json:"log_bytes,omitempty"`
+}
+
+// ParseManifest strictly decodes and validates a manifest. Unknown fields,
+// the previous schema and any unsupported value make the manifest invalid.
+func ParseManifest(raw []byte) (Manifest, error) {
+	var manifest Manifest
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return manifest, Fail(CodeInvalidManifest, "manifest.json is empty")
 	}
-	var manifest model.PluginManifest
-	if err := strictJSON(raw, &manifest); err != nil {
-		return model.PluginManifest{}, Coded(codeInvalidInput, "manifest is not a closed object: "+err.Error())
+	if len(raw) > MaxManifestBytes {
+		return manifest, Fail(CodeInvalidManifest, "manifest.json exceeds 64 KiB")
 	}
-	if err := ValidateManifest(manifest); err != nil {
-		return model.PluginManifest{}, err
+	if !utf8.Valid(raw) {
+		return manifest, Fail(CodeInvalidManifest, "manifest.json is not UTF-8")
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return manifest, Fail(CodeInvalidManifest, "manifest.json is not a JSON object")
+	}
+	for _, retired := range []string{"plugin_id", "sdk_version", "schema_version", "params_schema", "config_schema", "env"} {
+		if _, ok := probe[retired]; ok {
+			return manifest, FailField(CodeInvalidManifest, retired, "incompatible manifest: this plugin targets the retired plugin runtime")
+		}
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&manifest); err != nil {
+		return Manifest{}, Fail(CodeInvalidManifest, "manifest.json: "+sanitizeDecodeError(err))
+	}
+	if dec.More() {
+		return Manifest{}, Fail(CodeInvalidManifest, "manifest.json has trailing data")
+	}
+	if err := ValidateManifest(&manifest); err != nil {
+		return Manifest{}, err
 	}
 	return manifest, nil
 }
 
-func ValidateManifest(manifest model.PluginManifest) error {
-	if manifest.SchemaVersion != model.PluginSchemaVersion {
-		return Coded(codeInvalidInput, "unsupported schema_version")
+// ValidateManifest checks every field and normalizes ordering-insensitive
+// lists so equal declarations produce equal canonical JSON.
+func ValidateManifest(m *Manifest) error {
+	if len(m.ID) > 128 || !pluginIDPattern.MatchString(m.ID) {
+		return FailField(CodeInvalidManifest, "id", "id must be a dotted lowercase identifier such as acme.trace-monitor")
 	}
-	if manifest.Runtime != model.PluginRuntimeOBoardJSv1 {
-		return Coded(codeInvalidInput, "runtime must be oboard-js-v1")
+	if strings.HasPrefix(m.ID, "oboard.") {
+		return FailField(CodeInvalidManifest, "id", "the oboard. namespace is reserved")
 	}
-	if manifest.SDKVersion != model.PluginSDKVersionV1 {
-		return Coded(codeInvalidInput, "sdk_version must be oboard-sdk-v1")
+	if strings.TrimSpace(m.Name) == "" || len(m.Name) > maxNameBytes || hasControl(m.Name, false) {
+		return FailField(CodeInvalidManifest, "name", "name is required and at most 80 bytes")
 	}
-	if strings.TrimSpace(manifest.Entry) != "main" {
-		return Coded(codeInvalidInput, "entry must be main")
+	if len(m.Version) > 64 || !versionPattern.MatchString(m.Version) {
+		return FailField(CodeInvalidManifest, "version", "version must be semantic, e.g. 1.2.0")
 	}
-	if len(manifest.Capabilities) == 0 {
-		return Coded(codeInvalidInput, "capabilities are required")
+	if len(m.Description) > maxDescribeBytes || hasControl(m.Description, true) {
+		return FailField(CodeInvalidManifest, "description", "description is at most 2000 bytes")
 	}
-	for _, name := range manifest.Capabilities {
-		nested, isNested := strings.CutPrefix(name, "management:")
-		if name != strings.TrimSpace(name) || (!allowedSDK[name] && !(isNested && ManagementCapabilityAllowed(nested))) {
-			return Coded(codeInvalidInput, "capability is not on the first-version SDK whitelist: "+name)
-		}
+	if m.Runtime != RuntimeJS {
+		return FailField(CodeInvalidManifest, "runtime", "runtime must be "+RuntimeJS)
 	}
-	if manifest.UIContentSHA256 != "" {
-		decoded, err := hex.DecodeString(manifest.UIContentSHA256)
-		if err != nil || len(decoded) != sha256.Size || strings.ToLower(manifest.UIContentSHA256) != manifest.UIContentSHA256 {
-			return Coded(codeInvalidInput, "invalid UI content digest")
-		}
+	if m.Entry != EntryFile {
+		return FailField(CodeInvalidManifest, "entry", "entry must be "+EntryFile)
 	}
-	if manifest.Network != nil {
-		var policy pluginnetwork.Policy
-		if json.Unmarshal(MustJSON(manifest.Network), &policy) != nil || pluginnetwork.ValidatePolicy(policy) != nil || !containsString(manifest.Capabilities, SDKNetworkRequest) {
-			return Coded(codeInvalidInput, "invalid network declaration")
-		}
-	} else if containsString(manifest.Capabilities, SDKNetworkRequest) {
-		return Coded(codeInvalidInput, "network.request requires a network declaration")
-	}
-	for _, env := range manifest.Env {
-		name := strings.TrimSpace(env.Name)
-		if name == "" || strings.ContainsAny(name, " \t\n=") || reservedEnv[name] {
-			return Coded(codeInvalidInput, "environment variable name is reserved or invalid: "+env.Name)
-		}
-	}
-	if err := validateParamSchema(manifest.Params); err != nil {
+	if err := validateCapabilities(m); err != nil {
 		return err
 	}
-	if err := validateParamSchema(manifest.ConfigSchema); err != nil {
+	if err := validateHTTPScope(m); err != nil {
 		return err
 	}
-	if len(manifest.ConfigSchema) > 0 && string(manifest.ConfigSchema) != "null" {
-		var schema map[string]any
-		if json.Unmarshal(manifest.ConfigSchema, &schema) != nil || schema["type"] != "object" {
-			return Coded(codeInvalidInput, "configuration schema must declare an object")
-		}
+	if err := validateResources(m); err != nil {
+		return err
 	}
-	if manifest.Limits.TimeoutSeconds < 0 || manifest.Limits.TimeoutSeconds > MaxTimeoutSeconds {
-		return Coded(codeInvalidInput, "declared timeout exceeds the system ceiling")
+	if err := validateTriggers(m); err != nil {
+		return err
 	}
-	if manifest.Limits.MemoryMiB < 0 || manifest.Limits.MemoryMiB > DefaultRunnerMemoryMiB {
-		return Coded(codeInvalidInput, "declared memory exceeds the system ceiling")
+	if err := ValidateEnvironmentSchema(m.Environment, m.Capabilities); err != nil {
+		return err
 	}
-	if manifest.Limits.SDKCalls < 0 || manifest.Limits.SDKCalls > DefaultSDKCallLimit {
-		return Coded(codeInvalidInput, "declared SDK call limit exceeds the system ceiling")
-	}
-	if manifest.Limits.ManageActions < 0 || manifest.Limits.ManageActions > DefaultManageActionLimit {
-		return Coded(codeInvalidInput, "declared manage-action limit exceeds the system ceiling")
+	if _, err := EffectiveLimits(m.Limits, 0); err != nil {
+		return err
 	}
 	return nil
 }
 
-func ValidateSource(source string) error {
-	if strings.TrimSpace(source) == "" {
-		return Coded(codeInvalidInput, "source is required")
+func validateCapabilities(m *Manifest) error {
+	if m.Capabilities == nil {
+		m.Capabilities = []string{}
 	}
-	if len(source) > MaxSourceBytes {
-		return Coded(codeLimitExceeded, "source exceeds 256 KiB")
+	seen := map[string]bool{}
+	for _, name := range m.Capabilities {
+		if forbiddenCapability(name) {
+			return FailField(CodeInvalidManifest, "capabilities", "capability "+name+" can never be granted to a plugin")
+		}
+		if _, ok := LookupCapability(name); !ok {
+			return FailField(CodeInvalidManifest, "capabilities", "unknown capability "+name)
+		}
+		if seen[name] {
+			return FailField(CodeInvalidManifest, "capabilities", "duplicate capability "+name)
+		}
+		seen[name] = true
 	}
-	if strings.Contains(source, "require(") || strings.Contains(source, "import ") {
-		return Coded(codeInvalidInput, "dynamic modules are not supported")
-	}
+	sort.Strings(m.Capabilities)
 	return nil
 }
 
-func RevisionDigest(source string, manifest model.PluginManifest) string {
-	var canonical any
-	if json.Unmarshal(MustJSON(manifest), &canonical) != nil {
-		return ""
-	}
-	digest, _ := DigestJSON(map[string]any{"source": source, "manifest": canonical})
-	return digest
-}
-
-func SourceDigest(source string) string {
-	sum := sha256.Sum256([]byte(source))
-	return hex.EncodeToString(sum[:])
-}
-
-func DigestJSON(value any) (string, error) {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-func EffectiveLimits(declared model.PluginDeclaredLimits, systemTimeout int) model.PluginDeclaredLimits {
-	if systemTimeout <= 0 || systemTimeout > MaxTimeoutSeconds {
-		systemTimeout = MaxTimeoutSeconds
-	}
-	out := model.PluginDeclaredLimits{
-		TimeoutSeconds: DefaultTimeoutSeconds,
-		MemoryMiB:      DefaultRunnerMemoryMiB,
-		SDKCalls:       DefaultSDKCallLimit,
-		ManageActions:  DefaultManageActionLimit,
-		LogBytes:       MaxLogBytes,
-		ResultBytes:    MaxResultBytes,
-	}
-	if declared.TimeoutSeconds > 0 && declared.TimeoutSeconds < out.TimeoutSeconds {
-		out.TimeoutSeconds = declared.TimeoutSeconds
-	}
-	if out.TimeoutSeconds > systemTimeout {
-		out.TimeoutSeconds = systemTimeout
-	}
-	if declared.MemoryMiB > 0 && declared.MemoryMiB < out.MemoryMiB {
-		out.MemoryMiB = declared.MemoryMiB
-	}
-	if declared.SDKCalls > 0 && declared.SDKCalls < out.SDKCalls {
-		out.SDKCalls = declared.SDKCalls
-	}
-	if declared.ManageActions > 0 && declared.ManageActions < out.ManageActions {
-		out.ManageActions = declared.ManageActions
-	}
-	if declared.LogBytes > 0 && declared.LogBytes < out.LogBytes {
-		out.LogBytes = declared.LogBytes
-	}
-	if declared.ResultBytes > 0 && declared.ResultBytes < out.ResultBytes {
-		out.ResultBytes = declared.ResultBytes
-	}
-	return out
-}
-
-func ValidateParams(schema json.RawMessage, params json.RawMessage) error {
-	if len(schema) == 0 || string(schema) == "null" {
-		if len(params) == 0 || string(params) == "null" || string(params) == "{}" {
-			return nil
+func validateHTTPScope(m *Manifest) error {
+	wantsHTTP := m.HasCapability(CapHTTPRequest)
+	if m.HTTP == nil {
+		if wantsHTTP {
+			return FailField(CodeInvalidManifest, "http", "http.request requires an http host declaration")
 		}
-		return Coded(codeInvalidInput, "parameters are not declared")
-	}
-	if len(params) == 0 {
-		params = json.RawMessage(`{}`)
-	}
-	if len(params) > MaxParamsEnvBytes {
-		return Coded(codeLimitExceeded, "parameters exceed 64 KiB")
-	}
-	compiler := jsonschema.NewCompiler()
-	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(string(schema)))
-	if err != nil {
-		return Coded(codeInvalidInput, "parameter schema is invalid")
-	}
-	if err := compiler.AddResource("mem://params.json", doc); err != nil {
-		return Coded(codeInvalidInput, err.Error())
-	}
-	sch, err := compiler.Compile("mem://params.json")
-	if err != nil {
-		return Coded(codeInvalidInput, err.Error())
-	}
-	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(string(params)))
-	if err != nil {
-		return Coded(codeInvalidInput, "parameters are not JSON")
-	}
-	if err := sch.Validate(inst); err != nil {
-		return Coded(codeInvalidInput, err.Error())
-	}
-	return nil
-}
-
-func MergeEnv(manifest model.PluginManifest, sets ...map[string]string) (map[string]string, error) {
-	declared := map[string]model.PluginEnvDeclaration{}
-	out := map[string]string{}
-	for _, item := range manifest.Env {
-		declared[item.Name] = item
-		if item.Default != "" {
-			out[item.Name] = item.Default
-		}
-	}
-	for i, set := range sets {
-		for key, value := range set {
-			if reservedEnv[key] {
-				return nil, Coded(codeInvalidInput, "reserved environment variable cannot be set: "+key)
-			}
-			decl, ok := declared[key]
-			if !ok {
-				return nil, Coded(codeInvalidInput, "undeclared environment variable: "+key)
-			}
-			if i > 0 && !decl.Overridable {
-				return nil, Coded(codeInvalidInput, "environment variable is not overridable: "+key)
-			}
-			out[key] = value
-		}
-	}
-	return out, nil
-}
-
-func SystemEnv(run model.PluginRun, triggerID int64, scheduledAt, subjectID string) map[string]string {
-	binding := ""
-	if run.BindingID != nil {
-		binding = fmt.Sprintf("%d", *run.BindingID)
-	}
-	if triggerID > 0 {
-		binding = fmt.Sprintf("%d", triggerID)
-	}
-	return map[string]string{
-		"OBOARD_RUN_ID":           run.UUID,
-		"OBOARD_PLUGIN_ID":        fmt.Sprintf("%d", run.PluginID),
-		"OBOARD_REVISION_ID":      fmt.Sprintf("%d", run.RevisionID),
-		"OBOARD_TRIGGER_ID":       binding,
-		"OBOARD_SCHEDULED_AT":     scheduledAt,
-		"OBOARD_EVENT_SUBJECT_ID": subjectID,
-		"OBOARD_RUN_MODE":         run.Mode,
-	}
-}
-
-func validateParamSchema(raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	if len(raw) > MaxParamsEnvBytes {
-		return Coded(codeLimitExceeded, "parameter schema exceeds 64 KiB")
+	if !wantsHTTP {
+		return FailField(CodeInvalidManifest, "http", "http is declared without the http.request capability")
 	}
-	var node any
-	if err := json.Unmarshal(raw, &node); err != nil {
-		return Coded(codeInvalidInput, "parameter schema is not JSON")
+	if len(m.HTTP.Hosts) == 0 || len(m.HTTP.Hosts) > maxHTTPHosts {
+		return FailField(CodeInvalidManifest, "http.hosts", "declare between 1 and 32 hosts")
 	}
-	if containsRef(node) {
-		return Coded(codeInvalidInput, "external $ref is not allowed")
+	hosts := map[string]bool{}
+	for i, host := range m.HTTP.Hosts {
+		normalized, err := NormalizeHostPattern(host)
+		if err != nil {
+			return FailField(CodeInvalidManifest, "http.hosts", err.Error())
+		}
+		if hosts[normalized] {
+			return FailField(CodeInvalidManifest, "http.hosts", "duplicate host "+normalized)
+		}
+		hosts[normalized] = true
+		m.HTTP.Hosts[i] = normalized
 	}
-	nodes, depth := schemaComplexity(node, 1)
-	if depth > MaxParamSchemaDepth || nodes > MaxParamSchemaNodes {
-		return Coded(codeInvalidInput, "parameter schema is too complex")
+	sort.Strings(m.HTTP.Hosts)
+	if len(m.HTTP.Methods) == 0 {
+		return FailField(CodeInvalidManifest, "http.methods", "declare at least one HTTP method")
+	}
+	methods := map[string]bool{}
+	for i, method := range m.HTTP.Methods {
+		method = strings.ToUpper(strings.TrimSpace(method))
+		if !httpMethods[method] || methods[method] {
+			return FailField(CodeInvalidManifest, "http.methods", "unsupported or duplicate method "+method)
+		}
+		methods[method] = true
+		m.HTTP.Methods[i] = method
+	}
+	sort.Strings(m.HTTP.Methods)
+	return nil
+}
+
+// NormalizeHostPattern accepts "api.example.com", "api.example.com:8443" and
+// "*.example.com". IP literals, single-label and internal suffixes are refused.
+func NormalizeHostPattern(raw string) (string, error) {
+	pattern := strings.ToLower(strings.TrimSpace(raw))
+	host, port, hasPort := strings.Cut(pattern, ":")
+	if hasPort {
+		if port == "" || len(port) > 5 || strings.TrimLeft(port, "0123456789") != "" || port[0] == '0' {
+			return "", fmt.Errorf("invalid port in host %q", raw)
+		}
+		var n int
+		fmt.Sscanf(port, "%d", &n)
+		if n < 1 || n > 65535 {
+			return "", fmt.Errorf("invalid port in host %q", raw)
+		}
+	}
+	name := strings.TrimPrefix(host, "*.")
+	if strings.Contains(name, "*") {
+		return "", fmt.Errorf("wildcards are only allowed as a leading *. label: %q", raw)
+	}
+	if !ValidHostname(name) {
+		return "", fmt.Errorf("host %q is not a public DNS name", raw)
+	}
+	if strings.HasPrefix(host, "*.") && strings.Count(name, ".") < 1 {
+		return "", fmt.Errorf("wildcard %q is too broad", raw)
+	}
+	return pattern, nil
+}
+
+// ValidHostname accepts multi-label DNS names outside internal-only suffixes.
+func ValidHostname(host string) bool {
+	if len(host) == 0 || len(host) > 253 || !strings.Contains(host, ".") || strings.HasSuffix(host, ".") {
+		return false
+	}
+	for _, suffix := range []string{".localhost", ".local", ".internal", ".home.arpa", ".lan", ".intranet", ".corp", ".test", ".invalid", ".onion"} {
+		if strings.HasSuffix(host, suffix) || host == strings.TrimPrefix(suffix, ".") {
+			return false
+		}
+	}
+	labels := strings.Split(host, ".")
+	last := labels[len(labels)-1]
+	if strings.TrimLeft(last, "0123456789") == "" {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validateResources(m *Manifest) error {
+	if m.Resources == nil || m.Resources.Servers == nil {
+		return nil
+	}
+	req := m.Resources.Servers
+	if !m.usesResource(ResourceServer) {
+		return FailField(CodeInvalidManifest, "resources.servers", "server resources require a server-scoped capability")
+	}
+	if req.Min < 0 || req.Min > 256 || req.Max < 0 || req.Max > 256 || (req.Max > 0 && req.Max < req.Min) {
+		return FailField(CodeInvalidManifest, "resources.servers", "server requirement bounds are invalid")
+	}
+	if len(req.Reason) > 256 || hasControl(req.Reason, false) {
+		return FailField(CodeInvalidManifest, "resources.servers.reason", "reason is at most 256 bytes")
 	}
 	return nil
 }
 
-func containsRef(node any) bool {
-	switch value := node.(type) {
-	case map[string]any:
-		if _, ok := value["$ref"]; ok {
+func validateTriggers(m *Manifest) error {
+	seen := map[string]bool{}
+	for _, event := range m.Triggers.Events {
+		if !supportedEvents[event] || seen[event] {
+			return FailField(CodeInvalidManifest, "triggers.events", "unsupported or duplicate event "+event)
+		}
+		seen[event] = true
+	}
+	if len(m.Triggers.Events) > 0 && !m.HasCapability(CapEventsServerStatus) {
+		return FailField(CodeInvalidManifest, "triggers.events", "server events require the events.server_status capability")
+	}
+	if m.HasCapability(CapEventsServerStatus) && len(m.Triggers.Events) == 0 {
+		return FailField(CodeInvalidManifest, "triggers.events", "events.server_status requires at least one declared event")
+	}
+	sort.Strings(m.Triggers.Events)
+	return nil
+}
+
+func (m Manifest) HasCapability(name string) bool {
+	for _, item := range m.Capabilities {
+		if item == name {
 			return true
-		}
-		for _, child := range value {
-			if containsRef(child) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range value {
-			if containsRef(child) {
-				return true
-			}
 		}
 	}
 	return false
 }
 
-func schemaComplexity(node any, depth int) (int, int) {
-	switch value := node.(type) {
-	case map[string]any:
-		nodes, maxDepth := 1, depth
-		for _, child := range value {
-			childNodes, childDepth := schemaComplexity(child, depth+1)
-			nodes += childNodes
-			if childDepth > maxDepth {
-				maxDepth = childDepth
-			}
+func (m Manifest) usesResource(resource string) bool {
+	for _, name := range m.Capabilities {
+		if spec, ok := LookupCapability(name); ok && spec.Resource == resource {
+			return true
 		}
-		return nodes, maxDepth
-	case []any:
-		nodes, maxDepth := 1, depth
-		for _, child := range value {
-			childNodes, childDepth := schemaComplexity(child, depth+1)
-			nodes += childNodes
-			if childDepth > maxDepth {
-				maxDepth = childDepth
-			}
-		}
-		return nodes, maxDepth
-	default:
-		return 1, depth
 	}
+	return false
+}
+
+// UsesServerResources reports whether any declared capability is scoped by
+// server grants.
+func (m Manifest) UsesServerResources() bool { return m.usesResource(ResourceServer) }
+
+func (m Manifest) EnvField(name string) (EnvField, bool) {
+	for _, field := range m.Environment {
+		if field.Name == name {
+			return field, true
+		}
+	}
+	return EnvField{}, false
+}
+
+// CanonicalJSON is the stored and hashed manifest form.
+func (m Manifest) CanonicalJSON() []byte {
+	raw, _ := json.Marshal(m)
+	return raw
+}
+
+func hasControl(value string, allowNewlines bool) bool {
+	for _, r := range value {
+		if r == '\n' || r == '\t' {
+			if allowNewlines {
+				continue
+			}
+			return true
+		}
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeDecodeError(err error) string {
+	message := err.Error()
+	message = strings.TrimPrefix(message, "json: ")
+	if len(message) > 200 {
+		message = message[:200]
+	}
+	return message
+}
+
+// ParseDuration accepts Go-style durations ("90s", "5m", "1h30m") without
+// fractional or negative values and returns the canonical string.
+func ParseDuration(raw string) (time.Duration, string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" || len(value) > 32 || strings.ContainsAny(value, "-+. ") {
+		return 0, "", fmt.Errorf("duration must look like 30s, 5m or 1h30m")
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d <= 0 || d%time.Second != 0 {
+		return 0, "", fmt.Errorf("duration must be a whole number of seconds such as 30s, 5m or 1h30m")
+	}
+	return d, FormatDuration(d), nil
+}
+
+// FormatDuration renders a whole-second duration without zero units: 1h30m, 5m, 45s.
+func FormatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	var b strings.Builder
+	days := d / (24 * time.Hour)
+	d -= days * 24 * time.Hour
+	hours := d / time.Hour
+	d -= hours * time.Hour
+	minutes := d / time.Minute
+	d -= minutes * time.Minute
+	seconds := d / time.Second
+	hours += days * 24
+	if hours > 0 {
+		fmt.Fprintf(&b, "%dh", hours)
+	}
+	if minutes > 0 {
+		fmt.Fprintf(&b, "%dm", minutes)
+	}
+	if seconds > 0 {
+		fmt.Fprintf(&b, "%ds", seconds)
+	}
+	return b.String()
 }

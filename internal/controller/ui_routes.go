@@ -27,7 +27,6 @@ var knownUIPagePaths = map[string]struct{}{
 	"/routing":              {},
 	"/servers":              {},
 	"/plugins":              {},
-	"/plugin-triggers":      {},
 	"/plugin-runs":          {},
 	"/settings":             {},
 	"/subscriptions":        {},

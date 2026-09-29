@@ -104,9 +104,7 @@ type Server struct {
 	capabilities               *capability.Catalog
 	automation                 *automation.Service
 	plugins                    *plugin.Service
-	pluginGateway              *plugin.Gateway
-	pluginIsolation            plugin.IsolationStatus
-	pluginWorkerConnected      atomic.Bool
+	pluginWorker               pluginWorkerState
 	auditIntel                 *auditintel.Service
 	auditReviews               *auditreview.Service
 	aiModelDiscoveries         *aiModelDiscoveryQueue
@@ -357,12 +355,9 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.terminalHub = newTerminalSessionHub()
 	s.agentUpdates = newAgentUpdateCoordinator(s)
 	s.recoveryDeployments = newRecoveryDeploymentQueue(s)
-	s.plugins = plugin.NewService(store, catalog.RBAC())
-	s.plugins.SetCallerResolver(s.resolvePluginCaller)
-	s.pluginGateway = plugin.NewGateway(store, s)
+	s.plugins = plugin.NewService(store, catalog.RBAC(), &pluginHost{server: s})
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.automation.SetReplayAuthorizer(s.authorizeAutomationReplay)
-	s.automation.SetPluginPrincipalResolver(s.resolvePluginChangesetPrincipal)
 	s.automation.SetResultAuthorizer(s.authorizeAutomationResult)
 	s.restoreControllerUpdateMaintenance(context.Background())
 	s.recoverControllerUpdateRun(context.Background())
@@ -2953,7 +2948,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-	case "plugins", "plugin-triggers", "plugin-runs":
+	case "plugins", "plugin-runs":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
 		}

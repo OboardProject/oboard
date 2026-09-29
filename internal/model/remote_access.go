@@ -67,10 +67,9 @@ type RemoteAccessReport struct {
 }
 
 type RemoteAccessLocalAllow struct {
-	RemoteTerminal   bool `json:"remote_terminal"`
-	MCPEnabled       bool `json:"mcp_enabled"`
-	PluginsEnabled   bool `json:"plugins_enabled"`
-	HostPowerEnabled bool `json:"host_power_enabled"`
+	RemoteTerminal bool `json:"remote_terminal"`
+	MCPEnabled     bool `json:"mcp_enabled"`
+	PluginsEnabled bool `json:"plugins_enabled"`
 }
 
 type ServerRemoteAccessPolicy struct {

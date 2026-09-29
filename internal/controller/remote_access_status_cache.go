@@ -68,7 +68,6 @@ func remoteAccessReportIdentity(report model.RemoteAccessReport) string {
 	b.WriteString(strconv.FormatBool(report.LocalAllow.RemoteTerminal))
 	b.WriteString(strconv.FormatBool(report.LocalAllow.MCPEnabled))
 	b.WriteString(strconv.FormatBool(report.LocalAllow.PluginsEnabled))
-	b.WriteString(strconv.FormatBool(report.LocalAllow.HostPowerEnabled))
 	return b.String()
 }
 

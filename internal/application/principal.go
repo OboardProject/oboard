@@ -64,12 +64,8 @@ func (p Principal) HasScope(required string) bool {
 }
 
 func (p Principal) emptyFilterUnrestricted() bool {
-	// Plugin principals are deny-by-default even with an empty filter. Existing
 	// Service Account, Web, and MCP principals keep the historical
 	// empty-means-unrestricted contract.
-	if p.Type == model.APIPrincipalPlugin {
-		return false
-	}
 	return len(p.ResourceFilter) == 0 || string(p.ResourceFilter) == "{}" || string(p.ResourceFilter) == "null"
 }
 
@@ -177,25 +173,6 @@ func (p Principal) AllowsGlobal() bool {
 // never reads this legacy filter.
 func ResourceFilterFromBoundary(boundary mcpauth.ResourceBoundary) json.RawMessage {
 	return mcpauth.LegacyResourceFilterJSON(boundary)
-}
-
-// PluginPrincipal builds the deny-by-default execution identity. An empty
-// resource filter never becomes unrestricted for this type.
-func PluginPrincipal(runID, name string, ownerUserID *int64, scopes []string, filter json.RawMessage) Principal {
-	if len(filter) == 0 {
-		filter = json.RawMessage(`{"servers":{"mode":"none"},"users":{"mode":"none"},"proxy_paths":{"mode":"none"},"subscription_plans":{"mode":"none"},"destructive_operations":false}`)
-	}
-	return Principal{
-		ID:             "plugin:" + strings.TrimSpace(runID),
-		UserID:         ownerUserID,
-		Name:           name,
-		Type:           model.APIPrincipalPlugin,
-		Role:           model.RoleNone,
-		Scopes:         scopes,
-		ResourceFilter: filter,
-		ClientName:     "oboard-plugin",
-		Interactive:    false,
-	}
 }
 
 func HumanPrincipal(user model.User, role model.Role, sourceIP netip.Addr) Principal {

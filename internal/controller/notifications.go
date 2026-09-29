@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/plugin"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
@@ -1411,6 +1410,12 @@ func (s *Server) completeTaskWithNotification(ctx context.Context, taskID int64,
 }
 
 func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
+	switch task.Type {
+	case model.AgentTaskTypeNetworkPing, model.AgentTaskTypeNetworkTrace, model.AgentTaskTypeNetworkTCP, model.AgentTaskTypeNetworkDNS, model.AgentTaskTypeNetworkHTTP:
+		// A failed plugin diagnostic is a result for the plugin run, not an
+		// operator incident; plugins notify through their own capability.
+		return
+	}
 	eventName := notificationTaskFailed
 	var result struct {
 		Timeout bool `json:"timeout"`
@@ -1445,16 +1450,6 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 			"Time":       s.notificationNow(ctx),
 		},
 	})
-	pluginEvent := model.PluginEventTaskFailed
-	if eventName == notificationTaskTimeout {
-		pluginEvent = model.PluginEventTaskTimedOut
-	}
-	_ = s.store.EnqueuePluginEvent(ctx, "plugin."+pluginEvent, fmt.Sprintf("task:%d", task.ID), plugin.MustJSON(map[string]any{
-		"event":     pluginEvent,
-		"server_id": task.ServerID,
-		"task_id":   task.ID,
-		"task_type": task.Type,
-	}))
 }
 
 func taskNotificationLabel(task model.AgentTask) string {

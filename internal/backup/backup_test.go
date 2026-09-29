@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -97,18 +98,19 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 	}
 	user := &model.User{Username: "restore-plugin", PasswordHash: "test", Role: model.RoleAdmin, Status: "active", ProxyUUID: "restore-plugin-uuid", ProxyPassword: "test"}
 	must(source.CreateUser(ctx, user))
-	plugin := model.Plugin{Name: "restore plugin", OwnerUserID: user.ID, Status: model.PluginStatusEnabled}
-	must(source.CreatePlugin(ctx, &plugin))
-	revision := model.PluginRevision{PluginID: plugin.ID, Runtime: "oboard-js-v1", SDKVersion: "oboard-sdk-v1", SchemaVersion: 1, Source: "function main(){}", SourceDigest: "test-digest", ManifestJSON: json.RawMessage(`{}`), AuthorUserID: user.ID}
-	must(source.SavePluginDraft(ctx, &revision))
-	binding := model.PluginTriggerBinding{PluginID: plugin.ID, RevisionID: revision.ID, Name: "restore-hook", Kind: "event", SpecJSON: json.RawMessage(`{}`), CreatedByUserID: user.ID}
-	must(source.CreatePluginTrigger(ctx, &binding))
-	grant := model.PluginGrant{PluginID: plugin.ID, RevisionID: revision.ID, BindingID: &binding.ID, CapabilitiesJSON: json.RawMessage(`[]`), ResourceScopeJSON: json.RawMessage(`{}`), ApprovedByUserID: user.ID}
-	must(source.CreatePluginGrant(ctx, &grant))
-	hook := model.PluginWebhook{ID: "restore-test-hook", PluginID: plugin.ID, BindingID: binding.ID, BindingRevision: binding.BindingRevision, RevisionID: revision.ID, GrantID: grant.ID, CreatedByUserID: user.ID}
-	hook.SecretEncrypted, err = security.EncryptSecret(sourceSecret, model.PluginWebhookSecretPurpose(hook.ID), "hook-test-secret")
+	installation := model.PluginInstallation{PluginKey: "acme.restore-check", Name: "restore plugin", PublisherIdentity: model.PluginPublisherLocal}
+	pkg := model.PluginPackage{PluginKey: installation.PluginKey, Version: "1.0.0", SHA256: strings.Repeat("a", 64), ManifestJSON: json.RawMessage(`{}`), Source: "function main(){}", PublisherIdentity: model.PluginPublisherLocal, SignatureState: model.PluginSignatureUnsigned, SourceKind: model.PluginSourceUpload}
+	instance, err := source.InstallPluginPackage(ctx, &installation, &pkg, "default")
 	must(err)
-	must(source.CreatePluginWebhook(ctx, &hook))
+	_, err = source.SetPluginGrant(ctx, model.PluginGrant{InstanceID: instance.ID, PackageID: pkg.ID, GrantJSON: json.RawMessage(`{"capabilities":{"state.read":{}}}`), ApprovedByUserID: user.ID}, 0)
+	must(err)
+	pluginSecret, err := security.EncryptSecret(sourceSecret, "plugin-secret", "plugin-test-secret")
+	must(err)
+	must(source.SetPluginSecret(ctx, instance.ID, "API_TOKEN", pluginSecret))
+	run := model.PluginRun{UUID: "prun_restore", InstallationID: installation.ID, InstanceID: instance.ID, PackageID: pkg.ID, PluginKey: installation.PluginKey, PluginVersion: "1.0.0", Trigger: model.PluginTriggerManual, IdempotencyKey: "restore-run", RecoveryGeneration: 1}
+	_, err = source.CreatePluginRun(ctx, &run)
+	must(err)
+	must(source.SetSettings(ctx, map[string]string{model.PluginSettingEnabled: "true"}))
 	backupSettingsPlain := `{"recovery_password":"backup-password","remote":{"access_key":"access","secret_key":"secret"}}`
 	backupSettingsWrapped, err := security.EncryptSecret(sourceSecret, "controller_backup_secret_config", backupSettingsPlain)
 	if err != nil {
@@ -167,16 +169,25 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	restoredHook, err := restored.GetPluginWebhook(ctx, hook.ID)
-	must(err)
-	hookSecret, err := security.DecryptSecret(targetSecret, model.PluginWebhookSecretPurpose(hook.ID), restoredHook.SecretEncrypted)
-	if err != nil || hookSecret != "hook-test-secret" || restoredHook.Enabled || restoredHook.Generation <= hook.Generation {
-		t.Fatal("restored webhook was not re-encrypted and invalidated", err)
+	if _, err := restored.GetPluginGrant(ctx, instance.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("restore preserved a plugin grant: %v", err)
 	}
-	restoredGrant, err := restored.GetPluginGrant(ctx, grant.ID)
+	restoredInstance, err := restored.GetPluginInstance(ctx, instance.ID)
+	if err != nil || !restoredInstance.PermissionReviewRequired {
+		t.Fatalf("restored instance must require a fresh permission review: %+v %v", restoredInstance, err)
+	}
+	restoredRun, err := restored.GetPluginRun(ctx, run.ID)
+	if err != nil || restoredRun.Status != model.PluginRunCancelled {
+		t.Fatalf("restored plugin run must be cancelled: %+v %v", restoredRun, err)
+	}
+	encryptedPluginSecret, err := restored.GetPluginSecretEncrypted(ctx, instance.ID, "API_TOKEN")
 	must(err)
-	if restoredGrant.RevokedAt == nil {
-		t.Fatal("restore preserved plugin authorization")
+	if plain, err := security.DecryptSecret(targetSecret, "plugin-secret", encryptedPluginSecret); err != nil || plain != "plugin-test-secret" {
+		t.Fatalf("plugin secret was not re-encrypted for the target installation: %v", err)
+	}
+	pluginSettings, err := restored.ListSettings(ctx)
+	if err != nil || pluginSettings[model.PluginSettingEnabled] != "false" || pluginSettings[model.PluginSettingSchedulerPaused] != "true" {
+		t.Fatalf("restore must disable plugin execution and pause scheduling: %v %v", pluginSettings, err)
 	}
 	settings, err := restored.ListSettings(ctx)
 	if err != nil || settings["backup-value"] != "present" {
