@@ -9819,120 +9819,20 @@ body:has(.dialog-layer) .main {
   line-height: 1.45;
 }
 
-.controller-update-stages {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
-  padding: 8px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-
-.controller-update-stage {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  border: 1px solid transparent;
-}
-
-.controller-update-stage > span {
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.controller-update-stage > div {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-}
-
-.controller-update-stage strong {
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.controller-update-stage small {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.controller-update-stage.active {
-  background: color-mix(in srgb, var(--primary) 8%, var(--surface-2));
-  border-color: color-mix(in srgb, var(--primary) 25%, transparent);
-}
-
-.controller-update-stage.active > span {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-contrast);
-}
-
-.controller-update-stage.active strong {
-  color: var(--text-strong);
-}
-
-.controller-update-stage.done > span {
-  border-color: color-mix(in srgb, var(--success) 34%, var(--border));
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.controller-update-install-progress {
-  height: 5px;
-  overflow: hidden;
-  background: var(--progress-track);
-  border-radius: var(--radius-full);
-}
-
-.controller-update-install-progress span {
-  display: block;
-  width: 100%;
-  height: 100%;
-  transform: scaleX(0.04);
-  transform-origin: left center;
-  background: var(--progress-info);
-  transition: transform 200ms ease-out;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .controller-update-install-progress span { transition: none; }
-}
-
 html:has(.controller-update-immersive-layer),
 body:has(.controller-update-immersive-layer) {
-  background: #0c0806;
+  background: #050505;
   color-scheme: dark;
 }
 
 .dialog-layer.controller-update-immersive-layer {
-  background: #0c0806;
+  background: #050505;
   color-scheme: dark;
   padding: 0;
 }
 
 .dialog-layer.controller-update-immersive-layer > .dialog-backdrop {
-  background: #0c0806;
+  background: #050505;
   backdrop-filter: none;
 }
 
@@ -9941,27 +9841,30 @@ body:has(.controller-update-immersive-layer) {
   height: 100%;
   max-width: none;
   border-radius: 0;
-  color: #eef1ff;
+  color: #f5f5f5;
   outline: none;
 }
 
 .controller-update-lightfield {
-  --lf-anchor: 42%;
-  --lf-orb: clamp(44px, 11vmin, 108px);
+  --text: #dedede;
+  --text-strong: #f5f5f5;
+  --text-secondary: #aaa;
+  --muted: #999;
+  --surface-2: #262626;
+  --border: #393939;
+  --primary: #e8e8e8;
+  --primary-contrast: #111;
+  --success: #36c494;
+  --danger: #f08e8e;
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  background: #0c0806 radial-gradient(ellipse at 50% 42%, #29170b 0%, #150d08 40%, #0c0806 72%);
+  overflow: auto;
+  background: #050505;
   isolation: isolate;
 }
 
-.controller-update-lightfield.lifted {
-  --lf-anchor: 20%;
-  --lf-orb: calc(clamp(44px, 11vmin, 108px) * 0.62);
-}
-
 .controller-update-lightfield canvas {
-  position: absolute;
+  position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -9969,32 +9872,30 @@ body:has(.controller-update-immersive-layer) {
 }
 
 .controller-update-immersive-head {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  position: relative;
   z-index: 1;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: max(20px, env(safe-area-inset-top)) 24px 0;
-  pointer-events: none;
+  width: min(760px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: max(32px, env(safe-area-inset-top)) 0 0;
 }
 
-.controller-update-immersive-head > * { pointer-events: auto; }
+.controller-update-eyebrow { display: block; margin-bottom: 14px; color: #777; font: 11px/1.2 ui-monospace, SFMono-Regular, monospace; letter-spacing: .16em; }
 
 .controller-update-immersive-head h2 {
   margin: 0;
-  color: #f4f6ff;
-  font-size: 17px;
+  color: #f5f5f5;
+  font-size: 22px;
   font-weight: 650;
   line-height: 1.35;
 }
 
 .controller-update-immersive-head p {
   margin: 2px 0 0;
-  color: rgba(222, 228, 255, 0.62);
+  color: #858585;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -10009,33 +9910,82 @@ body:has(.controller-update-immersive-layer) {
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--radius-full);
-  background: rgba(12, 16, 44, 0.46);
-  color: #eef1ff;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: #1a1a1a;
+  color: #f5f5f5;
   transition: background var(--duration-menu) var(--ease-standard), transform var(--duration-menu) cubic-bezier(0.175, 0.885, 0.32, 1.5);
 }
 
-.dialog-panel .controller-update-immersive-close:hover { background: rgba(24, 30, 72, 0.6); }
+.dialog-panel .controller-update-immersive-close:hover { background: #292929; }
 .dialog-panel .controller-update-immersive-close:active { transform: scale(0.97) translateY(1px); }
 
+.controller-update-immersive-content {
+  position: relative;
+  z-index: 1;
+  width: min(760px, calc(100% - 32px));
+  margin: 28px auto 0;
+  display: grid;
+  gap: 16px;
+}
+
+.controller-update-stepper {
+  width: fit-content;
+  max-width: 100%;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid #343434;
+  border-radius: 999px;
+  background: #171717;
+}
+.controller-update-stepper-item { display: flex; align-items: center; gap: 8px; padding: 0 9px; color: #666; }
+.controller-update-stepper-item + .controller-update-stepper-item::before { content: '—'; margin-right: 6px; color: #565656; }
+.controller-update-stepper-item > span { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; background: #303030; color: #999; font-size: 12px; font-weight: 700; }
+.controller-update-stepper-item small { font-size: 12px; }
+.controller-update-stepper-item.done { color: #a8a8a8; }
+.controller-update-stepper-item.active { padding: 4px 12px 4px 9px; border-radius: 999px; background: #f4f4f4; color: #171717; font-weight: 650; }
+.controller-update-stepper-item.active > span { background: #cacaca; color: #171717; }
+
+.controller-update-progress-card,
+.controller-update-live-card { border: 1px solid #373737; border-radius: 28px; background: #1a1a1a; box-shadow: 0 20px 54px rgba(0,0,0,.32); overflow: hidden; }
+.controller-update-progress-summary { display: flex; justify-content: space-between; align-items: flex-start; padding: 26px 30px 16px; }
+.controller-update-progress-kicker { display: block; margin-bottom: 5px; color: #858585; font-size: 12px; letter-spacing: .04em; }
+.controller-update-progress-summary strong { display: block; font-size: clamp(56px, 10vw, 82px); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.06em; }
+.controller-update-progress-summary strong small { margin-left: 5px; color: #777; font-size: .48em; letter-spacing: 0; }
+.controller-update-progress-state { margin-top: 5px; padding: 5px 9px; border-radius: 999px; background: #333; color: #aaa; font-size: 11px; }
+.controller-update-progress-state.success { color: #21bf8e; }
+.controller-update-progress-state.failed { color: #ef8e8e; }
+.controller-update-progress-track { height: 2px; margin: 0 30px 20px; background: #363636; overflow: hidden; }
+.controller-update-progress-track > span { display: block; height: 100%; width: 100%; transform-origin: left; background: #f4f4f4; transition: transform 360ms ease-out; }
+.controller-update-progress-stages { margin: 0; padding: 16px 30px 24px; list-style: none; border-top: 1px solid #343434; }
+.controller-update-progress-stages li { min-height: 35px; display: flex; align-items: center; gap: 14px; color: #565656; font-size: 14px; }
+.controller-update-progress-stages li.done { color: #959595; }
+.controller-update-progress-stages li.active { color: #f5f5f5; font-weight: 650; }
+.controller-update-progress-marker { width: 11px; height: 11px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; background: #303030; }
+.controller-update-progress-stages li.done .controller-update-progress-marker { width: 17px; height: 17px; margin-left: -3px; margin-right: -3px; background: #555; color: #eee; }
+.controller-update-progress-stages li.active .controller-update-progress-marker { background: #fff; box-shadow: 0 0 10px rgba(255,255,255,.3); }
+.controller-update-progress-stages li small { margin-left: auto; color: #888; font: 11px ui-monospace, SFMono-Regular, monospace; }
+
+.controller-update-live-head { display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid #303030; color: #888; font-size: 12px; letter-spacing: .05em; }
+.controller-update-live-lights { display: flex; gap: 6px; }
+.controller-update-live-lights i { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+.controller-update-live-head > strong { display: flex; align-items: center; gap: 10px; margin-left: auto; color: #1ab98b; font: 11px ui-monospace, SFMono-Regular, monospace; letter-spacing: .16em; }
+.controller-update-live-head > strong i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
+.controller-update-live-body { min-height: 80px; display: flex; align-items: center; gap: 16px; padding: 20px 24px; background: linear-gradient(110deg, #171d1f, #191919 68%); }
+.controller-update-live-body > span { color: #42bce9; font: 30px ui-monospace, SFMono-Regular, monospace; }
+.controller-update-live-body strong { display: block; color: #eee; font: 600 15px/1.4 ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
+.controller-update-live-body small { display: block; margin-top: 5px; color: #888; font-size: 11px; }
+
 .controller-update-immersive-dock {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(var(--lf-anchor) + var(--lf-orb) + 36px);
-  bottom: max(20px, env(safe-area-inset-bottom));
+  position: relative;
   z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  padding: 0 16px;
-  pointer-events: none;
-  transition: top 320ms var(--ease-standard);
+  width: min(760px, calc(100% - 32px));
+  margin: 16px auto max(24px, env(safe-area-inset-bottom));
 }
-
-.controller-update-immersive-dock > * { pointer-events: auto; }
 
 .dialog-panel .controller-update-lightfield-status {
   flex: 0 0 auto;
@@ -10047,19 +9997,17 @@ body:has(.controller-update-immersive-layer) {
   padding: 7px 12px 7px 14px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--radius-full);
-  background: rgba(12, 16, 44, 0.46);
-  color: #eef1ff;
+  background: #202020;
+  color: #efefef;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
   cursor: pointer;
   transition: background var(--duration-menu) var(--ease-standard), border-color var(--duration-menu) var(--ease-standard), transform var(--duration-menu) cubic-bezier(0.175, 0.885, 0.32, 1.5);
 }
 
 .dialog-panel .controller-update-lightfield-status:hover {
-  background: rgba(24, 30, 72, 0.6);
+  background: #303030;
   border-color: rgba(255, 255, 255, 0.24);
 }
 
@@ -10068,7 +10016,7 @@ body:has(.controller-update-immersive-layer) {
 }
 
 .controller-update-lightfield-status:focus-visible {
-  outline: 2px solid #aab6ff;
+  outline: 2px solid #fff;
   outline-offset: 2px;
 }
 
@@ -10094,8 +10042,8 @@ body:has(.controller-update-immersive-layer) {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #a9b6ff;
-  box-shadow: 0 0 0 0 rgba(169, 182, 255, 0.6);
+  background: #e8e8e8;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
 }
 
 .controller-update-lightfield-status.running .controller-update-lightfield-dot {
@@ -10122,9 +10070,9 @@ body:has(.controller-update-immersive-layer) {
 }
 
 @keyframes controller-update-dot-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(169, 182, 255, 0.6); }
-  70% { box-shadow: 0 0 0 8px rgba(169, 182, 255, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(169, 182, 255, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(255, 255, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
 }
 
 .controller-update-details {
@@ -10134,13 +10082,11 @@ body:has(.controller-update-immersive-layer) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface-solid) 92%, transparent);
+  color: #eee;
+  border: 1px solid #373737;
+  border-radius: 24px;
+  background: #1b1b1b;
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
   transform-origin: top center;
 }
 
@@ -10161,11 +10107,12 @@ body:has(.controller-update-immersive-layer) {
   justify-content: flex-end;
   gap: 8px;
   padding: 10px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid #373737;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .controller-update-lightfield-status.running .controller-update-lightfield-dot { animation: none; }
+  .controller-update-progress-track > span { transition: none; }
   .controller-update-lightfield-status,
   .controller-update-lightfield-status > svg { transition: none; }
 }
@@ -10175,7 +10122,14 @@ body:has(.controller-update-immersive-layer) {
 }
 
 @media (max-width: 640px) {
-  .controller-update-immersive-head { padding: max(14px, env(safe-area-inset-top)) 16px 0; }
+  .controller-update-immersive-head { padding-top: max(22px, env(safe-area-inset-top)); }
+  .controller-update-immersive-content { margin-top: 22px; gap: 12px; }
+  .controller-update-stepper-item { gap: 5px; padding: 0 4px; }
+  .controller-update-stepper-item + .controller-update-stepper-item::before { margin-right: 2px; }
+  .controller-update-stepper-item small { display: none; }
+  .controller-update-progress-summary { padding: 24px 24px 16px; }
+  .controller-update-progress-track { margin-inline: 24px; }
+  .controller-update-progress-stages { padding-inline: 24px; }
   .dialog-panel .controller-update-lightfield-status { font-size: 12px; }
   .controller-update-details-actions > button { flex: 1 1 auto; }
 }
@@ -10208,22 +10162,6 @@ body:has(.controller-update-immersive-layer) {
   .dialog.controller-update-install-dialog .controller-update-install-body {
     gap: 16px;
     padding: 14px 16px;
-  }
-  .controller-update-stages {
-    grid-template-columns: 1fr 1fr;
-    gap: 5px 6px;
-    padding: 6px 0;
-  }
-  .controller-update-stage {
-    padding: 4px 6px;
-    align-items: center;
-  }
-  .controller-update-stage small { display: none; }
-  .controller-update-stage strong { font-size: 11.5px; }
-  .controller-update-stage > span {
-    width: 20px;
-    height: 20px;
-    font-size: 10px;
   }
   .dialog.controller-update-install-dialog .dialog-actions {
     display: grid;

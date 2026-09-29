@@ -18,7 +18,7 @@ it.each([null, '#f8f9fb'])('restores browser chrome metadata after the update cl
   try {
     act(() => root.render(<ControllerUpdateLightfield mode="running" reduceMotion />))
     expect(document.querySelectorAll('meta[name="theme-color"]')).toHaveLength(1)
-    expect(document.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#0c0806')
+    expect(document.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#050505')
     act(() => root.unmount())
     expect(document.querySelector('meta[name="theme-color"]')).toBe(existing)
     if (existing) expect(existing.content).toBe(previous)
