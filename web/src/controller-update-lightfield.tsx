@@ -1,4 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { normalizeTheme, type ThemeName } from './theme'
 
 export type LightfieldMode = 'idle' | 'running' | 'success' | 'failed'
 
@@ -67,9 +68,9 @@ function spawnBeam(reach: number, random: () => number): Beam {
   }
 }
 
-type Engine = { setMode: (mode: LightfieldMode) => void; destroy: () => void }
+type Engine = { setMode: (mode: LightfieldMode) => void; setTheme: (theme: ThemeName) => void; destroy: () => void }
 
-function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial: LightfieldMode): Engine | null {
+function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial: LightfieldMode, initialTheme: ThemeName): Engine | null {
   let ctx: CanvasRenderingContext2D | null = null
   try { ctx = canvas.getContext('2d') } catch { ctx = null }
   if (!ctx) return null
@@ -82,6 +83,7 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
   let last = performance.now()
   let spawnCarry = 0
   let mode: LightfieldMode = initial
+  let theme = initialTheme
   const beams: Beam[] = []
   const start = performance.now()
   const idleRamp = lightfieldRamp('success')
@@ -112,7 +114,16 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
     if (reduceMotion) draw(now, 0)
   }
 
+  const setTheme = (next: ThemeName) => {
+    theme = next
+    if (reduceMotion) draw(performance.now(), 0)
+  }
+
   const drawBeams = (cx: number, cy: number, reach: number, stretch: number) => {
+    const beamColor = theme === 'dark' ? '235, 241, 248' : '62, 78, 99'
+    const beamTip = theme === 'dark' ? '255, 255, 255' : '41, 56, 76'
+    const beamMiddleOpacity = theme === 'dark' ? 0.5 : 0.25
+    const beamTipOpacity = theme === 'dark' ? 1 : 0.48
     for (const beam of beams) {
       const length = beam.length * stretch
       const inner = Math.max(0, beam.r - length)
@@ -134,9 +145,9 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
       const ox = cx + cos * outer
       const oy = cy + sin * outer
       const gradient = g.createLinearGradient(ix, iy, ox, oy)
-      gradient.addColorStop(0, 'rgba(235, 241, 248, 0)')
-      gradient.addColorStop(0.55, `rgba(235, 241, 248, ${alpha * 0.5})`)
-      gradient.addColorStop(1, `rgba(255, 255, 255, ${alpha})`)
+      gradient.addColorStop(0, `rgba(${beamColor}, 0)`)
+      gradient.addColorStop(0.55, `rgba(${beamColor}, ${alpha * beamMiddleOpacity})`)
+      gradient.addColorStop(1, `rgba(${beamTip}, ${alpha * beamTipOpacity})`)
       g.fillStyle = gradient
       g.beginPath()
       g.moveTo(ox + px * wOuter / 2, oy + py * wOuter / 2)
@@ -209,6 +220,7 @@ function createEngine(canvas: HTMLCanvasElement, reduceMotion: boolean, initial:
 
   return {
     setMode,
+    setTheme,
     destroy() {
       observer?.disconnect()
       if (frame) window.cancelAnimationFrame(frame)
@@ -229,29 +241,36 @@ function mulberry(seed: number) {
 }
 
 export function ControllerUpdateLightfield({ mode, reduceMotion, children }: { mode: LightfieldMode; reduceMotion?: boolean; children?: React.ReactNode }) {
+  const [theme, setTheme] = useState<ThemeName>(() => normalizeTheme(document.documentElement.dataset.theme))
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const engineRef = useRef<Engine | null>(null)
   const modeRef = useRef(mode)
   modeRef.current = mode
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(normalizeTheme(document.documentElement.dataset.theme)))
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
 
   useLayoutEffect(() => {
     const existing = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
     const meta = existing ?? document.createElement('meta')
     const previous = meta.getAttribute('content')
     meta.name = 'theme-color'
-    meta.content = '#050505'
+    meta.content = theme === 'dark' ? '#050505' : '#f8f9fb'
     if (!existing) document.head.appendChild(meta)
     return () => {
       if (!existing) meta.remove()
       else if (previous === null) meta.removeAttribute('content')
       else meta.content = previous
     }
-  }, [])
+  }, [theme])
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const engine = createEngine(canvas, Boolean(reduceMotion), modeRef.current)
+    const engine = createEngine(canvas, Boolean(reduceMotion), modeRef.current, theme)
     engineRef.current = engine
     return () => {
       engine?.destroy()
@@ -260,6 +279,7 @@ export function ControllerUpdateLightfield({ mode, reduceMotion, children }: { m
   }, [reduceMotion])
 
   useEffect(() => { engineRef.current?.setMode(mode) }, [mode])
+  useEffect(() => { engineRef.current?.setTheme(theme) }, [theme])
 
   return <div className={`controller-update-lightfield ${mode}`}>
     <canvas ref={canvasRef} aria-hidden="true" />

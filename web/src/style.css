@@ -9861,19 +9861,27 @@ body:has(.dialog-layer) .main {
 
 html:has(.controller-update-immersive-layer),
 body:has(.controller-update-immersive-layer) {
-  background: #050505;
-  color-scheme: dark;
+  background: #f8f9fb;
+  color-scheme: light;
 }
 
 .dialog-layer.controller-update-immersive-layer {
-  background: #050505;
-  color-scheme: dark;
+  background: #f8f9fb;
+  color-scheme: light;
   padding: 0;
 }
 
 .dialog-layer.controller-update-immersive-layer > .dialog-backdrop {
-  background: #050505;
+  background: #f8f9fb;
   backdrop-filter: none;
+}
+
+:root[data-theme="dark"]:has(.controller-update-immersive-layer),
+:root[data-theme="dark"] body:has(.controller-update-immersive-layer),
+:root[data-theme="dark"] .dialog-layer.controller-update-immersive-layer,
+:root[data-theme="dark"] .dialog-layer.controller-update-immersive-layer > .dialog-backdrop {
+  background: #050505;
+  color-scheme: dark;
 }
 
 .dialog-layer .dialog-panel.controller-update-immersive {
@@ -9881,7 +9889,8 @@ body:has(.controller-update-immersive-layer) {
   height: 100%;
   max-width: none;
   border-radius: 0;
-  color: #f5f5f5;
+  color: var(--text-strong);
+  background: transparent;
   outline: none;
 }
 
@@ -10128,6 +10137,96 @@ body:has(.controller-update-immersive-layer) {
   gap: 8px;
   padding: 10px 16px;
   border-top: 1px solid #373737;
+}
+
+:root:not([data-theme="dark"]) .controller-update-lightfield {
+  --text: #273244;
+  --text-strong: #17202d;
+  --text-secondary: #4b5563;
+  --muted: #667180;
+  --surface-2: #f1f4f8;
+  --border: #dce2ea;
+  --primary: #2563a8;
+  --primary-contrast: #fff;
+  --success: #087f5b;
+  --danger: #b42333;
+  background: #f8f9fb;
+  color-scheme: light;
+}
+
+:root:not([data-theme="dark"]) .controller-update-eyebrow { color: #647084; }
+:root:not([data-theme="dark"]) .controller-update-immersive-head h2 { color: #17202d; }
+:root:not([data-theme="dark"]) .controller-update-immersive-head p { color: #5f6b7c; }
+:root:not([data-theme="dark"]) .dialog-panel .controller-update-immersive-close {
+  border-color: #dce2ea;
+  background: #fff;
+  color: #273244;
+}
+:root:not([data-theme="dark"]) .dialog-panel .controller-update-immersive-close:hover { background: #f1f4f8; }
+:root:not([data-theme="dark"]) .controller-update-stepper {
+  border-color: #dce2ea;
+  background: #fff;
+}
+:root:not([data-theme="dark"]) .controller-update-stepper-item { color: #667180; }
+:root:not([data-theme="dark"]) .controller-update-stepper-item + .controller-update-stepper-item::before { color: #9aa4b2; }
+:root:not([data-theme="dark"]) .controller-update-stepper-item > span { background: #e8edf3; color: #5b6675; }
+:root:not([data-theme="dark"]) .controller-update-stepper-item.done { color: #4b5563; }
+:root:not([data-theme="dark"]) .controller-update-stepper-item.active { background: #273244; color: #fff; }
+:root:not([data-theme="dark"]) .controller-update-stepper-item.active > span { background: #fff; color: #273244; }
+:root:not([data-theme="dark"]) .controller-update-progress-card {
+  border-color: #dce2ea;
+  background: #fff;
+  box-shadow: 0 20px 54px rgb(35 51 72 / 10%);
+}
+:root:not([data-theme="dark"]) .controller-update-progress-stages li { color: #98a2b0; }
+:root:not([data-theme="dark"]) .controller-update-progress-stages li.done { color: #586475; }
+:root:not([data-theme="dark"]) .controller-update-progress-stages li.active { color: #17202d; }
+:root:not([data-theme="dark"]) .controller-update-progress-marker { background: #e8edf3; }
+:root:not([data-theme="dark"]) .controller-update-progress-stages li.done .controller-update-progress-marker { background: #576579; color: #fff; }
+:root:not([data-theme="dark"]) .controller-update-progress-stages li.active .controller-update-progress-marker {
+  background: #273244;
+  box-shadow: 0 0 0 4px rgb(39 50 68 / 10%);
+}
+:root:not([data-theme="dark"]) .controller-update-progress-stages li small { color: #5d6878; }
+:root:not([data-theme="dark"]) .dialog-panel .controller-update-lightfield-status {
+  border-color: #dce2ea;
+  background: #fff;
+  color: #273244;
+}
+:root:not([data-theme="dark"]) .dialog-panel .controller-update-lightfield-status:hover {
+  border-color: #b7c2d0;
+  background: #f1f4f8;
+}
+:root:not([data-theme="dark"]) .controller-update-lightfield-status:focus-visible { outline-color: #2563a8; }
+:root:not([data-theme="dark"]) .controller-update-lightfield-dot { background: #526780; }
+:root:not([data-theme="dark"]) .controller-update-lightfield-status.running .controller-update-lightfield-dot {
+  animation-name: controller-update-dot-pulse-light;
+}
+:root:not([data-theme="dark"]) .controller-update-lightfield-status.success .controller-update-lightfield-dot {
+  background: #087f5b;
+  box-shadow: 0 0 0 4px rgb(8 127 91 / 12%);
+}
+:root:not([data-theme="dark"]) .controller-update-lightfield-status.failed {
+  border-color: #e8b7be;
+  color: #a82635;
+}
+:root:not([data-theme="dark"]) .controller-update-lightfield-status.failed .controller-update-lightfield-dot {
+  background: #b42333;
+  box-shadow: 0 0 0 4px rgb(180 35 51 / 12%);
+}
+:root:not([data-theme="dark"]) .controller-update-lightfield-status.muted .controller-update-lightfield-dot { background: #8492a4; }
+:root:not([data-theme="dark"]) .controller-update-details {
+  border-color: #dce2ea;
+  background: #fff;
+  color: #273244;
+  box-shadow: 0 28px 70px rgb(35 51 72 / 15%);
+}
+:root:not([data-theme="dark"]) .controller-update-details-actions { border-top-color: #dce2ea; }
+
+@keyframes controller-update-dot-pulse-light {
+  0% { box-shadow: 0 0 0 0 rgb(82 103 128 / 30%); }
+  70% { box-shadow: 0 0 0 8px rgb(82 103 128 / 0%); }
+  100% { box-shadow: 0 0 0 0 rgb(82 103 128 / 0%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
