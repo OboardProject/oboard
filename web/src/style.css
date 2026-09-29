@@ -12359,6 +12359,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     grid-template-areas:
       "menu title status refresh"
       "picker picker picker picker";
+    column-gap: 4px;
     row-gap: 4px;
     margin-bottom: 12px;
     padding-bottom: 10px;
@@ -12372,6 +12373,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .mobile-menu-toggle { grid-area: menu; }
   .topbar-title-stage { grid-area: title; align-self: center; }
+  .proxy-path-topbar .topbar-title-stage { justify-self: start; text-align: left; }
   .topbar-title-stage h1 {
     margin: 0;
     font-size: 18px;
@@ -12420,6 +12422,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .proxy-flow { min-height: 560px; height: 68vh; }
   .proxy-editor-sidebar { top: 10px; left: 10px; width: min(280px, calc(100% - 20px)); max-height: calc(100% - 20px); }
   .proxy-editor-sidebar:has(.graph-toolbox.collapsed) {
+    top: 10px !important;
+    left: 10px !important;
     width: 44px;
     max-height: 44px;
   }
@@ -12444,7 +12448,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     height: 44px;
     min-height: 44px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     background: var(--surface-solid);
     box-shadow: var(--shadow-soft);
   }

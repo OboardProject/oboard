@@ -12618,9 +12618,9 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         </ReactFlow>
         {!initialViewportReady && <div className="graph-canvas-loading" role="status">正在整理画布…</div>}
         <div className="graph-workbench-bar" aria-label="画布工具">
-          <span className="graph-workbench-status" role="status" aria-live="polite">
-            {provisionalEdges.length ? (transportRequest || sourceSelectionRequest ? '等待确认连接' : '正在保存连接…') : `${selectedEntries.length} 个入口 · ${visibleProxyPaths.length} 条路径`}
-          </span>
+          {provisionalEdges.length > 0 && <span className="graph-workbench-status" role="status" aria-live="polite">
+            {transportRequest || sourceSelectionRequest ? '等待确认连接' : '正在保存连接…'}
+          </span>}
           <button type="button" className="ghost" onClick={() => fitGraphToSafeArea()} disabled={!nodes.length} title="只调整视角，不改变节点位置"><Search size={14} />查看全图</button>
           <button type="button" className="ghost" onClick={autoArrangeGraph} disabled={!nodes.length || pendingGraphNodeIDs.length > 0} title="整理当前画布并解除当前节点的手动固定"><Sliders size={14} />整理布局</button>
         </div>

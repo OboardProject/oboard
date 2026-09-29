@@ -296,7 +296,8 @@
     box-shadow: var(--canvas-shadow, 0 8px 24px rgb(15 23 42 / 10%));
     white-space: nowrap;
   }
-  .proxy-flow:has(.graph-workbench-bar) .proxy-graph-legend { top: 80px; right: 10px; }
+  .proxy-flow:has(.graph-workbench-bar) .proxy-graph-legend { top: 60px; right: 10px; }
+  .proxy-flow:has(.graph-workbench-status) .proxy-graph-legend { top: 80px; }
   .graph-selection-actions {
     left: 10px;
     right: 63px;
