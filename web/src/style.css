@@ -24440,7 +24440,6 @@ select:-webkit-autofill {
 .dns-status-strip small { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
 .dns-status-strip .has-error strong { color: var(--danger); }
 
-.dns-lists-card { padding-bottom: 22px; }
 .dns-settings-page { display: grid; gap: 18px; }
 .dns-policy-selection-toolbar {
   min-height: 44px;
@@ -24967,18 +24966,6 @@ button.dns-policy-row-main:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dns-list-toolbar { align-items: center; flex-direction: row; flex-wrap: wrap; }
-.dns-list-row { display: grid; grid-template-columns: auto minmax(0, 1fr); }
-.dns-list-row > .record-type { grid-column: 1; grid-row: 1; }
-.dns-list-row > .record-main { grid-column: 2; }
-.dns-list-row-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.dns-list-row-head strong { min-width: 0; }
 .dns-record-list > .empty-inline { padding: 32px 20px; color: var(--text-muted); text-align: center; }
 .dns-list-dialog {
   width: min(720px, calc(100vw - 32px));
@@ -25138,10 +25125,6 @@ button.dns-policy-row-main:focus {
   .dns-status-strip > span:last-child { border-bottom: 0; }
   .dns-settings-form { grid-template-columns: minmax(0, 1fr); }
 	.dns-group-grid { grid-template-columns: minmax(0, 1fr); }
-  .dns-list-row { grid-template-columns: minmax(0, 1fr); }
-  .dns-list-row > .record-type { display: none; }
-  .dns-list-row > .record-main { grid-column: 1; grid-row: 1; }
-  .dns-list-row .record-main small { white-space: normal; overflow-wrap: anywhere; }
   .dns-candidate-editor-head { align-items: stretch; flex-direction: column; }
   .dns-candidate-editor-head button { width: 100%; }
   .dns-candidate-columns { display: none; }
@@ -30783,4 +30766,95 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   .dialog-layer[data-surface-kind="compact"] > .dialog-panel.install-dialog {
     max-width: min(420px, calc(100vw - 24px));
   }
+}
+
+.settings-card.dns-lists-card { gap: 0; }
+.settings-card.dns-lists-card > .dns-list-toolbar {
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+}
+.dns-list-toolbar .ui-segmented-select { min-height: 38px; }
+.dns-list-toolbar .ui-segmented-select button { min-height: 30px; padding: 5px 12px; }
+.dns-list-toolbar > button { min-height: 38px; padding-block: 7px; }
+.settings-card.dns-lists-card > .dns-list-items {
+  width: 100%;
+  margin: 0;
+}
+.settings-card.dns-lists-card > .dns-list-items:last-child,
+.settings-card.dns-lists-card > .dns-list-empty:last-child { margin-bottom: 0; }
+.dns-list-item {
+  min-width: 0;
+  padding: 12px 20px;
+}
+.dns-list-item + .dns-list-item { border-top: 1px solid var(--border); }
+.dns-list-item-head { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; }
+.dns-list-item-head > strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dns-list-item.is-disabled .dns-list-item-head > strong { color: var(--text-secondary); }
+.dns-list-item-controls { display: flex; align-items: center; flex: 0 0 auto; gap: 4px; }
+.dns-list-item-controls .ui-badge {
+  min-height: 24px;
+  box-sizing: border-box;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+button.ghost.icon-button.dns-list-more {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border: 0 !important;
+  border-radius: var(--radius-sm);
+  background: transparent !important;
+}
+button.ghost.icon-button.dns-list-more:hover,
+.server-actions-dropdown.is-open > button.ghost.icon-button.dns-list-more { background: var(--surface-2) !important; }
+button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !important; }
+.dns-list-item-summary {
+  display: block;
+  min-width: 0;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.dns-list-item-pending { display: flex; align-items: center; gap: 5px; margin-top: 4px; color: var(--text-muted); }
+.dns-list-item.is-pending-delete { opacity: 0.72; }
+@media (prefers-reduced-motion: reduce) {
+  .dns-list-item-pending .spin { animation: none; }
+}
+.settings-card.dns-lists-card > .dns-list-empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+@media (max-width: 620px) {
+  .settings-card.dns-lists-card > .dns-list-toolbar { gap: 8px; padding: 10px 16px; }
+  .dns-list-toolbar .ui-segmented-select { min-height: 38px; }
+  .dns-list-toolbar .ui-segmented-select button { min-height: 30px; padding-inline: 10px; }
+  .dns-list-toolbar > button { min-height: 38px; }
+  .dns-list-item { padding-inline: 16px; }
 }

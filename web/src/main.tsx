@@ -18827,6 +18827,22 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
   </MotionDialogPanel>
 }
 
+function DNSListItem({ list, action, menuGroups }: { list: DNSList; action: string; menuGroups: OverflowMenuGroup[] }) {
+  const summary = `${Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')} · ${list.candidates.length} 个解析器 · ${list.usage_count} 台服务器`
+  return <div className={`dns-list-item${list.enabled ? '' : ' is-disabled'}${action === `delete-${list.id}` ? ' is-pending-delete' : ''}`}>
+    <div className="dns-list-item-head">
+      <strong title={list.name}>{list.name}</strong>
+      <div className="dns-list-item-controls">
+        {list.protected && <Badge variant="default">默认</Badge>}
+        <Badge variant={list.enabled ? 'success' : 'secondary'}>{list.enabled ? '启用' : '禁用'}</Badge>
+        <OverflowMenu groups={menuGroups} label={`${list.name} 的操作`} triggerClassName="ghost icon-button dns-list-more" />
+      </div>
+    </div>
+    <small className="dns-list-item-summary" title={summary}>{summary}</small>
+    {action.endsWith(`-${list.id}`) && <small className="dns-list-item-pending" role="status"><Loader2 size={14} className="spin" aria-hidden="true" />{action.startsWith('delete-') ? '正在删除，请等待确认…' : action.startsWith('toggle-') ? '正在更新状态…' : '正在设置默认列表…'}</small>}
+  </div>
+}
+
 function DNSListSettings({ data, client, load, notify, patchPageData }: any) {
   const mutations = useMutationCoordinator(useRefreshResources())
   const dialogs = useDialogs()
@@ -18943,25 +18959,10 @@ function DNSListSettings({ data, client, load, notify, patchPageData }: any) {
   const visible = lists.filter(list => list.kind === filter && isSharedDNSList(list))
   return <section className="settings-card dns-lists-card">
     <div className="settings-card-head dns-list-toolbar">
-      <Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select>
+      <Select variant="segmented" value={filter} aria-label="DNS 列表类型" onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select>
       <button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建解析列表</button>
     </div>
-    <div className="dns-record-list">{visible.length ? visible.map(list => <div className={`dns-record-row dns-list-row${listAction === `delete-${list.id}` ? ' is-pending-delete' : ''}`} key={list.id}>
-        <span className="record-type">{list.kind === 'encrypted' ? '加密' : '基础'}</span>
-        <div className="record-main">
-          <div className="dns-list-row-head">
-            <strong>{list.name}</strong>
-            <div className="record-badges">
-              <span className={`status-pill ${list.enabled ? 'ok' : 'warning'}`}>{list.enabled ? '启用' : '停用'}</span>
-              {list.protected && <span className="status-pill managed">默认</span>}
-            </div>
-            <div className="record-actions"><OverflowMenu groups={listMenuGroups(list)} label={`${list.name} 的操作`} /></div>
-          </div>
-          <span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span>
-          <small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用</small>
-          {listAction.endsWith(`-${list.id}`) && <small role="status"><Loader2 size={14} className="spin" aria-hidden="true" />{listAction.startsWith('delete-') ? '正在删除，请等待确认…' : listAction.startsWith('toggle-') ? '正在更新状态…' : '正在设置默认列表…'}</small>}
-        </div>
-      </div>) : <div className="empty-inline">暂无{filter === 'encrypted' ? '加密 DNS' : '默认 DNS'}列表</div>}</div>
+    {visible.length ? <div className="dns-list-items">{visible.map(list => <DNSListItem key={list.id} list={list} action={listAction} menuGroups={listMenuGroups(list)} />)}</div> : <div className="dns-list-empty"><p>暂无{filter === 'encrypted' ? '加密 DNS' : '默认 DNS'}列表</p><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建解析列表</button></div>}
     <AnimatePresence>{editorOpen && <DNSListDialog draft={draft} setDraft={setDraft} editing={editing} saving={working === 'save'} onCancel={closeEditor} onSave={() => void save()} />}</AnimatePresence>
   </section>
 }
