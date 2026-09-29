@@ -1,0 +1,19 @@
+{
+  "id": "example.external-api",
+  "name": "外部状态上报",
+  "version": "1.0.0",
+  "description": "把所选服务器的健康状态签名后上报到外部 API，失败时发送通知。",
+  "runtime": "oboard-js",
+  "entry": "main.js",
+  "capabilities": ["servers.read", "servers.health.read", "http.request", "secrets.use", "notifications.send"],
+  "http": { "hosts": ["api.statuspage.example.com"], "methods": ["POST"] },
+  "resources": { "servers": { "min": 1, "max": 20, "reason": "上报这些服务器的健康状态" } },
+  "environment": [
+    { "name": "SERVERS", "type": "servers", "label": "上报的服务器", "required": true, "min_items": 1, "max_items": 20 },
+    { "name": "ENDPOINT", "type": "url", "label": "上报地址", "required": true, "schemes": ["https"], "default": "https://api.statuspage.example.com/v1/reports" },
+    { "name": "API_TOKEN", "type": "secret", "label": "API 令牌", "required": true },
+    { "name": "SIGNING_KEY", "type": "secret", "label": "签名密钥", "required": true }
+  ],
+  "triggers": { "schedule": true },
+  "limits": { "timeout": "30s", "http_requests": 2 }
+}

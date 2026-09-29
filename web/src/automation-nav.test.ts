@@ -4,7 +4,7 @@ import { automationLandingTab, isAutomationNavTab, navTabVisible } from './autom
 describe('automation navigation', () => {
   it('treats plugin pages as the automation entry', () => {
     expect(isAutomationNavTab('plugins')).toBe(true)
-    expect(isAutomationNavTab('plugin-triggers')).toBe(true)
+    expect(isAutomationNavTab('plugin-triggers')).toBe(false)
     expect(isAutomationNavTab('plugin-runs')).toBe(true)
     expect(isAutomationNavTab('automation')).toBe(true)
     expect(isAutomationNavTab('settings')).toBe(false)

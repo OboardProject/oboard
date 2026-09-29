@@ -78,10 +78,31 @@
 | `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
 | `controller-db-20260830-snell-server-psk` | Controller | SQLite data backfill | `dev-befb1492dc9f` | 待发布 | 生效中 | - |
 | `controller-db-20260830-family-split-templates` | Controller | SQLite schema / data backfill | `dev-c4c3e44e42d9` | 待发布 | 生效中 | - |
+| `controller-db-20260930-plugin-capability-runtime` | Controller | SQLite schema / data removal / settings | `dev-ada0625d40d6` | 待发布 | 生效中 | - |
 | `controller-db-20260901-oauth-grant-dedupe` | Controller | SQLite schema / data backfill | `dev-8d86ca5fdbb4` | 待发布 | 生效中 | - |
 | `agent-kernel-20260902-runtime-config-digest` | Agent / kernel | wire protocol / rolling upgrade | `dev-fa897b03f1f8` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260930-plugin-capability-runtime
+
+- **引入日期：** 2026-09-30
+- **引入提交：** `OboardProject/oboard@ada0625d40d650d5c48826ee84a1acd8667ecca7`
+- **引入版本：** `dev-ada0625d40d6`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/plugin`
+- **类别：** SQLite schema / data removal / settings
+- **原因：** 插件系统改为基于能力的运行时（清单能力、实例授权、类型化环境变量、SecretRef、Agent 原生诊断）。旧运行时的版本、触发器绑定、授权、Webhook、声明式 UI、服务重启与主机电源能力均无对应模型，按要求不保留兼容层，旧插件数据直接清除。
+- **源状态：** `app_settings` 中不存在 `plugins.model=capability`；存在旧运行时表 `plugins`、`plugin_revisions`、`plugin_trigger_bindings`、`plugin_grants`、`plugin_trigger_states`、`plugin_runs`、`plugin_run_attempts`、`plugin_run_actions`、`plugin_state`、`plugin_run_logs`、`plugin_secrets`、`server_plugin_policies`、`plugin_installations`、`plugin_package_versions`、`plugin_installation_secrets`、`plugin_webhooks`、`plugin_webhook_deliveries`（及 `plugin_legacy_records`）和其触发器，以及旧 `plugins.*` 设置（含 `plugins.max_timeout_seconds=300`、`plugins.host_actions_enabled`）。
+- **目标状态：** 旧表与触发器全部删除，创建能力模型表 `plugin_installations`、`plugin_packages`、`plugin_instances`、`plugin_grants`、`plugin_secrets`、`plugin_state`、`plugin_schedules`、`plugin_runs`、`plugin_run_logs`、`plugin_audit_events`；所有旧 `plugins.*` 设置删除后写入当前默认值，`plugins.enabled=false`，`plugins.model=capability`。
+- **实现位置：** `oboard/internal/store/plugin_schema.go` 的 `migratePluginSchema` / `dropRetiredPluginRuntime`，由 `Store.migrate` 调用。
+- **更新脚本：** 无；Controller `Open()` 执行。备份恢复入口同样经过 `Open()`，旧备份恢复后也会被清理。
+- **数据影响：** 旧插件的源码、授权、加密密钥、私有状态、执行记录与 Webhook 永久删除；`event_outbox` 中除 `plugin.server.offline` / `plugin.server.recovered` 以外的 `plugin.*` 事件删除；`principal_id like 'plugin:%'` 且未完成的自动化 Changeset 标记为 `expired`。插件执行保持关闭，需要管理员按新清单重新安装、配置和授权。
+- **重复执行：** 仅在 `plugins.model` 不等于 `capability` 时清理；之后重启只执行 `create table if not exists` 与 `on conflict do nothing` 的默认设置，不会覆盖管理员之后的设置或数据。
+- **失败行为：** 单事务执行，任一步失败回滚并阻止 Controller 启动，不会留下半清理状态。
+- **回归测试：** `TestRetiredPluginRuntimeUpgradesToCapabilityModel`（夹具 `internal/store/testdata/plugin_runtime_03663a5.sql` 取自 `03663a5` 的真实旧库结构与数据）
+- **移除条件：** 最老直接升级版本与所有可恢复备份都已写入 `plugins.model=capability`；恢复入口拒绝缺少该标记的旧库并给出中转版本。
+- **移除状态：** 生效中
 
 ### agent-kernel-20260902-runtime-config-digest
 

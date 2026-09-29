@@ -4,19 +4,13 @@ package pluginsandbox
 
 import (
 	"fmt"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 )
 
-const (
-	seccompRetKillProcess = 0x80000000
-	seccompRetErrno       = 0x00050000
-	seccompRetAllow       = 0x7fff0000
-	seccompFilterTSync    = 1
-)
+const seccompFilterTSync = 1
 
 // deniedSyscalls can never succeed inside a runner: no new programs, no
 // processes, no sockets, no namespace or mount changes, no kernel keyrings,
@@ -40,33 +34,8 @@ func deniedSyscalls() []uint32 {
 	return out
 }
 
-// seccompProgram denies the syscalls above with EPERM and allows clone only
-// with CLONE_THREAD, which the Go runtime uses for threads; fork-style clones
-// are refused. A foreign architecture is killed outright.
 func seccompProgram() ([]bpf.RawInstruction, error) {
-	denied := deniedSyscalls()
-	n := len(denied)
-	if n > 200 {
-		return nil, fmt.Errorf("too many denied syscalls")
-	}
-	errno := uint32(seccompRetErrno | uint32(syscall.EPERM))
-	program := []bpf.Instruction{
-		bpf.LoadAbsolute{Off: 4, Size: 4},
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: auditArch, SkipTrue: 1},
-		bpf.RetConstant{Val: seccompRetKillProcess},
-		bpf.LoadAbsolute{Off: 0, Size: 4},
-	}
-	for i, nr := range denied {
-		program = append(program, bpf.JumpIf{Cond: bpf.JumpEqual, Val: nr, SkipTrue: uint8(n + 2 - i)})
-	}
-	program = append(program,
-		bpf.JumpIf{Cond: bpf.JumpEqual, Val: uint32(unix.SYS_CLONE), SkipFalse: 3},
-		bpf.LoadAbsolute{Off: 16, Size: 4},
-		bpf.JumpIf{Cond: bpf.JumpBitsSet, Val: unix.CLONE_THREAD, SkipTrue: 1},
-		bpf.RetConstant{Val: errno},
-		bpf.RetConstant{Val: seccompRetAllow},
-	)
-	return bpf.Assemble(program)
+	return buildSeccompProgram(auditArch, deniedSyscalls(), uint32(unix.SYS_CLONE))
 }
 
 // HardenRunner is called first thing inside the runner process. It lowers

@@ -1,0 +1,15 @@
+{
+  "id": "example.minimal",
+  "name": "服务器状态",
+  "version": "1.0.0",
+  "description": "读取一台服务器的基础状态。",
+  "runtime": "oboard-js",
+  "entry": "main.js",
+  "capabilities": ["servers.read"],
+  "resources": { "servers": { "min": 1, "max": 1, "reason": "读取所选服务器的状态" } },
+  "environment": [
+    { "name": "TARGET_SERVER", "type": "server", "label": "服务器", "required": true }
+  ],
+  "triggers": { "schedule": true },
+  "limits": { "timeout": "10s" }
+}

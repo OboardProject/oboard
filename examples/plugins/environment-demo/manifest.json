@@ -1,0 +1,29 @@
+{
+  "id": "example.environment-demo",
+  "name": "环境变量示例",
+  "version": "1.0.0",
+  "description": "展示全部环境变量类型、条件字段与自定义变量的读取方式。",
+  "runtime": "oboard-js",
+  "entry": "main.js",
+  "capabilities": ["servers.read", "state.read", "state.write", "secrets.use"],
+  "resources": { "servers": { "min": 1, "max": 8, "reason": "读取所选服务器的名称" } },
+  "environment": [
+    { "name": "LABEL", "type": "string", "label": "标签", "required": true, "max_length": 40, "default": "巡检" },
+    { "name": "NOTES", "type": "text", "label": "备注", "max_length": 500 },
+    { "name": "RETRIES", "type": "integer", "label": "重试次数", "min": 0, "max": 5, "default": 1 },
+    { "name": "THRESHOLD", "type": "number", "label": "告警阈值", "min": 0, "max": 100, "default": 80.5 },
+    { "name": "VERBOSE", "type": "boolean", "label": "详细日志", "default": false },
+    { "name": "MODE", "type": "select", "label": "模式", "required": true, "default": "basic",
+      "options": [{ "label": "基础", "value": "basic" }, { "label": "高级", "value": "advanced" }] },
+    { "name": "ADVANCED_WINDOW", "type": "duration", "label": "统计窗口", "min_duration": "1m", "max_duration": "1h", "default": "5m",
+      "depends_on": { "field": "MODE", "equals": "advanced" } },
+    { "name": "CHANNELS", "type": "multi_select", "label": "关注项", "options": [{ "label": "延迟", "value": "latency" }, { "label": "丢包", "value": "loss" }], "max_items": 2 },
+    { "name": "PRIMARY", "type": "server", "label": "主服务器", "required": true, "filter": ["enrolled"] },
+    { "name": "PEERS", "type": "servers", "label": "对照服务器", "max_items": 7 },
+    { "name": "DOCS_URL", "type": "url", "label": "说明链接", "schemes": ["https"] },
+    { "name": "EXTRA", "type": "json", "label": "附加参数", "default": { "tags": [] } },
+    { "name": "API_TOKEN", "type": "secret", "label": "示例密钥" }
+  ],
+  "triggers": { "schedule": true },
+  "limits": { "timeout": "15s" }
+}

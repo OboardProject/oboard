@@ -99,6 +99,8 @@ export function createAPIClientFactory(appPath: (path: string) => string, apiReq
         }
         const v2Error = payload?.error && typeof payload.error === 'object' ? payload.error : null
         const failure = apiRequestError({ error: v2Error?.message || payload?.error, message: payload?.message }, res)
+        if (v2Error?.code) Object.assign(failure, { code: v2Error.code })
+        if (v2Error?.details) Object.assign(failure, { details: v2Error.details })
         throw mutation ? markIndeterminateMutation(failure) : failure
       }
       if (mutation) observe(path, { ...(payload.data || {}), mutation_pending: false }, method)

@@ -1,0 +1,21 @@
+{
+  "id": "example.trace-monitor",
+  "name": "路由追踪监控",
+  "version": "1.0.0",
+  "description": "从所选服务器定期 Trace 与 Ping 目标，路径或丢包变化时通知。",
+  "runtime": "oboard-js",
+  "entry": "main.js",
+  "capabilities": ["servers.read", "network.ping", "network.trace", "state.read", "state.write", "notifications.send", "events.server_status"],
+  "resources": { "servers": { "min": 1, "max": 5, "reason": "在这些服务器上执行 Ping 与 Trace" } },
+  "environment": [
+    { "name": "SOURCES", "type": "servers", "label": "探测服务器", "required": true, "min_items": 1, "max_items": 5, "filter": ["enrolled"] },
+    { "name": "TARGET", "type": "string", "label": "目标域名或 IP", "required": true, "placeholder": "example.com", "max_length": 253 },
+    { "name": "MODE", "type": "select", "label": "Trace 方式", "default": "icmp",
+      "options": [{ "label": "ICMP", "value": "icmp" }, { "label": "UDP", "value": "udp" }, { "label": "TCP", "value": "tcp" }] },
+    { "name": "PORT", "type": "integer", "label": "TCP 端口", "min": 1, "max": 65535, "default": 443,
+      "depends_on": { "field": "MODE", "equals": "tcp" } },
+    { "name": "LOSS_ALERT", "type": "number", "label": "丢包告警阈值（%）", "min": 0, "max": 100, "default": 20 }
+  ],
+  "triggers": { "schedule": true, "events": ["server.online"] },
+  "limits": { "timeout": "2m", "agent_operations": 10 }
+}

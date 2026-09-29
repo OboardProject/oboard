@@ -242,10 +242,10 @@ func dropRetiredPluginRuntime(ctx context.Context, tx *sql.Tx) error {
 			return fmt.Errorf("plugin schema: drop %s: %w", table, err)
 		}
 	}
-	for _, key := range []string{"plugins.host_actions_enabled", "plugins.summary_retention_days", "plugins.controller_server_id"} {
-		if _, err := tx.ExecContext(ctx, `delete from app_settings where key=?`, key); err != nil {
-			return err
-		}
+	// Retired runtime policy (timeouts, retention, host actions) never carries
+	// over; the current defaults are inserted after the new tables exist.
+	if _, err := tx.ExecContext(ctx, `delete from app_settings where key like 'plugins.%'`); err != nil {
+		return err
 	}
 	ts := now()
 	// Old grants never carry over: plugin execution starts disabled and every

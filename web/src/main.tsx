@@ -1302,9 +1302,8 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计中心', desc: '汇总订阅更新、连接活动和管理操作，识别异常并提供可追溯的处理依据。', group: '运维' },
   automation: { label: '自动化', desc: '管理插件、MCP、审批策略、变更集与内置 AI。', group: '系统' },
-  plugins: { label: '插件', desc: '管理受限 JavaScript 插件、触发器和执行记录。', group: '系统' },
-  'plugin-triggers': { label: '插件触发器', desc: '查看插件定时与状态触发器。', group: '系统' },
-  'plugin-runs': { label: '插件执行', desc: '查看插件执行记录与动作阶段。', group: '系统' },
+  plugins: { label: '插件', desc: '安装、配置和授权基于能力的插件。', group: '系统' },
+  'plugin-runs': { label: '插件执行', desc: '查看插件执行记录与日志。', group: '系统' },
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
@@ -1324,7 +1323,7 @@ const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
-  plugins: 'operator', 'plugin-triggers': 'operator', 'plugin-runs': 'operator',
+  plugins: 'operator', 'plugin-runs': 'operator',
   nodes: 'none',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
@@ -1430,7 +1429,7 @@ function getTabIcon(x: string) {
   if (x === 'tasks') return <CheckSquare size={18} />
   if (x === 'audit') return <ClipboardList size={18} />
   if (x === 'automation') return <Bot size={18} />
-  if (x === 'plugins' || x === 'plugin-triggers' || x === 'plugin-runs') return <Code size={18} />
+  if (x === 'plugins' || x === 'plugin-runs') return <Code size={18} />
   if (x === 'dns') return <Globe size={18} />
   if (x === 'dns-records') return <Database size={18} />
   if (x === 'settings') return <SettingsIcon size={18} />
@@ -3163,7 +3162,7 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
   const role = data?.session?.role || data?.current_user?.role
   const isAdmin = canManageAdministratorAccounts(role)
   const isPluginsView = tab !== 'automation' || !isAdmin
-  const pluginTab = tab === 'plugin-triggers' || tab === 'plugin-runs' ? tab : 'plugins'
+  const pluginTab = tab === 'plugin-runs' ? tab : 'plugins'
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
   const [working, setWorking] = useState('')
   const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })

@@ -155,3 +155,19 @@ func TestPublisherSignature(t *testing.T) {
 		t.Fatalf("unknown signature format accepted: %v", err)
 	}
 }
+
+func TestCheckSourceNeverLoadsModulesOrSourceMaps(t *testing.T) {
+	for _, source := range []string{
+		"const fs = require('fs')\nfunction main() {}",
+		"function main() { return import('./x.js') }",
+		"function main() { importScripts('https://example.com/x.js') }",
+	} {
+		if err := CheckSource(source); err == nil {
+			t.Fatalf("module loader must be refused: %q", source)
+		}
+	}
+	// A source-map comment pointing at a host file must not be read or fail.
+	if err := CheckSource("function main() { return oboard.require }\n//# sourceMappingURL=/etc/passwd\n"); err != nil {
+		t.Fatalf("source-map comments must be ignored: %v", err)
+	}
+}

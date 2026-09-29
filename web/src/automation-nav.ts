@@ -1,5 +1,5 @@
 export function isAutomationNavTab(tab: string) {
-  return tab === 'automation' || tab === 'plugins' || tab === 'plugin-triggers' || tab === 'plugin-runs'
+  return tab === 'automation' || tab === 'plugins' || tab === 'plugin-runs'
 }
 
 export function navTabVisible(tab: string, canOpen: (page: string) => boolean) {

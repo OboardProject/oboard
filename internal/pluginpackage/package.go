@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -279,18 +280,26 @@ func CheckSource(source string) error {
 	if !utf8.ValidString(source) || strings.ContainsRune(source, 0) {
 		return plugin.FailField(plugin.CodeInvalidPackage, "main.js", "main.js must be UTF-8 text")
 	}
-	program, err := parser.ParseFile(nil, plugin.EntryFile, source, 0)
+	// Source-map comments must never make validation read host files.
+	program, err := parser.ParseFile(nil, plugin.EntryFile, source, 0, parser.WithDisableSourceMaps)
 	if err != nil {
 		return plugin.FailField(plugin.CodeInvalidPackage, "main.js", "syntax error: "+firstLine(err.Error()))
 	}
 	if _, err := goja.CompileAST(program, true); err != nil {
 		return plugin.FailField(plugin.CodeInvalidPackage, "main.js", "compile error: "+firstLine(err.Error()))
 	}
+	if loc := moduleLoader.FindStringIndex(source); loc != nil {
+		return plugin.FailField(plugin.CodeInvalidPackage, "main.js", "require, import and importScripts are not available: the runtime has no modules, use the oboard SDK")
+	}
 	if !declaresMain(program) {
 		return plugin.FailField(plugin.CodeInvalidPackage, "main.js", "main.js must declare a top-level function main(run)")
 	}
 	return nil
 }
+
+// moduleLoader matches a call to a module loader. The runtime defines none of
+// them, so such a plugin could only fail at run time.
+var moduleLoader = regexp.MustCompile(`(?:^|[^.\w$])(?:require|importScripts|import)\s*\(`)
 
 func declaresMain(program *ast.Program) bool {
 	for _, statement := range program.Body {

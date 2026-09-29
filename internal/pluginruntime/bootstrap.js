@@ -71,7 +71,7 @@
     return function (key, data, opts) {
       opts = opts || {};
       if (isSecret(key)) {
-        return call('crypto.hmac', { algorithm: algorithm, key: key.toJSON(), data: String(data), data_encoding: opts.input || 'utf8', output: opts.output || 'hex' });
+        return call('crypto.hmac', { algorithm: algorithm, key: key.toJSON(), data: String(data), data_encoding: opts.input || 'utf8', output: opts.output || 'hex' }).digest;
       }
       return cryptoCall('hmac', { algorithm: algorithm, key: String(key), key_encoding: opts.keyEncoding || 'utf8', data: String(data), data_encoding: opts.input || 'utf8', output: opts.output || 'hex' });
     };
