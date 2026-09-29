@@ -94,6 +94,7 @@
   .signal-plan-list tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px; padding: 12px; border-bottom: 1px solid var(--border); }
   .signal-plan-list tr:last-child { border-bottom: 0; }
   .signal-plan-list td { min-width: 0; padding: 0; border: 0; }
+  .signal-plan-list tbody tr:hover td { background: transparent; }
   .signal-plan-list td[data-label]:not(:first-child) { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .signal-plan-list td[data-label]:not(:first-child)::before { content: attr(data-label); color: var(--muted); font-size: 11px; }
   .signal-plan-list td:first-child { grid-column: 1; grid-row: 1; max-width: none; font-size: 16px; }
@@ -116,4 +117,8 @@
   .signal-plan-form .form, .user-plan-dialog .user-plan-dialog-layout { grid-template-columns: minmax(0, 1fr); }
   .signal-plan-content .plan-node-table .table-actions { position: sticky; right: 0; background: var(--surface); }
   .signal-plan-content .plan-node-table button { min-width: 40px; min-height: 40px; }
+}
+
+@media (max-width: 800px) and (hover: hover) {
+  .signal-plan-list tbody tr:hover { background: var(--primary-softer); }
 }
