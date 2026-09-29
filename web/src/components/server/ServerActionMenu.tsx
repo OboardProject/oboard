@@ -126,19 +126,7 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
           updateMenuPosition()
           setIsOpen(true)
         }}
-        className="ghost icon-button"
-        style={{
-          width: '44px',
-          height: '44px',
-          borderRadius: 'var(--radius-sm)',
-          border: '1px solid var(--border-color)',
-          display: 'grid',
-          placeContent: 'center',
-          cursor: 'pointer',
-          backgroundColor: isOpen ? 'var(--bg-control)' : 'var(--bg-card)',
-          color: 'var(--text-primary)',
-          transition: 'background-color 0.1s, border-color 0.1s',
-        }}
+        className="ghost icon-button server-action-menu-trigger"
         title="服务器操作"
         aria-label="打开服务器操作菜单"
         aria-haspopup="menu"

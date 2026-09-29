@@ -3913,28 +3913,12 @@ button.server-address-line.copied:hover {
   flex: 0 0 auto;
 }
 
-.server-card-head-actions .server-actions-dropdown > .icon-button {
-  position: relative;
-  width: 26px;
-  min-width: 26px;
-  height: 26px;
-  min-height: 26px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--text-muted);
-  box-shadow: none;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.server-card-head-actions .server-actions-dropdown > .icon-button:hover:not(:disabled),
-.server-card-head-actions .server-actions-dropdown > .icon-button:focus-visible,
-.server-card-head-actions .server-actions-dropdown.is-open > .icon-button {
-  background: var(--bg-control);
-  border-color: var(--border);
-  color: var(--text-primary);
-  box-shadow: none;
+.server-action-menu-trigger {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border-radius: var(--radius-sm);
 }
 
 .server-time-issue::before,
@@ -3942,12 +3926,6 @@ button.server-address-line.copied:hover {
   content: '';
   position: absolute;
   inset: -10px 0;
-}
-
-.server-card-head-actions .server-actions-dropdown > .icon-button::before {
-  content: '';
-  position: absolute;
-  inset: -8px -16px -8px 0;
 }
 
 .server-version-popover {
@@ -26871,11 +26849,6 @@ button.dns-policy-row-main:focus {
   min-height: var(--control-height);
 }
 
-.switch-inline-state {
-  color: var(--muted);
-  font-size: 13px;
-}
-
 /* Tooltip Z-Index & Overflow Layering Fixes */
 .form-field-help {
   overflow: visible !important;
@@ -27881,12 +27854,6 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.settings-switch-state {
-  color: var(--muted);
-  font-size: 11px;
-  white-space: nowrap;
 }
 
 .settings-row-control > input,
@@ -30247,18 +30214,60 @@ button.probe-preset-option:active {
   .return-latency-switch-row { gap: 12px; }
 }
 
-.server-monitor-target-button {
+.server-card-head-actions .server-action-menu-trigger,
+.server-card-quality-head .server-monitor-target-button {
   position: relative;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  min-height: 24px;
-  padding: 4px;
+  flex: 0 0 36px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 0 !important;
   border-radius: var(--radius-sm);
+  background: transparent !important;
+  box-shadow: none !important;
   vertical-align: middle;
-  color: var(--text-secondary);
+  color: var(--text-secondary) !important;
+}
+.server-card-head-actions .server-action-menu-trigger::before,
+.server-card-quality-head .server-monitor-target-button::before {
+  position: absolute;
+  inset: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  content: '';
+  pointer-events: none;
+}
+.server-card-head-actions .server-action-menu-trigger:is(:hover, :focus-visible)::before,
+.server-card-head-actions .server-actions-dropdown.is-open > .server-action-menu-trigger::before,
+.server-card-quality-head .server-monitor-target-button:is(:hover, :focus-visible)::before {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+}
+.server-card-head-actions .server-action-menu-trigger svg,
+.server-card-quality-head .server-monitor-target-button svg {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+}
+@media (max-width: 767px) {
+  .server-card-head-actions .server-action-menu-trigger,
+  .server-card-quality-head .server-monitor-target-button {
+    flex-basis: 44px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .server-card-head-actions .server-action-menu-trigger::before,
+  .server-card-quality-head .server-monitor-target-button::before { inset: 7px; }
 }
 .server-monitor-target-button:focus-visible {
   outline: 2px solid var(--primary);
