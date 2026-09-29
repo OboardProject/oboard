@@ -34,7 +34,15 @@ describe('SettingsLayout', () => {
     expect(container.querySelector('h3')?.textContent).toBe('通知')
     expect(container.querySelector('[role="switch"]')).not.toBeNull()
     expect(container.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('true')
-    expect(container.textContent).toContain('已开启')
+    expect(container.querySelector('[role="switch"]')?.getAttribute('aria-label')).toBe('启用通知')
+    expect(container.textContent).not.toContain('已开启')
+    act(() => root.render(
+      <SettingsGroup title="通知">
+        <SettingsSwitchRow label="启用通知" checked={false} onChange={() => undefined} ariaLabel="启用通知" />
+      </SettingsGroup>,
+    ))
+    expect(container.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false')
+    expect(container.textContent).not.toContain('已关闭')
   })
 
   it('associates field labels with native inputs and custom selectors', () => {

@@ -14684,7 +14684,6 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
         <FormField label="为此入口自动微调" hint="只改变长度区间，不改变 stop、包编号或 c 的结构。">
           <div className="switch-setting-row switch-inline-control">
             <Switch checked={selection.auto_tune !== false} onChange={checked => update({ anytls_padding: { ...selection, auto_tune: checked } })} ariaLabel="为此入口自动微调" />
-            <span className="switch-inline-state">{selection.auto_tune !== false ? '已开启' : '已关闭'}</span>
           </div>
         </FormField>
       </div>
