@@ -152,6 +152,11 @@ func TestAgentInstallCommandCarriesStealthSwitch(t *testing.T) {
 
 func TestAgentInstallScriptStealthBranch(t *testing.T) {
 	script := testAgentInstallScript(t)
+	syntax := exec.Command(testPOSIXShell(t), "-n")
+	syntax.Stdin = strings.NewReader(script)
+	if output, err := syntax.CombinedOutput(); err != nil {
+		t.Fatalf("Agent installer shell syntax is invalid: %v\n%s", err, output)
+	}
 	for _, want := range []string{
 		"STEALTH_MODE=${OBOARD_INSTALL_STEALTH:-0}",
 		"-stealth-bootstrap",
@@ -179,8 +184,8 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 	if !strings.Contains(updateBranch, `if [ "$STEALTH_MODE" = 1 ]; then`) || !strings.Contains(updateBranch, `verify_downloaded_release "$tmp/release-manifest.json"`) || !strings.Contains(updateBranch, `restart_managed_service "$STEALTH_AGENT_SERVICE"`) {
 		t.Fatal("security-process script update must verify the signed release and restart the recorded service")
 	}
-	if !strings.Contains(script, "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装") {
-		t.Fatal("uninstall must refuse stealth installs with guidance")
+	if !strings.Contains(script, "主控记录的安全进程布局与本机安装不一致，未卸载任何文件") || !strings.Contains(script, "rm -rf \"$(dirname \"$STEALTH_CONFIG_PATH\")\" \"$STEALTH_STATE_DIR\" \"/run/$LAYOUT_STAGING_PREFIX-tun\"") {
+		t.Fatal("security-process uninstall must validate and clean the recorded layout")
 	}
 }
 
@@ -283,8 +288,11 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(command, "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) || !strings.Contains(result["update_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) {
-		t.Fatal("installation and script update must use the same Controller-recorded layout")
+	if !strings.Contains(command, "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) || !strings.Contains(result["update_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) || !strings.Contains(result["uninstall_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) {
+		t.Fatal("installation, update and uninstall must use the same Controller-recorded layout")
+	}
+	if !strings.Contains(result["uninstall_command"].(string), "OBOARD_ACTION='uninstall'") {
+		t.Fatal("security-process uninstall command has the wrong action")
 	}
 	again := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)
 	if !strings.Contains(again["update_command"].(string), "OBOARD_STEALTH_LAYOUT="+shellSingleQuote(layout)) {

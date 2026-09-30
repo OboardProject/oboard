@@ -6824,7 +6824,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   const [editServer, setEditServer] = useState<Server | null>(null)
   const [extendServer, setExtendServer] = useState<Server | null>(null)
   const [agentConfigServer, setAgentConfigServer] = useState<Server | null>(null)
-  const [installTarget, setInstallTarget] = useState<{ server: Server; command?: string; updateCommand?: string; windowsCommand?: string; loading?: boolean; error?: string } | null>(null)
+  const [installTarget, setInstallTarget] = useState<{ server: Server; command?: string; updateCommand?: string; uninstallCommand?: string; windowsCommand?: string; loading?: boolean; error?: string } | null>(null)
   const enrollRequestRef = useRef(0)
   const [logServer, setLogServer] = useState<Server | null>(null)
   const [networkServer, setNetworkServer] = useState<{ server: Server; tab: 'overview' | 'traffic' | 'settings' | 'dns' | 'mtu' | 'diagnostics' } | null>(null)
@@ -7100,7 +7100,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     try {
       const res = await client.request(`/servers/${s.id}/enroll-token`, { method: 'POST', body: '{}' })
       if (request !== enrollRequestRef.current) return
-      setInstallTarget({ server: s, command: res.install_command, updateCommand: res.update_command, windowsCommand: res.windows_install_command })
+      setInstallTarget({ server: s, command: res.install_command, updateCommand: res.update_command, uninstallCommand: res.uninstall_command, windowsCommand: res.windows_install_command })
     } catch (error) {
       if (request !== enrollRequestRef.current) return
       setInstallTarget({ server: s, error: error instanceof Error ? error.message : '获取命令失败，请重试。' })
@@ -7739,7 +7739,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     {monitoringServer && <ServerMonitoringTargetDialog key={monitoringServer.id} server={monitoringServer} client={client} onClose={() => setMonitoringServer(null)} onSaved={updated => { setServers(current => current.map(server => server.id === updated.id ? updated : server)); notify?.('默认监控目标已保存', 'success') }} />}
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
-    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} updateCommand={installTarget.updateCommand} windowsInstallCommand={installTarget.windowsCommand} loading={Boolean(installTarget.loading)} error={installTarget.error} onRetry={() => void enroll(installTarget.server)} controllerURL={effectiveControllerURL(data)} onUpdate={updateAgent} onClose={() => { enrollRequestRef.current++; setInstallTarget(null) }} />}</AnimatePresence>
+    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} updateCommand={installTarget.updateCommand} uninstallCommand={installTarget.uninstallCommand} windowsInstallCommand={installTarget.windowsCommand} loading={Boolean(installTarget.loading)} error={installTarget.error} onRetry={() => void enroll(installTarget.server)} controllerURL={effectiveControllerURL(data)} onUpdate={updateAgent} onClose={() => { enrollRequestRef.current++; setInstallTarget(null) }} />}</AnimatePresence>
     <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     </div>
@@ -7882,7 +7882,7 @@ function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Serv
   </MotionDialogPanel>
 }
 
-function AgentInstallDialog({ server, installCommand, updateCommand, windowsInstallCommand, loading, error, onRetry, controllerURL, onUpdate, onClose }: { server: Server; installCommand?: string; updateCommand?: string; windowsInstallCommand?: string; loading: boolean; error?: string; onRetry: () => void; controllerURL: string; onUpdate: (server: Server) => Promise<void>; onClose: () => void }) {
+function AgentInstallDialog({ server, installCommand, updateCommand, uninstallCommand, windowsInstallCommand, loading, error, onRetry, controllerURL, onUpdate, onClose }: { server: Server; installCommand?: string; updateCommand?: string; uninstallCommand?: string; windowsInstallCommand?: string; loading: boolean; error?: string; onRetry: () => void; controllerURL: string; onUpdate: (server: Server) => Promise<void>; onClose: () => void }) {
   const isOnline = String(server.status || '').toLowerCase() === 'online'
   const stealthActive = isStealthAgent(server)
   const [action, setAction] = useState<'install' | 'update' | 'uninstall'>(isOnline ? 'update' : 'install')
@@ -7895,10 +7895,10 @@ function AgentInstallDialog({ server, installCommand, updateCommand, windowsInst
     : action === 'update'
       ? '从当前面板更新 Agent 和内核，保留配置。'
       : '移除 Agent、内核和本机配置。'
-  const showCommand = action === 'install' || action === 'update' && Boolean(updateCommand) || !stealthActive
+  const showCommand = action === 'install' || action === 'update' && Boolean(updateCommand) || action === 'uninstall' && Boolean(uninstallCommand) || !stealthActive
   const command = windows
     ? action === 'install' ? windowsInstallCommand || '' : agentWindowsScriptCommand(controllerURL, action)
-    : action === 'install' ? installCommand || '' : action === 'update' && stealthActive && updateCommand ? updateCommand : agentScriptCommand(controllerURL, action)
+    : action === 'install' ? installCommand || '' : action === 'update' && stealthActive && updateCommand ? updateCommand : action === 'uninstall' && stealthActive && uninstallCommand ? uninstallCommand : agentScriptCommand(controllerURL, action)
   const description = windows && action === 'install' ? '安装 Agent 和内核并注册为 Windows 服务。' : actionDescription
   return <MotionDialogPanel onCancel={onClose} className="install-dialog" surfaceMotion="compact" aria-labelledby="agent-install-title">
       <header className="dialog-head">
@@ -7917,7 +7917,7 @@ function AgentInstallDialog({ server, installCommand, updateCommand, windowsInst
           <option value="windows">Windows</option>
         </Select>}
         </div>
-        {!showCommand && action === 'uninstall' && <p className="muted">安全进程请通过面板的服务器删除操作卸载。</p>}
+        {!showCommand && action === 'uninstall' && <p className="muted">暂未取得安全进程卸载命令，请重试获取。</p>}
         <div className="install-command-current">
           {loading ? <p className="muted" role="status">正在获取命令…</p> : error ? <div className="install-command-error"><p role="alert">{error}</p><button type="button" onClick={onRetry}>重试</button></div> : showCommand ? <InstallCommandCard title={actionTitle} desc={description} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} /> : action === 'update' && isOnline ? <button type="button" onClick={() => { onClose(); void onUpdate(server) }}>从面板更新 Agent</button> : action === 'update' ? <p>Agent 当前离线。请重新获取接入命令并选择“安装”。</p> : null}
         </div>

@@ -6220,7 +6220,7 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	command = strings.Replace(command, `"$OBOARD_ENROLL_TOKEN"`, shellSingleQuote(token), 1)
 	response := map[string]any{"enrollment_token": token, "install_command": command, "expires_at": expiresAt, "expires_in_seconds": int(enrollmentTokenTTL.Seconds())}
-	if srv.StealthEnabled {
+	if srv.StealthEnabled || serverSupportsCapability(*srv, "stealth_active_v1") {
 		update, err := s.agentStealthUpdateCommand(r.Context(), id)
 		if err != nil {
 			fail(w, err, 500)
@@ -6228,6 +6228,14 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		}
 		if update != "" {
 			response["update_command"] = update
+		}
+		uninstall, err := s.agentStealthScriptCommand(r.Context(), id, "uninstall")
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		if uninstall != "" {
+			response["uninstall_command"] = uninstall
 		}
 	}
 	// The security-process layout is Linux-only, so a stealth server gets no
@@ -16445,7 +16453,7 @@ choose_install_dir() {
 }
 
 resolve_agent_install_dir() {
-  if [ "$ACTION" = update ] && [ "$STEALTH_MODE" = 1 ]; then
+  if [ "$STEALTH_MODE" = 1 ] && { [ "$ACTION" = update ] || [ "$ACTION" = uninstall ]; }; then
     INSTALL_DIR=$STEALTH_INSTALL_DIR
     CONFIG_PATH=$STEALTH_CONFIG_PATH
     STATE_DIR=$STEALTH_STATE_DIR
@@ -16799,6 +16807,7 @@ verify_core_runtime() {
 read_stealth_layout() {
   [ -n "${OBOARD_STEALTH_LAYOUT:-}" ] || { echo "缺少主控生成的安全进程布局；请重新获取安装或更新命令。" >&2; return 1; }
   if ! command -v python3 >/dev/null 2>&1; then
+    if [ "$ACTION" = uninstall ]; then echo "缺少 python3，无法校验安全进程布局。" >&2; return 1; fi
     if command -v pacman >/dev/null 2>&1; then pkg_install python || return 1
     else pkg_install python3 || return 1
     fi
@@ -16837,12 +16846,44 @@ if [ "$STEALTH_MODE" = 1 ]; then
 fi
 resolve_agent_install_dir
 
-if [ "$ACTION" = uninstall ] && [ "$STEALTH_MODE" = 1 ]; then
-  echo "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装；请通过面板卸载 Agent。" >&2
-  exit 1
-fi
-
 if [ "$ACTION" = uninstall ]; then
+  if [ "$STEALTH_MODE" = 1 ]; then
+    if [ ! -x "$STEALTH_AGENT_BIN" ] || [ ! -s "$STEALTH_CONFIG_PATH" ] || [ ! -s "$STEALTH_KEY_PATH" ]; then
+      echo "主控记录的安全进程布局与本机安装不一致，未卸载任何文件。" >&2
+      exit 1
+    fi
+    if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+      systemctl stop "$STEALTH_AGENT_SERVICE" "$STEALTH_CORE_SERVICE" 2>/dev/null || true
+      if systemctl is-active --quiet "$STEALTH_AGENT_SERVICE" || systemctl is-active --quiet "$STEALTH_CORE_SERVICE"; then
+        echo "安全进程服务仍在运行，未删除文件。" >&2
+        exit 1
+      fi
+      systemctl disable "$STEALTH_AGENT_SERVICE" "$STEALTH_CORE_SERVICE" 2>/dev/null || true
+      rm -f "/etc/systemd/system/$STEALTH_AGENT_SERVICE.service" "/etc/systemd/system/$STEALTH_CORE_SERVICE.service"
+      systemctl daemon-reload || true
+    elif command -v rc-service >/dev/null 2>&1; then
+      rc-service "$STEALTH_AGENT_SERVICE" stop 2>/dev/null || true
+      rc-service "$STEALTH_CORE_SERVICE" stop 2>/dev/null || true
+      if rc-service "$STEALTH_AGENT_SERVICE" status >/dev/null 2>&1 || rc-service "$STEALTH_CORE_SERVICE" status >/dev/null 2>&1; then
+        echo "安全进程服务仍在运行，未删除文件。" >&2
+        exit 1
+      fi
+      rc-update del "$STEALTH_AGENT_SERVICE" default 2>/dev/null || true
+      rc-update del "$STEALTH_CORE_SERVICE" default 2>/dev/null || true
+      rm -f "/etc/init.d/$STEALTH_AGENT_SERVICE" "/etc/init.d/$STEALTH_CORE_SERVICE"
+    else
+      echo "未识别服务管理器，未卸载安全进程。" >&2
+      exit 1
+    fi
+    rm -f "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN" "$STEALTH_INSTALL_DIR/obag"
+    rmdir "$STEALTH_INSTALL_DIR" 2>/dev/null || true
+    if [ "$OBOARD_PURGE" = 1 ]; then
+      rm -rf "$(dirname "$STEALTH_CONFIG_PATH")" "$STEALTH_STATE_DIR" "/run/$LAYOUT_STAGING_PREFIX-tun"
+      rm -f "/var/log/$LAYOUT_AGENT_LOG_NAME.log"* "/var/log/$LAYOUT_CORE_LOG_NAME.log"* "/run/$LAYOUT_SOCKET_NAME.sock"
+    fi
+    echo "安全进程 Agent 和内核已卸载。"
+    exit 0
+  fi
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     systemctl stop oboard-agent oboard-sb 2>/dev/null || true
     systemctl disable oboard-agent oboard-sb 2>/dev/null || true
@@ -18038,7 +18079,7 @@ case "$ACTION" in
         exit 1
       fi
       echo "安装完成：Agent 已重新安装并以安全进程模式运行，安装目录、进程、服务与文件名均已随机化，旧 Agent 已清理。"
-      echo "此服务器后续请通过面板完成 Agent 更新与卸载。"
+      echo "此服务器后续可通过面板获取更新与卸载命令。"
     else
       download_binaries
       persist_agent_install_dir

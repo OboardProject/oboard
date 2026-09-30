@@ -178,6 +178,10 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serve
 }
 
 func (s *Server) agentStealthUpdateCommand(ctx context.Context, serverID int64) (string, error) {
+	return s.agentStealthScriptCommand(ctx, serverID, "update")
+}
+
+func (s *Server) agentStealthScriptCommand(ctx context.Context, serverID int64, action string) (string, error) {
 	base, err := s.publicBaseURL(ctx)
 	if err != nil {
 		return "", err
@@ -189,7 +193,7 @@ func (s *Server) agentStealthUpdateCommand(ctx context.Context, serverID int64) 
 	if layout == "" {
 		return "", nil
 	}
-	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(base, "/")+"/install/agent.sh") + " | env OBOARD_ACTION=update OBOARD_INSTALL_STEALTH=1 OBOARD_STEALTH_LAYOUT=" + shellSingleQuote(layout) + " sh", nil
+	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(base, "/")+"/install/agent.sh") + " | env OBOARD_ACTION=" + shellSingleQuote(action) + " OBOARD_INSTALL_STEALTH=1 OBOARD_STEALTH_LAYOUT=" + shellSingleQuote(layout) + " sh", nil
 }
 
 // agentStealthInstallEnv renders the transport parameters appended to the
@@ -230,13 +234,20 @@ func (s *Server) registerServerLifecycleOperations() {
 		view := enrollmentServerView(*srv)
 		public := map[string]any{"server": view, "enrollment_expires_at": expiresAt}
 		oneTime := map[string]any{"server": view, "enrollment_expires_at": expiresAt, "enrollment_token": token}
-		if srv.StealthEnabled {
+		if srv.StealthEnabled || serverSupportsCapability(*srv, "stealth_active_v1") {
 			update, err := s.agentStealthUpdateCommand(ctx, srv.ID)
 			if err != nil {
 				return nil, err
 			}
 			if update != "" {
 				oneTime["update_command"] = update
+			}
+			uninstall, err := s.agentStealthScriptCommand(ctx, srv.ID, "uninstall")
+			if err != nil {
+				return nil, err
+			}
+			if uninstall != "" {
+				oneTime["uninstall_command"] = uninstall
 			}
 		}
 		return automation.MutationResult{Public: public, OneTime: oneTime}, nil
