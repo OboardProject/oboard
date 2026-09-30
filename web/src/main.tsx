@@ -3,6 +3,7 @@ import { SegmentedProgress } from './components/ui/segmented-progress'
 import './styles/resource-forms.css'
 import './styles/dashboard.css'
 import { ControllerBackupPanel } from './features/backups/Backups'
+import { UpdateVersionSummary, AgentUpdateSummary, agentUpdateCompletion, formatAgentUpdateError } from './features/backups/update-presentation'
 import { Tasks, taskServerLabel } from './features/tasks/Tasks'
 import { Panel } from './shared/Panel'
 import { cell, formatTableTime, labelValue, formatBytes, formatDate, timeCorrectionModeLabel } from './shared/presentation'
@@ -4237,7 +4238,6 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const [installConnectionInterrupted, setInstallConnectionInterrupted] = useState(false)
   const [installFailure, setInstallFailure] = useState('')
   const [installSkipBackup, setInstallSkipBackup] = useState(true)
-  const shouldReduceMotion = useReducedMotion()
   const installExpectedRef = useRef(false)
   const cancelExpectedRef = useRef(false)
   const installRequestPendingRef = useRef(false)
@@ -4528,9 +4528,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     }
   }
   const labels: Record<string, string> = {
-    loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', downloading: '下载中', ready: '文件已准备好', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
+    loading: '读取中', idle: '等待检查', checking: '正在检查', current: '已是最新', available: '发现新版本', downloading: '下载中', ready: '文件已准备好', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
   }
-  const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
   const statusTone = isControllerUpdateFailedStatus(snapshot.status, snapshot.last_error) ? 'danger' : snapshot.update_available || isControllerUpdateInProgressStatus(snapshot.status) ? 'warning' : 'ok'
   const updateInProgress = installExpected || isControllerUpdateInProgressStatus(snapshot.status)
   const channelSelectDisabled = updateInProgress || snapshot.status === 'checking' || snapshot.status === 'unavailable'
@@ -4538,8 +4537,6 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const expectedAgentVersion = String(data.version?.agent_expected_version || '').trim()
   const expectedAgentBuild = String(data.version?.agent_expected_build || '').trim()
   const expectedAgentLabel = expectedAgentVersion ? `${expectedAgentVersion}${expectedAgentBuild ? ` · 构建 ${expectedAgentBuild}` : ''}` : '暂无构建信息'
-  const updateLayout = shouldReduceMotion ? false : 'position'
-  const updateLayoutTransition = { duration: shouldReduceMotion ? 0 : 0.28, ease: 'easeOut' as const }
   const openUpdateDiagnostics = () => {
     setInstallFailure(localizeErrorMessage(snapshot.last_error || '主控更新未能完成，请检查更新状态。'))
     setInstallPhase('failed')
@@ -4552,41 +4549,27 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     controllerUpdateDiagnosticsTrigger(installDiagnosticsReason, installPhase, installStartedAt || installTargetBuildRef.current),
     () => client.request('/controller-update/diagnostics') as Promise<ControllerUpdateDiagnostics>,
   )
-  return <section className="settings-card controller-update-card">
-    <m.div layout={updateLayout} transition={updateLayoutTransition} className="settings-card-head controller-update-head">
-      <m.div layout={updateLayout} transition={updateLayoutTransition} className="controller-update-heading"><h3>更新</h3><p className="muted">更新通道 · {channelLabel}</p></m.div>
-      <AnimatePresence initial={false} mode="popLayout">
-        {snapshot.channel === 'dev' && <m.div
-          layout={updateLayout}
-          initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.98 }}
-          transition={updateLayoutTransition}
-          className="controller-update-warning"
-          role="status"
-        ><Info size={17} /><span><strong>开发版更新频繁</strong><small>可能包含尚未稳定的功能。</small></span></m.div>}
-      </AnimatePresence>
-      <m.span layout={updateLayout} transition={updateLayoutTransition} className={`status-pill ${statusTone}`}>{labels[snapshot.status] || snapshot.status}</m.span>
-    </m.div>
-    <m.div layout={updateLayout} transition={updateLayoutTransition} className="controller-update-versions">
-      <div><span>当前版本</span><strong>{snapshot.current?.version || '-'}</strong><small>{snapshot.current?.build ? `构建 ${snapshot.current.build}` : '暂无构建信息'}</small></div>
-      <ArrowLeftRight size={18} />
-      <div><span>最新版本</span><strong>{snapshot.available?.version || '尚未检查'}</strong><small>{snapshot.available?.build ? `构建 ${snapshot.available.build}` : '点击检查更新'}</small></div>
-    </m.div>
-    <div className="controller-update-channel">
-      <span>更新通道</span>
-      <div className="controller-update-channel-toggle" role="radiogroup" aria-label="更新通道">
-        {(['stable', 'dev'] as const).map(option => {
-          const active = snapshot.channel === option
-          return <button key={option} type="button" role="radio" aria-checked={active} className={active ? 'active' : ''} disabled={Boolean(working) || channelSelectDisabled} onClick={() => void switchChannel(option)}>{option === 'dev' ? '开发版' : '正式版'}</button>
-        })}
-      </div>
+  return <>
+  <section className="settings-card controller-update-card">
+    <div className="settings-card-head controller-update-head">
+      <h3>更新</h3>
+      <span className={'status-pill ' + statusTone} role="status">{updateInProgress ? '正在更新' : working === 'check' ? '正在检查' : labels[snapshot.status] || snapshot.status}</span>
     </div>
-    <div className="controller-update-meta">
-      <span>主控配套 Agent<strong title={expectedAgentLabel}>{expectedAgentLabel}</strong></span>
-      <span>上次检查<strong>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</strong></span>
-      {snapshot.backup_path && <span>最近备份<strong title={snapshot.backup_path}>{snapshot.backup_path}</strong></span>}
-    </div>
+    <UpdateVersionSummary snapshot={snapshot} />
+    <dl className="controller-update-meta">
+      <div><dt>更新通道</dt><dd className="controller-update-channel-value">
+        <div className="controller-update-channel-toggle" role="group" aria-label="更新通道">
+          {(['stable', 'dev'] as const).map(option => {
+            const active = snapshot.channel === option
+            return <button key={option} type="button" aria-pressed={active} className={active ? 'active' : ''} disabled={Boolean(working) || channelSelectDisabled} onClick={() => void switchChannel(option)}>{option === 'dev' ? '开发版' : '正式版'}</button>
+          })}
+        </div>
+        {snapshot.channel === 'dev' && <small className="muted">开发版可能包含未稳定功能</small>}
+      </dd></div>
+      <div><dt>配套 Agent</dt><dd className="update-monospace" title={expectedAgentLabel}>{expectedAgentLabel}</dd></div>
+      <div><dt>最后检查</dt><dd>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</dd></div>
+      {snapshot.backup_path && <div><dt>最近备份</dt><dd title={snapshot.backup_path}>{snapshot.backup_path}</dd></div>}
+    </dl>
     {snapshot.last_error && <div className="controller-update-error" role="alert">
       <span>{localizeErrorMessage(snapshot.last_error)}</span>
       <button type="button" className="ghost" onClick={openUpdateDiagnostics}><FileText size={14} />查看更新日志</button>
@@ -4596,9 +4579,9 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     </div>}
     <div className="settings-actions controller-update-actions">
       <button type="button" className="ghost" onClick={() => setAutoUpdateDialogOpen(true)} title="自动更新设置"><Sliders size={14} /><span>自动更新设置</span></button>
-      <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
+      <button type="button" className="ghost" onClick={() => void check()} aria-busy={working === 'check' || snapshot.status === 'checking'} disabled={Boolean(working) || snapshot.status === 'checking' || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' || snapshot.status === 'checking' ? '正在检查' : '检查更新'}</button>
       {updateInProgress && <button type="button" className="ghost danger-text" onClick={() => void forceFinishInstall()} disabled={Boolean(working)}><X size={14} aria-hidden="true" />{working === 'force-finish' ? '正在强制结束...' : '强制结束任务'}</button>}
-      <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '安装更新'}</button>
+      {(snapshot.update_available || updateInProgress) && <button type="button" onClick={openInstall} aria-busy={updateInProgress} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '安装更新'}</button>}
     </div>
     <Dialog isOpen={autoUpdateDialogOpen} onClose={() => setAutoUpdateDialogOpen(false)} title="自动更新配置" size="default">
         <div className="auto-update-dialog-content">
@@ -4697,28 +4680,17 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       onHide={() => setInstallDialogOpen(false)}
       onReload={() => window.location.reload()}
     />}</AnimatePresence>
-    <AgentFleetUpdateCard client={client} notify={notify} updateSettings={updateSettings} saveManagedUpdateSetting={saveManagedUpdateSetting} working={working} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   </section>
-}
-
-function AgentFleetProgress({ status }: { status: AgentFleetUpdateStatus }) {
-  return <SegmentedProgress
-    label="Agent 版本同步进度"
-    done={status.current}
-    caption={<>目标构建 <strong title={status.target_build}>{status.target_build || '—'}</strong></>}
-    segments={[
-      { key: 'current', label: '已完成', value: status.current, tone: 'success' },
-      { key: 'running', label: '更新中', value: status.running, tone: 'info' },
-      { key: 'pending', label: '待更新', value: status.pending, tone: 'warning' },
-      { key: 'offline', label: '离线', value: status.offline, tone: 'muted' },
-    ]}
-  />
+    <AgentFleetUpdateCard client={client} notify={notify} updateSettings={updateSettings} saveManagedUpdateSetting={saveManagedUpdateSetting} working={working} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
+  </>
 }
 
 function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdateSetting, working, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const [status, setStatus] = useState<AgentFleetUpdateStatus | null>(null)
   const [busy, setBusy] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [showAllFailures, setShowAllFailures] = useState(false)
+  const [errorDetail, setErrorDetail] = useState<AgentFleetUpdateStatus['failed_servers'][number] | null>(null)
   const refresh = async () => {
     try {
       const result = await client.request('/agent-updates/status') as AgentFleetUpdateStatus
@@ -4743,14 +4715,14 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
       setBusy('')
     }
   }
-  const retryAll = async () => {
-    setBusy('/agents/update-all')
+  const retryAgent = async (item: AgentFleetUpdateStatus['failed_servers'][number]) => {
+    if (busy) return
+    const path = '/servers/' + item.server_id + '/agent-update'
+    setBusy(path)
     try {
-      const result = await client.request('/agents/update-all', { method: 'POST', body: '{}' }) as { summary?: { created?: number }; running?: number }
+      const result = await client.request(path, { method: 'POST', body: '{}' })
       await refresh()
-      const created = Number(result.summary?.created || 0)
-      const running = Number(result.running || 0)
-      notify?.(created || running ? '已开始手动重试全部待更新服务器，每台本轮仅尝试一次' : '已记录手动重试；在线服务器暂无可创建的更新任务', 'success')
+      notify?.(result.existing ? item.server_name + ' 已有更新任务进行中' : '已创建 ' + item.server_name + ' 的 Agent 更新任务', result.existing ? 'info' : 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -4758,27 +4730,51 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
     }
   }
   if (!status) return null
-  return <section className="settings-card controller-update-card">
-    <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.manual_rolling ? '正在手动更新全部待更新 Agent，每台本轮仅尝试一次。' : status.rolling && !status.paused ? '正在滚动更新全部已接入 Agent。' : status.message}</p></div>
-    <AgentFleetProgress status={status} />
-    {status.paused && <div className="controller-update-error" role="status">自动更新已暂停：{status.pause_reason || '等待管理员恢复'}</div>}
-    {status.failure_count > 0 && <details className="controller-update-warning">
-      <summary>更新失败 {status.failure_count} 台{status.auto_stopped_count > 0 ? `，${status.auto_stopped_count} 台已停止自动更新` : status.exhausted_count > 0 ? `，${status.exhausted_count} 台本版自动次数已用完` : ''}</summary>
-      <ul>{status.failed_servers.map(item => <li key={item.server_id}>
-        <strong>{item.server_name}</strong>：{item.auto_stopped ? '自动更新已停止，需手动更新' : `本版自动尝试 ${item.attempts}/${item.max_attempts} 次`}
-        {!item.auto_stopped && (item.next_retry_at ? `，下次 ${new Date(item.next_retry_at).toLocaleString()}` : item.attempts >= item.max_attempts ? '，等待主控下一次更新' : '')}
-        {item.last_error && <div>{item.last_error}</div>}
-      </li>)}</ul>
-      {status.failure_count > status.failed_servers.length && <p>仅显示最近 {status.failed_servers.length} 台，请到任务中心查看其余失败记录。</p>}
-    </details>}
+  const inProgress = status.running > 0 || (status.rolling && !status.paused)
+  const stateLabel = status.paused ? '已暂停' : inProgress ? status.manual_rolling ? '手动更新进行中' : '更新进行中' : status.enrolled === 0 ? '暂无已接入 Agent' : status.current === status.enrolled ? '全部完成' : status.failure_count > 0 ? '有更新异常' : '等待更新'
+  const failures = status.failed_servers || []
+  const visibleFailures = showAllFailures ? failures : failures.slice(0, 3)
+  return <section className="settings-card controller-update-card agent-update-card">
+    <div className="settings-card-head agent-update-head"><h3>Agent 版本同步</h3><div className="agent-update-head-status"><strong>{status.current} / {status.enrolled} · {agentUpdateCompletion(status)}%</strong><span className="muted" role="status">{stateLabel}</span></div></div>
+    <AgentUpdateSummary status={status} />
+    {status.paused && <div className="controller-update-pinned" role="status">自动更新已暂停：{status.pause_reason || '等待管理员恢复'}</div>}
+    {status.failure_count > 0 && <div className="agent-update-errors">
+      <div className="agent-update-errors-head"><h4>更新异常</h4><span>{status.failure_count} 台</span></div>
+      <ul className="agent-update-error-list">{visibleFailures.map(item => {
+        const error = formatAgentUpdateError(item.last_error)
+        const retrying = busy === '/servers/' + item.server_id + '/agent-update'
+        return <li className="agent-update-error-item" key={item.server_id}>
+          <div className="agent-update-error-head"><strong>{item.server_name}</strong><span>{error.title}</span></div>
+          <p className="agent-update-error-description">{error.description}</p>
+          {error.raw && <div className="agent-update-error-raw"><CopyBlock value={error.raw} /></div>}
+          <div className="agent-update-error-footer"><div className="agent-update-retry-status">
+            <span>自动重试 {item.attempts} / {item.max_attempts} 次</span>
+            {item.auto_stopped ? <small>自动更新已停止，需手动重试</small> : item.next_retry_at ? <small>下次重试 {formatDate(item.next_retry_at)}</small> : item.attempts >= item.max_attempts ? <small>本版自动次数已用完，等待下次主控更新或手动重试</small> : null}
+          </div><div className="agent-update-item-actions">
+            <button type="button" className="ghost" aria-label={'查看 ' + item.server_name + ' 更新详情'} onClick={() => setErrorDetail(item)}>详情</button>
+            <button type="button" className="ghost" aria-label={'重试 ' + item.server_name + ' 更新'} disabled={Boolean(busy)} aria-busy={retrying} onClick={() => void retryAgent(item)}>{retrying ? '重试中…' : '重试'}</button>
+          </div></div>
+        </li>
+      })}</ul>
+      {failures.length > 3 && <button type="button" className="ghost agent-update-expand" aria-expanded={showAllFailures} onClick={() => setShowAllFailures(value => !value)}>{showAllFailures ? '收起异常' : '查看全部 ' + failures.length + ' 个异常'}</button>}
+      {status.failure_count > failures.length && <p className="muted">当前接口返回最近 {failures.length} 台异常，其余记录请到任务中心查看。</p>}
+    </div>}
     {updateSettings?.database_maintenance_hint && <div className="controller-update-warning">{String(updateSettings.database_maintenance_hint)}</div>}
     <div className="settings-actions controller-update-actions">
       {status.paused
-        ? <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/resume', '已恢复 Agent 滚动更新')}>{busy === '/agent-updates/resume' ? '处理中...' : '恢复'}</button>
-        : <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/pause', '已暂停 Agent 滚动更新')}>{busy === '/agent-updates/pause' ? '处理中...' : '暂停'}</button>}
-      <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void retryAll()}>手动重试</button>
+        ? <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/resume', '已恢复 Agent 滚动更新')}>{busy === '/agent-updates/resume' ? '处理中...' : '恢复全部'}</button>
+        : inProgress && <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/pause', '已暂停 Agent 滚动更新')}>{busy === '/agent-updates/pause' ? '处理中...' : '暂停全部'}</button>}
       <button type="button" className="ghost" onClick={() => setAdvancedOpen(true)}>高级</button>
     </div>
+    <Dialog isOpen={Boolean(errorDetail)} onClose={() => setErrorDetail(null)} title={(errorDetail?.server_name || 'Agent') + ' · 更新详情'} size="default">
+      {errorDetail && <div className="agent-update-error-detail">
+        <strong>{formatAgentUpdateError(errorDetail.last_error).title}</strong>
+        <p className="muted">{formatAgentUpdateError(errorDetail.last_error).description}</p>
+        {errorDetail.last_error && <div className="agent-update-error-raw"><CopyBlock value={errorDetail.last_error} /></div>}
+        <p className="muted">目标构建 <code>{status.target_build || '—'}</code> · 自动重试 {errorDetail.attempts} / {errorDetail.max_attempts} 次</p>
+        {errorDetail.next_retry_at && <p className="muted">下次重试 {formatDate(errorDetail.next_retry_at)}</p>}
+      </div>}
+    </Dialog>
     <Dialog isOpen={advancedOpen} onClose={() => setAdvancedOpen(false)} title="Agent 滚动更新" size="default">
       <div className="auto-update-dialog-content">
         <FormField label="并发上限（0 为自动）">
