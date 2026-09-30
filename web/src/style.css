@@ -9468,13 +9468,27 @@ body:has(.controller-update-immersive-layer) {
   gap: 16px;
 }
 
-.controller-update-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
-.controller-update-header-actions button { white-space: nowrap; }
-.controller-update-view-button { min-width: 92px; perspective: 350px; }
-.controller-update-view-cube { position: relative; display: block; width: 100%; height: 18px; transform-style: preserve-3d; transition: transform .48s cubic-bezier(.22, 1, .36, 1); }
-.controller-update-view-cube.flipped { transform: rotateX(180deg); }
-.controller-update-view-cube > span { position: absolute; inset: 0; display: grid; place-items: center; backface-visibility: hidden; }
-.controller-update-view-cube > span:last-child { transform: rotateX(180deg); }
+.controller-update-stepper-area {
+  justify-self: center;
+  max-width: 100%;
+  display: grid;
+  gap: 4px;
+}
+.dialog-panel .controller-update-help {
+  justify-self: end;
+  min-height: 44px;
+  padding: 6px 8px;
+  color: #a3a3a3;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 400;
+}
+.dialog-panel .controller-update-help:hover { color: #f5f5f5; background: transparent; }
+.dialog-panel .controller-update-help:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+:root:not([data-theme="dark"]) .controller-update-help { color: #626b79; }
+:root:not([data-theme="dark"]) .controller-update-help:hover { color: #17202d; }
 .controller-update-face-scene { width: 100%; min-height: 380px; perspective: 1100px; }
 .controller-update-face { width: 100%; transform-style: preserve-3d; backface-visibility: hidden; }
 .controller-update-logs-face { min-height: 380px; max-height: min(65vh, 720px); overflow: auto; border: 1px solid #373737; border-radius: 28px; background: #1a1a1a; box-shadow: 0 20px 54px rgba(0,0,0,.32); }
@@ -9736,7 +9750,6 @@ body:has(.controller-update-immersive-layer) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .controller-update-view-cube { transition: none; }
   .controller-update-lightfield-status.running .controller-update-lightfield-dot { animation: none; }
   .controller-update-lightfield-status,
   .controller-update-lightfield-status > svg { transition: none; }
@@ -9749,7 +9762,6 @@ body:has(.controller-update-immersive-layer) {
 @media (max-width: 640px) {
   .controller-update-immersive-head { padding-top: max(22px, env(safe-area-inset-top)); }
   .controller-update-immersive-head { flex-direction: column; }
-  .controller-update-header-actions { justify-content: flex-start; }
   .controller-update-immersive-content { margin-top: 22px; gap: 12px; }
   .controller-update-stepper-item { gap: 5px; padding: 0 4px; }
   .controller-update-stepper-item + .controller-update-stepper-item::before { margin-right: 2px; }

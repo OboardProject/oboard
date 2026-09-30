@@ -4881,19 +4881,14 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
     <ControllerUpdateLightfield mode={animationMode} reduceMotion={Boolean(reduceMotion)}>
       <header className="controller-update-immersive-head">
         <div><span className="controller-update-eyebrow">OBOARD / SYSTEM UPDATE</span><h2>{title}</h2><p>{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>
-        <div className="controller-update-header-actions">
-          <button type="button" className="ghost controller-update-view-button" aria-label={logsOpen ? '查看进度' : '拉取日志'} aria-pressed={logsOpen} onClick={() => setLogsOpen(open => !open)}><span className={logsOpen ? 'controller-update-view-cube flipped' : 'controller-update-view-cube'} aria-hidden="true"><span>拉取日志</span><span>查看进度</span></span></button>
-          {waiting && <>
-            {canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}>{cancelling ? '正在中断...' : '中断更新'}</button>}
-            {onForceFinish && <button type="button" className="ghost danger-text" onClick={onForceFinish} disabled={Boolean(forceFinishing)}>{forceFinishing ? '正在强制结束...' : '强制结束更新'}</button>}
-            <button type="button" className="ghost" onClick={onHide}>在后台继续</button>
-          </>}
-          {!waiting && phase !== 'complete' && <button type="button" className="controller-update-immersive-close" onClick={onCancel} aria-label="关闭" title="关闭"><X size={18} /></button>}
-        </div>
+        {!waiting && phase !== 'complete' && <button type="button" className="controller-update-immersive-close" onClick={onCancel} aria-label="关闭" title="关闭"><X size={18} /></button>}
       </header>
       <div className="controller-update-immersive-content">
+        <div className="controller-update-stepper-area">
+          {!logsOpen && <button type="button" className="ghost controller-update-help" aria-label="出问题了？点我，查看更新日志与操作" onClick={() => setLogsOpen(true)}>出问题了？点我</button>}
         <div className="controller-update-stepper" aria-label="更新阶段">
           {['检查', '下载', '准备', '安装'].map((label, index) => <div key={label} className={`controller-update-stepper-item ${index < majorIndex || stageIndex === progressStages.length ? 'done' : index === majorIndex ? 'active' : ''}`}><span>{index < majorIndex || stageIndex === progressStages.length ? <Check size={14} /> : index + 1}</span><small>{label}</small></div>)}
+        </div>
         </div>
         <div className="controller-update-face-scene">
           <AnimatePresence mode="wait" initial={false}>
@@ -4917,6 +4912,15 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
             {diagnosticsSection}
           </div>
               {!diagnosticsSection && <div className="controller-update-diagnostics-state" role="status">正在抓取更新日志...</div>}
+              <div className="controller-update-details-actions">
+                <button type="button" className="ghost" onClick={() => setLogsOpen(false)}>查看进度</button>
+                <button type="button" className="ghost" onClick={diagnosticsReason ? onRetryDiagnostics : manualDiagnostics.retry} disabled={diagnosticsReason ? diagnostics?.status === 'loading' : manualDiagnostics.status === 'loading'}>拉取日志</button>
+                {waiting && <>
+                  {canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}>{cancelling ? '正在中断...' : '中断更新'}</button>}
+                  {onForceFinish && <button type="button" className="ghost danger-text" onClick={onForceFinish} disabled={Boolean(forceFinishing)}>{forceFinishing ? '正在强制结束...' : '强制结束更新'}</button>}
+                  <button type="button" className="ghost" onClick={onHide}>在后台继续</button>
+                </>}
+              </div>
             </m.section> : <m.div key="progress" className="controller-update-face"
               initial={reduceMotion ? { opacity: 0 } : { opacity: 0, rotateY: -90 }}
               animate={{ opacity: 1, rotateY: 0 }}
