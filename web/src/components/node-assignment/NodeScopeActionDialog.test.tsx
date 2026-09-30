@@ -277,5 +277,27 @@ describe('NodeScopeActionDialog', () => {
     expect(searchInput).toBeTruthy()
     expect(document.body.textContent).toContain('alice')
     expect(document.body.textContent).toContain('bob')
+
+    const saveButton = Array.from(document.querySelectorAll('button')).find(b => b.textContent === '保存') as HTMLButtonElement
+    expect(saveButton).toBeTruthy()
+    expect(document.body.textContent).not.toContain('预览影响')
+    expect(document.body.textContent).not.toContain('将创建')
+    act(() => saveButton.click())
+    expect(document.body.textContent).toContain('请先选择用户')
+    expect(client.request.mock.calls.some(([path]) => path === '/user-node-exceptions/batch/apply')).toBe(false)
+
+    const aliceCheckbox = document.querySelector('input[aria-label="选择用户 alice"]') as HTMLInputElement
+    act(() => aliceCheckbox.click())
+    act(() => {
+      saveButton.click()
+      saveButton.click()
+    })
+    await flushEffects()
+    expect(client.request.mock.calls.filter(([path]) => path === '/user-node-exceptions/batch/apply')).toHaveLength(1)
+    expect(client.request).toHaveBeenCalledWith('/user-node-exceptions/batch/apply', {
+      method: 'POST',
+      body: JSON.stringify({ user_ids: [101], nodes: [{ node_type: 'inbound', node_id: 1 }], effect: 'allow', reason: '' }),
+    })
+    expect(client.request.mock.calls.some(([path]) => path === '/user-node-exceptions/batch/preview')).toBe(false)
   })
 })

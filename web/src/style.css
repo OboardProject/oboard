@@ -25133,12 +25133,6 @@ button.dns-policy-row-main:focus {
   font-size: 11px;
   font-weight: 600;
 }
-.node-scope-auth-preview {
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  font-size: 12px;
-}
 .node-scope-auth-actions {
   display: flex;
   justify-content: flex-end;
@@ -26440,7 +26434,7 @@ button.dns-policy-row-main:focus {
 
 .ui-datetime-input-wrap:hover {
   border-color: var(--border-strong, #cbd5e1);
-  background-color: var(--surface-hover, #f8fafc);
+  background-color: var(--surface-2);
 }
 
 .ui-datetime-picker.is-open .ui-datetime-input-wrap {
@@ -26451,7 +26445,7 @@ button.dns-policy-row-main:focus {
 .ui-datetime-picker.is-disabled .ui-datetime-input-wrap {
   cursor: not-allowed;
   opacity: 0.6;
-  background-color: var(--bg-muted, #f1f5f9);
+  background-color: var(--bg-control);
 }
 
 .ui-datetime-icon {

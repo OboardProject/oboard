@@ -122,8 +122,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const [reason, setReason] = React.useState('')
   const [startsAt, setStartsAt] = React.useState('')
   const [expiresAt, setExpiresAt] = React.useState('')
-  const [exPreview, setExPreview] = React.useState<{ created: number; updated: number; skipped: number; affected_users: number } | null>(null)
-  const [exBusy, setExBusy] = React.useState(false)
+  const exApplyPendingRef = React.useRef(false)
   const [exApplyBusy, setExApplyBusy] = React.useState(false)
   const [exMessage, setExMessage] = React.useState('')
 
@@ -195,7 +194,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       setReason('')
       setStartsAt('')
       setExpiresAt('')
-      setExPreview(null)
       setExMessage('')
       void loadScope()
       void loadNodeDetail()
@@ -373,38 +371,11 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     }
   }
 
-  // User exception preview
-  const runExceptionPreview = async () => {
-    if (!preview) return
-    if (userIDs.size === 0) { setExMessage('请先选择用户'); return }
-    setExBusy(true)
-    setExMessage('')
-    try {
-      const payload: any = {
-        user_ids: [...userIDs],
-        nodes: preview.node_refs,
-        effect,
-        reason: reason.trim(),
-      }
-      const starts = fromLocalInputValue(startsAt)
-      const expires = fromLocalInputValue(expiresAt)
-      if (starts) payload.starts_at = starts
-      if (expires) payload.expires_at = expires
-      const res = await client.request<{ created: number; updated: number; skipped: number; affected_users: number }>('/user-node-exceptions/batch/preview', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-      setExPreview(res)
-    } catch (e: any) {
-      setExMessage('预览失败：' + (e?.message || String(e)))
-    } finally {
-      setExBusy(false)
-    }
-  }
-
   // User exception batch apply
   const applyExceptionBatch = async () => {
-    if (!preview || !exPreview) return
+    if (!preview || exApplyPendingRef.current) return
+    if (userIDs.size === 0) { setExMessage('请先选择用户'); return }
+    exApplyPendingRef.current = true
     setExApplyBusy(true)
     setExMessage('')
     try {
@@ -427,13 +398,13 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       } else {
         notify?.(`没有需要变更的授权（${res.skipped} 项已存在）`, 'warning')
       }
-      setExPreview(null)
       setUserAuthOpen(false)
       await loadNodeDetail()
       await onDone()
     } catch (e: any) {
       setExMessage('操作失败：' + (e?.message || String(e)))
     } finally {
+      exApplyPendingRef.current = false
       setExApplyBusy(false)
     }
   }
@@ -703,21 +674,9 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
             </p>
           )}
 
-          {exPreview && (
-            <div className="node-scope-auth-preview">
-              <p className="muted" style={{ margin: 0 }}>
-                将创建 <strong>{exPreview.created}</strong> 条、更新 <strong>{exPreview.updated}</strong> 条、跳过已有 <strong>{exPreview.skipped}</strong> 条 · 受影响用户 <strong>{exPreview.affected_users}</strong> 人
-              </p>
-            </div>
-          )}
-
           <div className="node-scope-auth-actions">
             <Button variant="ghost" onClick={() => setUserAuthOpen(false)}>取消</Button>
-            {exPreview ? (
-              <Button busy={exApplyBusy} onClick={() => void applyExceptionBatch()}>批量应用授权</Button>
-            ) : (
-              <Button busy={exBusy} onClick={() => void runExceptionPreview()}>预览影响</Button>
-            )}
+            <Button busy={exApplyBusy} disabled={!preview} onClick={() => void applyExceptionBatch()}>保存</Button>
           </div>
         </div>
       </Dialog>
