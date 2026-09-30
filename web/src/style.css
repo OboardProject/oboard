@@ -2775,13 +2775,14 @@ button.server-address-line.copied:hover {
 
 .server-card-quality {
   display: grid;
+  grid-template-rows: 24px 8px;
   gap: 6px;
   min-width: 0;
 }
 
 .server-card-quality-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-size: 11px;
@@ -2806,12 +2807,12 @@ button.server-address-line.copied:hover {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  gap: 1.5px;
+  gap: 1px;
   height: 8px;
 }
 
 .server-quality-seg {
-  border-radius: var(--radius-2xs);
+  border-radius: 1.5px;
   background: var(--surface-3, rgba(127, 127, 127, 0.16));
 }
 
@@ -29802,16 +29803,28 @@ button.probe-preset-option:active {
   color: currentColor;
 }
 @media (max-width: 767px) {
-  .server-card-head-actions .server-action-menu-trigger,
-  .server-card-quality-head .server-monitor-target-button {
+  .server-card-head-actions .server-action-menu-trigger {
     flex-basis: 44px;
     width: 44px;
     min-width: 44px;
     height: 44px;
     min-height: 44px;
   }
-  .server-card-head-actions .server-action-menu-trigger::before,
-  .server-card-quality-head .server-monitor-target-button::before { inset: 7px; }
+  .server-card-head-actions .server-action-menu-trigger::before { inset: 7px; }
+}
+.server-card-quality-head .server-monitor-target-button {
+  flex-basis: 24px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+}
+.server-card-quality-head .server-monitor-target-button::before {
+  inset: 0;
+}
+.server-card-quality-head .server-monitor-target-button svg {
+  width: 12px;
+  height: 12px;
 }
 .server-monitor-target-button:focus-visible {
   outline: 2px solid var(--primary);
