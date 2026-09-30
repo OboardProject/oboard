@@ -107,6 +107,6 @@
   .signal-presets .node-presets-toolbar-actions > .muted { flex-basis: 100%; }
   .signal-templates .subscription-template-row { align-items: flex-start; flex-direction: column; }
   .signal-settings-dialog .settings-actions > button,
-  .signal-settings-dialog .dialog-actions > button { flex: 1 1 auto; min-height: 44px; }
+  .signal-settings-dialog .dialog-actions > button { flex: 0 1 auto; width: auto; max-width: 100%; min-height: 44px; }
   .signal-settings.about-settings .about-details > div { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 }

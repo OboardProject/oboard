@@ -22,6 +22,8 @@
   --space-6: 24px;
   --space-8: 32px;
   --text-body-size: 14px;
+  --button-height: 36px;
+  --button-font-size: 13px;
   --text-data-size: 13px;
   --text-title-size: 24px;
   --line-body: 1.6;
@@ -350,15 +352,16 @@ button,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: var(--control-height);
+  gap: 6px;
+  min-height: var(--button-height);
   color: var(--primary-contrast);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 8px 16px;
+  padding: 6px 12px;
   cursor: pointer;
   background: var(--primary);
   box-shadow: none;
+  font-size: var(--button-font-size);
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.2;
@@ -11340,7 +11343,7 @@ button.server-related-jump-pill {
     flex-wrap: wrap;
   }
   .settings-actions button {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
   }
   .base-path-route-row { grid-template-columns: minmax(0, 1fr); }
   .base-path-route-row > svg { transform: rotate(90deg); }
@@ -12199,8 +12202,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   textarea { grid-column: span 1; }
   .form { grid-template-columns: 1fr; }
   .settings-form { grid-template-columns: 1fr; }
-  .settings-actions { align-items: stretch; flex-direction: column; }
-  .settings-actions button { width: 100%; }
+  .settings-actions { align-items: center; flex-direction: row; }
+  .settings-actions button { width: auto; max-width: 100%; white-space: normal; }
   .settings-actions.dns-settings-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -22864,12 +22867,12 @@ select:-webkit-autofill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: var(--control-height);
-  padding: 8px 16px;
+  gap: 6px;
+  min-height: var(--button-height);
+  padding: 6px 12px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  font-size: 13.5px;
+  font-size: var(--button-font-size);
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.01em;
@@ -22878,9 +22881,9 @@ select:-webkit-autofill {
     border-color var(--duration-control) ease, color var(--duration-control) ease;
 }
 
-.ui-btn-md { min-height: var(--control-height); padding: 8px 16px; }
-.ui-btn-sm { min-height: 34px; padding: 6px 12px; font-size: 12.5px; }
-.ui-btn-lg { min-height: 48px; padding: 12px 22px; font-size: 15px; }
+.ui-btn-md { min-height: var(--button-height); padding: 6px 12px; }
+.ui-btn-sm { min-height: 32px; padding: 5px 10px; font-size: 12px; }
+.ui-btn-lg { min-height: 44px; padding: 8px 16px; font-size: 14px; }
 .ui-btn-icon {
   width: 38px;
   min-width: 38px;
@@ -30250,6 +30253,7 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   :root {
     --control-height: 44px;
     --control-height-compact: 44px;
+    --button-height: 44px;
     --text-body-size: 15px;
   }
   :is(.ui-btn, .icon-button, .custom-select-trigger, .custom-select-option,
@@ -30258,6 +30262,19 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
     min-height: 44px;
   }
   :is(.ui-btn-icon, .icon-button) { min-width: 44px; }
+  .topbar :is(.mobile-menu-toggle, .topbar-refresh) {
+    position: relative;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+  .topbar :is(.mobile-menu-toggle, .topbar-refresh)::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: inherit;
+  }
   .ui-switch { min-width: 44px; min-height: 44px; justify-content: center; }
   .ui-input, .ui-select { font-size: 16px; }
 
