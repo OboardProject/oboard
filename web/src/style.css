@@ -12100,18 +12100,38 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     min-width: 0;
     max-width: 100%;
   }
-  .server-management-panel .section-toolbar > div:first-child {
-    width: 100%;
-    min-width: 0;
-  }
-  .server-management-toolbar .server-list-toolbar { flex: 0 0 auto; }
-  .server-management-panel .server-list-search { min-width: 180px; }
-  .server-management-panel .section-actions {
-    display: flex;
+  .server-management-panel .server-management-toolbar {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(44px, 1fr));
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
+  }
+  .server-management-toolbar .server-list-toolbar,
+  .server-management-panel .server-toolbar-actions,
+  .server-management-panel .server-toolbar-tools,
+  .server-management-panel .server-action-group {
+    display: contents;
+  }
+  .server-management-toolbar .server-list-search.is-open {
+    grid-column: 1 / -1;
+    min-width: 0;
+    order: 10;
+  }
+  .server-management-toolbar .server-list-result-count { display: none; }
+  .server-management-toolbar .server-region-filter-trigger {
     width: 100%;
+    min-width: 44px;
+    justify-content: center;
+    gap: 4px;
+    padding-inline: 4px;
+  }
+  .server-management-toolbar .server-region-filter-trigger-label,
+  .server-management-toolbar .server-region-filter-trigger-count { display: none; }
+  .server-management-toolbar .server-region-inline { min-width: 0; }
+  .server-management-toolbar .server-region-inline:has(.server-region-clear) { grid-column: span 2; }
+  .server-management-toolbar .server-region-filter-dropdown { flex: 1; min-width: 0; }
+  .server-management-panel .section-actions {
+    display: contents;
   }
   .server-management-panel .server-action-group {
     flex: 0 0 auto;
@@ -12124,6 +12144,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     padding: 0;
     border-radius: 50%;
     justify-content: center;
+    justify-self: end;
   }
   .server-management-panel .server-add-button > span {
     display: none;
@@ -12143,10 +12164,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .server-management-panel .server-toolbar-tool {
     flex: 0 0 auto;
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
     padding: 0;
     justify-content: center;
   }
@@ -30256,6 +30277,12 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
   .dialog-layer[data-surface-kind="compact"],
   .dialog-layer:has(> .dialog-danger, > .dialog-host-compact) { align-items: center; }
   .dialog-layer[data-surface-kind="compact"] > .dialog-panel { max-width: 420px; }
+}
+
+@media (max-width: 380px) {
+  .server-management-panel .server-management-toolbar {
+    grid-template-columns: repeat(3, minmax(44px, 1fr));
+  }
 }
 
 /* Flat primary actions share the current accent without a gloss layer. */
