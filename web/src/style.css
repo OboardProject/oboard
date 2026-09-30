@@ -7200,8 +7200,23 @@ body:has(.dialog-layer) .main {
 
   .toast {
     max-width: 100%;
-    gap: 9px;
-    padding: 8px 8px 8px 13px;
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) 44px;
+    align-items: start;
+    gap: 10px;
+    padding: 12px 10px 12px 14px;
+    border-radius: var(--radius-md);
+  }
+
+  .toast .toast-icon {
+    margin-top: 2px;
+  }
+
+  .toast .toast-message {
+    color: var(--text-strong);
+    font-weight: 500;
+    line-height: 1.55;
+    translate: none;
   }
 
   .toast .toast-close {

@@ -21513,7 +21513,7 @@ async function rotateNodePassword(client: ReturnType<typeof api>, u: Pick<User, 
   if (!confirmed) return
   await client.request('/users/' + u.id + '/proxy-credentials/rotate', { method: 'POST', body: '{}' })
   await load()
-  notify?.(`${label} 的节点密码已更换，请让客户端重新拉取订阅`, 'success')
+  notify?.(`用户 ${label} 的节点密码已更换。\n请在客户端更新订阅以使用新凭证。`, 'success')
 }
 
 export function OBoardAppRoot() {
