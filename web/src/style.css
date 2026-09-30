@@ -14233,6 +14233,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 @media (max-width: 1080px) {
   .latency-trend-head { align-items: flex-start; flex-direction: column; }
+  .latency-trend-summary { flex-basis: auto; }
   .latency-trend-controls { width: 100%; justify-content: flex-end; }
   .latency-dashboard-main { grid-template-columns: minmax(220px, 250px) minmax(0, 1fr); }
 }
