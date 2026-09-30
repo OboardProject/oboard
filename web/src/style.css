@@ -9402,6 +9402,8 @@ body:has(.controller-update-immersive-layer) {
   --danger: #f08e8e;
   position: absolute;
   inset: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   background: #050505;
   isolation: isolate;
@@ -9466,19 +9468,23 @@ body:has(.controller-update-immersive-layer) {
   position: relative;
   z-index: 1;
   width: min(880px, calc(100% - 32px));
-  margin: 28px auto 0;
+  margin: auto;
+  padding: 28px 0 max(40px, env(safe-area-inset-bottom));
   display: grid;
   gap: 16px;
 }
 
 .controller-update-stepper-area {
-  justify-self: center;
-  max-width: 100%;
+  position: relative;
+  width: 100%;
   display: grid;
-  gap: 4px;
+  justify-items: center;
 }
 .dialog-panel .controller-update-help {
-  justify-self: end;
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
   min-height: 44px;
   padding: 6px 8px;
   color: #a3a3a3;
@@ -9765,7 +9771,9 @@ body:has(.controller-update-immersive-layer) {
 @media (max-width: 640px) {
   .controller-update-immersive-head { padding-top: max(22px, env(safe-area-inset-top)); }
   .controller-update-immersive-head { flex-direction: column; }
-  .controller-update-immersive-content { margin-top: 22px; gap: 12px; }
+  .controller-update-immersive-content { padding-top: 22px; gap: 12px; }
+  .controller-update-stepper-area { gap: 4px; }
+  .dialog-panel .controller-update-help { position: static; justify-self: end; transform: none; }
   .controller-update-stepper-item { gap: 5px; padding: 0 4px; }
   .controller-update-stepper-item + .controller-update-stepper-item::before { margin-right: 2px; }
   .controller-update-stepper-item small { display: none; }

@@ -4885,7 +4885,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       </header>
       <div className="controller-update-immersive-content">
         <div className="controller-update-stepper-area">
-          {!logsOpen && <button type="button" className="ghost controller-update-help" aria-label="出问题了？点我，查看更新日志与操作" onClick={() => setLogsOpen(true)}>出问题了？点我</button>}
+          {!logsOpen && <button type="button" className="controller-update-help" aria-label="出问题了？点我，查看更新日志与操作" onClick={() => setLogsOpen(true)}>出问题了？点我</button>}
         <div className="controller-update-stepper" aria-label="更新阶段">
           {['检查', '下载', '准备', '安装'].map((label, index) => <div key={label} className={`controller-update-stepper-item ${index < majorIndex || stageIndex === progressStages.length ? 'done' : index === majorIndex ? 'active' : ''}`}><span>{index < majorIndex || stageIndex === progressStages.length ? <Check size={14} /> : index + 1}</span><small>{label}</small></div>)}
         </div>
