@@ -18340,7 +18340,7 @@ function UserCredentialsDialog({ user, client, load, notify, onCancel }: { user:
       setWorking('')
     }
   }
-  return <MotionDialogPanel aria-labelledby="user-credentials-title" onCancel={close} className="user-settings-dialog">
+  return <MotionDialogPanel aria-labelledby="user-credentials-title" onCancel={close} className="user-settings-dialog" surfaceMotion="compact">
     <header className="dialog-head">
       <div><h2 id="user-credentials-title">用户凭证</h2><p className="muted">用户：{user.username}</p></div>
       <button className="ghost dialog-close icon-button" onClick={close} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button>
