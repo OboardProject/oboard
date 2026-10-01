@@ -100,6 +100,25 @@ describe('ProxyOverview canvas behavior', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('saves a Snell listener selection and applies it without a separate preview action', async () => {
+    const inbound = { ...inbounds[0], protocol: 'snell', port: 6160, config_json: '{"version":4,"listener_mode":"per_identity_port"}' } as Inbound
+    request.mockResolvedValueOnce({ inbound } as any)
+      .mockResolvedValueOnce({ capability_ready: true, preview_digest: 'current-preview' } as any)
+      .mockResolvedValueOnce({ inbound: { id: inbound.id, listener_mode: 'shared_port' } } as any)
+    await render(1, { ...data, inbounds: [inbound] })
+    await act(async () => flow.props.onNodeDoubleClick!({} as React.MouseEvent, nodes().find(node => node.id === 'entry-10')!))
+    const select = document.querySelector<HTMLButtonElement>('[aria-describedby="snell-mode-status"]')!
+    await act(async () => select.click())
+    const shared = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]')).find(item => item.textContent?.trim() === '共享端口')!
+    await act(async () => shared.click())
+    expect(document.body.textContent).not.toContain('预览切换')
+    expect(document.body.textContent).not.toContain('请先保存其他参数修改')
+    expect(request).not.toHaveBeenCalled()
+    await act(async () => button('保存入口协议').click())
+    expect(request.mock.calls.map(call => (call as any[])[0])).toEqual(['/inbounds/10', '/inbounds/10/listener-mode/preview', '/inbounds/10/listener-mode/apply'])
+    expect(alert).not.toHaveBeenCalled()
+  })
+
   it('offers create actions from a right click on the empty canvas and on a server node', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener: () => undefined, removeEventListener: () => undefined }))
     await render()

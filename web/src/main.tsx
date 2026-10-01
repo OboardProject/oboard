@@ -212,6 +212,7 @@ import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pa
 import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { createServerRecord, deleteServerRecord, ServerMutationUncertainError } from './server-mutations'
+import { InboundModeSaveError, saveInboundRecord } from './inbound-mutations'
 import { getServerTimeIssue, hasServerTimeMeasurement } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue, type ServerExpiryTone } from './server-expiry'
@@ -11545,12 +11546,14 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
 	      const { body } = controlledInboundPayload(finalDraft)
-	      const result = await client.request(`/inbounds/${body.id}`, { method: 'PATCH', body: JSON.stringify(body) }) as Record<string, any>
-	      applyMutationResult(result)
+	      const current = entries.find(item => item.id === body.id)
+	      if (!current) throw new Error('没有找到入口，请刷新后重试。')
+	      await saveInboundRecord(client, body as Inbound, current, applyMutationResult)
 	      setEditEntry(null)
 	      reconcileTopology()
     } catch (e: any) {
-      await dialogs.alert({ title: '保存入口失败', message: localizeErrorMessage(e.message || e) })
+      reconcileTopology()
+      await dialogs.alert({ title: '保存入口失败', message: `${e instanceof InboundModeSaveError ? '其他入口参数已保存，监听方式尚未确认切换。' : ''}${localizeErrorMessage(e.message || e)}` })
     }
   }
   const removeCanvasRoutingTarget = (targetID: string) => {
@@ -14618,24 +14621,16 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const presetOptions = inboundPresetsForProtocol(presetProtocol, presetID)
   const cfg = parseConfig(draft.config_json) || {}
   const snellMode = cfg.listener_mode || (mode === 'create' ? 'shared_port' : 'per_identity_port')
-  const [snellTargetMode, setSnellTargetMode] = useState(snellMode)
-  const [snellPreview, setSnellPreview] = useState<any>(null)
-  const [snellBusy, setSnellBusy] = useState(false)
-  const [snellError, setSnellError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const submit = async () => {
+    if (saving) return
+    setSaving(true)
+    try { await onSubmit() }
+    finally { setSaving(false) }
+  }
   const snellCapabilities = (server as any)?.kernel_capabilities || []
   const snellReady = ['authorization_lease_v1', 'runtime_users_control_v1', 'runtime_users_v1', 'runtime_users_snell_psk_control_v1', 'runtime_users_snell_psk_v1', Number(cfg.version || 4) === 6 ? 'snell_multi_psk_v6_v1' : 'snell_multi_psk_v4_v1'].every(cap => snellCapabilities.includes(cap))
   const snellIndependent = protocol === 'snell' && snellMode === 'per_identity_port'
-  const runSnellMode = async (apply: boolean) => {
-    setSnellBusy(true); setSnellError('')
-    try {
-      const result: any = await client.request(`/inbounds/${draft.id}/listener-mode/${apply ? 'apply' : 'preview'}`, { method: 'POST', body: JSON.stringify({ listener_mode: snellTargetMode, ...(apply ? { preview_digest: snellPreview.preview_digest } : {}) }) })
-      if (apply) {
-        setDraft((old: any) => old ? { ...old, config_json: JSON.stringify({ ...(parseConfig(old.config_json) || {}), listener_mode: snellTargetMode }) } : old)
-        setSnellPreview(null)
-      } else setSnellPreview(result)
-    } catch (err: any) { setSnellError(localizeErrorMessage(err?.message || err)); setSnellPreview(null) }
-    finally { setSnellBusy(false) }
-  }
   const tlsForReality = objectConfig(cfg.tls)
   const dnsCredentials: DNSCredential[] = data.dns_credentials || []
   const enabledDNSCredentials = dnsCredentials.filter(item => item.enabled)
@@ -14929,26 +14924,13 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
 
           {protocol === 'snell' && <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听方式" description="授权身份按用户和分支区分，每个身份使用独立密钥。">
             <FormField label="监听方式" hint="共享端口最多容纳 64 个授权身份；更多身份可选择独立端口或拆分入口。">
-              <Select value={mode === 'edit' ? snellTargetMode : snellMode} aria-describedby="snell-mode-status" onChange={event => {
-                setSnellTargetMode(event.target.value); setSnellPreview(null); setSnellError('')
-                if (mode === 'create') updateConfig({ listener_mode: event.target.value })
-              }}>
+              <Select value={snellMode} aria-describedby="snell-mode-status" disabled={saving} onChange={event => updateConfig({ listener_mode: event.target.value })}>
                 <option value="shared_port">共享端口</option>
                 <option value="per_identity_port">独立端口</option>
               </Select>
             </FormField>
             <p id="snell-mode-status" className="field-hint">Snell v{Number(cfg.version || 4)} · {snellReady ? '支持共享端口' : '共享端口等待 Agent / 内核升级'} · 当前{draft.snell_active_mode === 'shared_port' ? `共享监听 ${draft.snell_active_port}` : draft.snell_active_mode === 'per_identity_port' ? '独立端口已确认' : '运行端点尚未确认'} · {(server as any)?.users_confirmed ? '凭据已确认' : '等待凭据同步'} · {(server as any)?.authorization_confirmed ? '授权已确认' : '等待授权确认'}</p>
             {cfg.mode === 'unsafe-raw' && <p role="alert" className="field-hint warning-text">unsafe-raw 没有 PSK 加密认证，禁止用于共享端口；独立端口也不能为它提供独立密钥认证保障。</p>}
-            {mode === 'edit' && snellTargetMode !== snellMode && <div className="access-note compact">
-              <p>切换采用已保存的入口参数，需要重启该服务器内核并重新拉取订阅。请先保存其他参数修改。</p>
-              <button type="button" className="ghost" disabled={snellBusy} onClick={() => void runSnellMode(false)}>预览切换</button>
-            </div>}
-            {snellPreview && <div className="access-note compact" aria-live="polite">
-              <p>授权身份 {snellPreview.credential_count} / {snellPreview.credential_limit} · 原端口 {snellPreview.current_ports?.join(', ') || '未确认'} → 目标端口 {snellPreview.target_ports?.join(', ') || '无授权身份'}{snellPreview.advertise_port ? ` · 对外端口 ${snellPreview.advertise_port}，请同步检查 NAT 映射` : ''}。</p>
-              <p>旧端口会保留到新配置运行确认。{snellPreview.capability_ready ? '能力检查通过。' : '当前缺少共享端口能力，升级后重新预览。'}</p>
-              <button type="button" disabled={snellBusy || !snellPreview.capability_ready} onClick={() => void runSnellMode(true)}>确认切换并等待部署</button>
-            </div>}
-            {snellError && <p role="alert" className="field-hint warning-text">{snellError}</p>}
           </EntryFormSection>}
 
           <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description={snellIndependent ? 'Snell 从服务器公网端口池为每个授权用户分配独立运行端口。' : 'Agent 在本机打开的地址和端口。'}>
@@ -15047,8 +15029,8 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
         </details>
       </div>
       <footer className="dialog-actions">
-        <button className="ghost" onClick={onCancel}>取消</button>
-        <button onClick={onSubmit} disabled={submitBlocked} title={submitHint}>{mode === 'edit' ? '保存入口协议' : '创建入口协议'}</button>
+        <button className="ghost" onClick={onCancel} disabled={saving}>取消</button>
+        <button onClick={() => void submit()} disabled={saving || submitBlocked} title={submitHint}>{saving ? '正在保存…' : mode === 'edit' ? '保存入口协议' : '创建入口协议'}</button>
       </footer>
   </MotionDialogPanel>
 }
