@@ -16804,6 +16804,35 @@ verify_core_runtime() {
   return 1
 }
 
+pkg_install() {
+  local log_file=${INSTALL_LOG:-/dev/null}
+  # Install packages with the host package manager. Supports Debian/Ubuntu,
+  # Alpine, RHEL/CentOS/Rocky/Alma (dnf/yum), openSUSE (zypper), Arch (pacman).
+  if [ "$#" -eq 0 ]; then
+    return 0
+  fi
+  if command -v apk >/dev/null 2>&1; then
+    apk add --no-cache "$@" >> "$log_file" 2>&1
+  elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >> "$log_file" 2>&1
+    apt-get install -y --no-install-recommends "$@" >> "$log_file" 2>&1
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y "$@" >> "$log_file" 2>&1
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y "$@" >> "$log_file" 2>&1
+  elif command -v microdnf >/dev/null 2>&1; then
+    microdnf install -y "$@" >> "$log_file" 2>&1
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install -y "$@" >> "$log_file" 2>&1
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --noconfirm "$@" >> "$log_file" 2>&1
+  else
+    echo "未找到支持的包管理器（apk/apt/dnf/yum/zypper/pacman），无法自动安装：$*" >&2
+    return 1
+  fi
+}
+
 read_stealth_layout() {
   [ -n "${OBOARD_STEALTH_LAYOUT:-}" ] || { echo "缺少主控生成的安全进程布局；请重新获取安装或更新命令。" >&2; return 1; }
   if ! command -v python3 >/dev/null 2>&1; then
@@ -17200,35 +17229,6 @@ v=sys.argv[1]
 v += '=' * ((4 - len(v) % 4) % 4)
 open(sys.argv[2], 'wb').write(base64.b64decode(v))
 PY
-}
-
-pkg_install() {
-  local log_file=${INSTALL_LOG:-/dev/null}
-  # Install packages with the host package manager. Supports Debian/Ubuntu,
-  # Alpine, RHEL/CentOS/Rocky/Alma (dnf/yum), openSUSE (zypper), Arch (pacman).
-  if [ "$#" -eq 0 ]; then
-    return 0
-  fi
-  if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache "$@" >> "$log_file" 2>&1
-  elif command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y >> "$log_file" 2>&1
-    apt-get install -y --no-install-recommends "$@" >> "$log_file" 2>&1
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y "$@" >> "$log_file" 2>&1
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y "$@" >> "$log_file" 2>&1
-  elif command -v microdnf >/dev/null 2>&1; then
-    microdnf install -y "$@" >> "$log_file" 2>&1
-  elif command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive install -y "$@" >> "$log_file" 2>&1
-  elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --noconfirm "$@" >> "$log_file" 2>&1
-  else
-    echo "未找到支持的包管理器（apk/apt/dnf/yum/zypper/pacman），无法自动安装：$*" >&2
-    return 1
-  fi
 }
 
 ensure_base_tools() {
