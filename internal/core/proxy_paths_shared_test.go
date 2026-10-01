@@ -1167,7 +1167,7 @@ func TestServerStepToUniqueAnyTLSInboundGeneratesBoundOutbound(t *testing.T) {
 
 func TestGeneratedChainStepAllowedOnServerHostingBoundProtocolInbound(t *testing.T) {
 	// An explicit chain_protocol asks for a generated shared chain listener on
-	// the target server. That the server also hosts an AnyTLS/HY2/Snell inbound
+	// the target server. That the server also hosts an AnyTLS/HY2 inbound
 	// is irrelevant, so the topology must not be forced to bind an inbound_id.
 	source := model.Server{ID: 1, Name: "source", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, ChainSecret: "chain-1", PortRangeStart: 30000, PortRangeEnd: 30100}
 	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, ChainSecret: "chain-2", PortRangeStart: 31000, PortRangeEnd: 31100}
@@ -1199,14 +1199,14 @@ func TestGeneratedChainStepAllowedOnServerHostingBoundProtocolInbound(t *testing
 }
 
 func TestValidateProxyPathTransportSetRejectsMismatchedRequiredInbound(t *testing.T) {
-	root := model.Inbound{ID: 10, ServerID: 1, Protocol: model.ProtocolSnell, Port: 11787, Enabled: true}
+	root := model.Inbound{ID: 10, ServerID: 1, Protocol: model.ProtocolHY2, Port: 11787, Enabled: true}
 	targetInbound := model.Inbound{ID: 20, ServerID: 2, Protocol: model.ProtocolAnyTLS, Port: 10787, Enabled: true}
-	path := model.ProxyPath{ID: 1, Name: "snell-anytls", InboundID: root.ID, Enabled: true}
+	path := model.ProxyPath{ID: 1, Name: "hy2-anytls", InboundID: root.ID, Enabled: true}
 	targetID := int64(2)
 	step := model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
 	err := validateProxyPathTransportSet([]model.ProxyPath{path}, map[int64][]model.ProxyPathStep{path.ID: {step}}, map[int64]model.Inbound{root.ID: root, targetInbound.ID: targetInbound})
 	if err == nil {
-		t.Fatal("expected missing inbound_id to be rejected for mismatched snell -> anytls target")
+		t.Fatal("expected missing inbound_id to be rejected for mismatched hy2 -> anytls target")
 	}
 }
 

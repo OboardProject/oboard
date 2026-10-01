@@ -652,7 +652,7 @@ func ValidateProxyPathChainMethod(method string) error {
 // explicit managed inbound instead.
 func ProxyPathProtocolRequiresInboundBinding(protocol model.Protocol) bool {
 	switch protocol {
-	case model.ProtocolAnyTLS, model.ProtocolHY2, model.ProtocolSnell:
+	case model.ProtocolAnyTLS, model.ProtocolHY2:
 		return true
 	default:
 		return false
@@ -1410,6 +1410,9 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 				continue
 			}
 			target, ok := inboundByID[*step.InboundID]
+			if ok && target.Protocol == model.ProtocolSnell {
+				return fmt.Errorf("代理路径 %s 不能将共享 Snell 用户入口作为链路目标，请使用生成的链路服务", path.Name)
+			}
 			if !ok || target.Protocol != model.ProtocolMieru {
 				continue
 			}

@@ -29,6 +29,19 @@ func TestListMCPFiltersCapabilitiesNotExposedToMCP(t *testing.T) {
 	}
 }
 
+func TestSnellListenerModeSwitchCapabilitiesAreRemoved(t *testing.T) {
+	catalog := NewCatalog()
+	for _, name := range []string{"inbounds.listener_mode.preview", "inbounds.listener_mode.apply"} {
+		if _, exists := catalog.Get(name); exists {
+			t.Fatalf("retired capability %s remains available", name)
+		}
+	}
+	descriptor, exists := catalog.Get("inbounds.update")
+	if !exists || !descriptor.Executable || !descriptor.MCPEnabled || !strings.Contains(string(descriptor.InputSchema), "shared_port only") {
+		t.Fatal("shared Snell edits must use the validated inbound update capability")
+	}
+}
+
 func TestSubscriptionPlanCapabilitiesAreManagementOnlyAndExecutable(t *testing.T) {
 	catalog := NewCatalog()
 	for _, name := range []string{"subscription_plans.list", "subscription_plans.get", "subscription_plans.nodes.update", "subscription_plans.delete"} {
@@ -246,7 +259,7 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 	if !strings.Contains(description, "certificate_mode=auto") || !strings.Contains(description, "must not wait for a ready certificate") || !strings.Contains(description, "must not send the operator to the panel") {
 		t.Fatalf("inbounds.create schema lacks managed-certificate guidance: %q", description)
 	}
-	if !strings.Contains(string(descriptor.InputSchema), "Snell 共享端口可对应一个 NAT 对外端口；独立端口模式仅在当前授权解析为单个客户端运行实例时支持一个对外端口") {
+	if !strings.Contains(string(descriptor.InputSchema), "Snell 共享端口可对应一个 NAT 对外端口，每个授权身份使用独立 PSK") {
 		t.Fatalf("inbounds.create schema lacks Snell advertise_port boundary: %s", descriptor.InputSchema)
 	}
 	if !strings.Contains(descriptor.Description, "创建不等待证书就绪") {

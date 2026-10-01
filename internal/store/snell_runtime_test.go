@@ -44,7 +44,7 @@ func TestSnellRuntimeUpgradePreservesPortsAndConfirmsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unchanged.ConfigJSON != in.ConfigJSON || unchanged.Port != in.Port || unchanged.SnellActiveMode != "" {
+	if unchanged.ConfigJSON != `{"listener_mode":"shared_port","psk":"old-server-seed","version":4}` || unchanged.Port != in.Port || unchanged.SnellActiveMode != "" {
 		t.Fatal("upgrade changed existing desired/active endpoints")
 	}
 	allocations, err := s.ListProxyPathPortAllocations(ctx)

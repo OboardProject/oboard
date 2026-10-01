@@ -1,218 +1,9 @@
 package core
 
-import (
-	"errors"
-	"fmt"
-	"sort"
-	"strconv"
-	"strings"
+import "github.com/OboardProject/oboard/internal/model"
 
-	"github.com/OboardProject/oboard/internal/model"
-)
-
-// errNoSnellInboundSecret marks an inbound whose stable PSK never got
-// persisted. Controller generates one at create time, so reaching this means
-// the stored desired state is incomplete rather than merely unusual.
-var errNoSnellInboundSecret = errors.New("snell psk required (config_json.psk)")
-
-// Per-identity mode projects one standard PSK listener per authorized identity.
-type snellUserListener struct {
-	InboundID int64
-	ServerID  int64
-	User      model.User
-	PathID    int64
-	Port      int
-	Tag       string
-	PSK       string
-}
-
-// snellUserSyntheticIDBase keeps the reservation-only inbound IDs of generated
-// Snell listeners in a bit field no other synthetic listener uses. Proxy paths
-// already claim 1<<43 (shared transparent), 1<<45 (per-hop internal) and
-// 1<<45|1<<44 (outer reservation).
-const snellUserSyntheticIDBase = int64(1) << 46
-
-// snellUserInboundTag names one generated listener. User IDs are signed: proxy
-// path link users carry the negated path id and the placeholder identity uses
-// zero, so the sign is encoded rather than dropped to keep tags unique.
-func snellUserInboundTag(inboundID, userID, pathID int64) string {
-	name := fmt.Sprintf("in-%d-u%d", inboundID, userID)
-	if userID < 0 {
-		name = fmt.Sprintf("in-%d-l%d", inboundID, -userID)
-	}
-	if pathID > 0 {
-		name += fmt.Sprintf("-p%d", pathID)
-	}
-	return name
-}
-
-// snellUserPSK uses the persisted per-authorization PSK for public users.
-// Managed hop and placeholder secrets remain Controller-owned.
-func snellUserPSK(inboundSecret string, inbound model.Inbound, user model.User, pathID int64) string {
-	if user.ID > 0 {
-		return user.ProxyPassword
-	}
-	return deterministicSecret(fmt.Sprintf("%s:snell:inbound:%d:user:%d:path:%d:%s",
-		inboundSecret, inbound.ID, user.ID, pathID, user.ProxyPassword))
-}
-
-// ReserveSnellSubscriptionPorts fixes independent listener ports when credentials
-// are prepared, before a server is online or has received its configuration.
-// It skips placeholder listeners: a placeholder owns no subscription node, so
-// its runtime port stays a deployment-time concern and this pass never
-// persists ports for servers outside a focused refresh's scope.
-func ReserveSnellSubscriptionPorts(inbounds []model.Inbound, servers []model.Server, users []model.User, opts ConfigOptions) error {
-	opts.SkipPlaceholderListeners = true
-	_, _, err := planSnellUserListeners(inbounds, servers, users, opts)
-	return err
-}
-
-// planSnellUserListeners projects the generated listeners of every Snell
-// inbound on every known server, not just the server whose config is being
-// generated. Port ownership must not depend on deployment scope: a focused
-// deploy that skipped a server would leave its owners unclaimed and
-// StaleProxyPathPortAllocationIDs would release ports that are still serving
-// live clients.
-//
-// The returned synthetic inbounds exist only to reserve the chosen ports for
-// the rest of this projection. proxyPathAvailablePort only sees conflicts
-// through the inbound map it is given, so without them two Snell users — or a
-// Snell user and a proxy path hop — could be handed the same port.
-func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, users []model.User, opts ConfigOptions) (map[int64][]snellUserListener, []model.Inbound, error) {
-	snellInbounds := make([]model.Inbound, 0)
-	for _, inbound := range inbounds {
-		if inbound.Protocol == model.ProtocolSnell && inbound.Enabled && !SnellSharedPort(inbound) {
-			snellInbounds = append(snellInbounds, inbound)
-		}
-	}
-	if len(snellInbounds) == 0 {
-		return nil, nil, nil
-	}
-	sort.SliceStable(snellInbounds, func(i, j int) bool { return snellInbounds[i].ID < snellInbounds[j].ID })
-
-	serverByID := map[int64]model.Server{}
-	for _, item := range servers {
-		serverByID[item.ID] = item
-	}
-	inboundByID := map[int64]model.Inbound{}
-	for _, item := range inbounds {
-		inboundByID[item.ID] = item
-	}
-
-	plan := map[int64][]snellUserListener{}
-	reservations := []model.Inbound{}
-	for _, inbound := range snellInbounds {
-		host, ok := serverByID[inbound.ServerID]
-		if !ok {
-			// The inbound's server is outside this projection's data set, so
-			// there is nothing to allocate against. Config generation for that
-			// server will fail on its own terms.
-			continue
-		}
-		if inboundUsesTransparentProcessing(inbound.ID, opts.ProxyPaths, opts.ProxyPathSteps) {
-			continue
-		}
-		secret, err := snellInboundSecret(inbound)
-		if err != nil {
-			return nil, nil, fmt.Errorf("snell inbound %s: %w", inbound.Name, err)
-		}
-		_, listenerUsers, err := resolveInboundUsers(inbound, users, opts, host.ChainSecret)
-		if err != nil {
-			return nil, nil, err
-		}
-		if inbound.AdvertisePort > 0 && len(listenerUsers) > 1 {
-			return nil, nil, markInvalidDesiredState(fmt.Errorf(
-				"Snell 入站 %s 当前使用独立端口模式，%d 这个对外端口无法映射 %d 个用户或分支的运行端口；请编辑入站，将「监听方式」切换为「共享端口」，预览并确认切换后重新部署，即可通过独立 PSK 在单端口上区分用户和分支",
-				inbound.Name, inbound.AdvertisePort, len(listenerUsers)))
-		}
-		listenIP := EffectiveListenIP(host, inbound.ListenIP)
-		start, end := proxyPathServerPortRange(host)
-		// A per-identity Snell inbound never binds its own Port: that value is
-		// only the stable logical identity of the inbound and is not rendered
-		// into sing-box. Letting it block allocation would cost one usable
-		// public port for nothing, and on a host whose auto range is as narrow
-		// as the identity port itself it makes the inbound undeployable even
-		// with zero authorized users, because the sole candidate collides with
-		// the identity row. Its own generated listeners may therefore take it;
-		// every other inbound on the server stays reserved.
-		allocatable := make(map[int64]model.Inbound, len(inboundByID))
-		for id, item := range inboundByID {
-			if id == inbound.ID {
-				continue
-			}
-			allocatable[id] = item
-		}
-		for _, user := range listenerUsers {
-			pathID := runtimePathIDFromUsername(user.Username)
-			listener := snellUserListener{
-				InboundID: inbound.ID,
-				ServerID:  host.ID,
-				User:      user,
-				PathID:    pathID,
-				Tag:       snellCredentialInboundTag(inbound.ID, user, pathID),
-				PSK:       snellUserPSK(secret, inbound, user, pathID),
-			}
-			seed := inbound.ID*1000003 + user.ID*10007 + pathID*101
-			listener.Port = opts.PortLedger.resolve(PortRequirement{
-				Kind:           model.ProxyPathPortKindSnellUser,
-				ScopeKey:       snellCredentialPortScopeKey(inbound.ID, user, pathID),
-				ServerID:       host.ID,
-				Pool:           model.PortPoolPublic,
-				ListenIP:       listenIP,
-				Network:        model.ForwardProtocolTCP,
-				PolicyRevision: serverPortPolicyRevision(host),
-				Allocate: func() int {
-					return proxyPathAvailablePort(host, seed, 0, start, end, listenIP, allocatable)
-				},
-			})
-			if listener.Port <= 0 {
-				return nil, nil, markInvalidDesiredState(fmt.Errorf(
-					"snell 入站 %s 需要为每个用户分配一个独立端口，服务器 %s 的自动端口段 %d-%d 已耗尽（本入站需要 %d 个端口）",
-					inbound.Name, firstNonEmpty(host.Name, fmt.Sprintf("%d", host.ID)), start, end, len(listenerUsers)))
-			}
-			reservation := model.Inbound{
-				ID:       -(snellUserSyntheticIDBase + int64(len(reservations))),
-				ServerID: host.ID,
-				Name:     listener.Tag,
-				Protocol: model.ProtocolSnell,
-				ListenIP: listenIP,
-				Port:     listener.Port,
-				Enabled:  true,
-			}
-			inboundByID[reservation.ID] = reservation
-			allocatable[reservation.ID] = reservation
-			reservations = append(reservations, reservation)
-			plan[inbound.ID] = append(plan[inbound.ID], listener)
-		}
-	}
-	return plan, reservations, nil
-}
-
-// snellInboundSecret returns the inbound-level PSK that seeds every per-user
-// PSK. Controller persists it at create time (resolveSnellProfileIntoInbound),
-// so an inbound without one is a desired-state defect rather than a runtime
-// condition to paper over.
-func snellInboundSecret(inbound model.Inbound) (string, error) {
-	extra := parseExtra(inbound.ConfigJSON)
-	version, err := snellPanelVersion(extra)
-	if err != nil {
-		return "", err
-	}
-	secret := stringValue(extra, "psk", "")
-	if secret == "" {
-		return "", errNoSnellInboundSecret
-	}
-	if err := validateSnellPSKLength(secret, version); err != nil {
-		return "", err
-	}
-	return secret, nil
-}
-
-// snellListenerInbound renders one generated listener. It deliberately never
-// emits `users`: an empty user list is what keeps sing-box on the single-user
-// snellv5.NewService / snellv6.NewService path, which authenticates with the
-// PSK alone and therefore accepts every client.
-func snellListenerInbound(inbound model.Inbound, listener snellUserListener) (map[string]any, error) {
+// snellListenerInbound renders the shared listener transport options.
+func snellListenerInbound(inbound model.Inbound) (map[string]any, error) {
 	extra := parseExtra(inbound.ConfigJSON)
 	panelVersion, err := snellPanelVersion(extra)
 	if err != nil {
@@ -224,11 +15,10 @@ func snellListenerInbound(inbound model.Inbound, listener snellUserListener) (ma
 	}
 	item := map[string]any{
 		"type":        "snell",
-		"tag":         listener.Tag,
+		"tag":         tag("in", inbound.ID),
 		"listen":      inbound.ListenIP,
-		"listen_port": listener.Port,
+		"listen_port": inbound.Port,
 		"version":     serverVersion,
-		"psk":         listener.PSK,
 	}
 	if panelVersion == SnellVersionV4 {
 		obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none"))
@@ -251,115 +41,22 @@ func snellListenerInbound(inbound model.Inbound, listener snellUserListener) (ma
 	return item, nil
 }
 
-// snellUserPortScopeKey is the ledger owner key of one generated listener. The
-// projection and every read-only consumer must derive it identically, or a
-// subscription would advertise a port the kernel does not listen on.
-func snellUserPortScopeKey(inboundID, userID, pathID int64) string {
-	return fmt.Sprintf("inbound:%d:user:%d:path:%d", inboundID, userID, pathID)
-}
-
-func snellCredentialInboundTag(inboundID int64, user model.User, pathID int64) string {
-	value := snellUserInboundTag(inboundID, user.ID, pathID)
-	if user.ID > 0 && user.DeviceIDHash != "" {
-		value += "-d" + user.DeviceIDHash
-	}
-	return value
-}
-
-func snellCredentialPortScopeKey(inboundID int64, user model.User, pathID int64) string {
-	value := snellUserPortScopeKey(inboundID, user.ID, pathID)
-	if user.ID > 0 && user.DeviceIDHash != "" {
-		value += ":device:" + user.DeviceIDHash
-	}
-	return value
-}
-
-// SnellRuntimeProbePorts returns the actual ports occupied by a fanned-out
-// Snell inbound. The panel inbound's Port is only its stable logical port and
-// is not rendered into sing-box. During deployment projectedOnly excludes
-// active allocations that the new projection no longer uses; read-only probes
-// use all currently active persisted allocations.
-func SnellRuntimeProbePorts(ledger *ProxyPathPortLedger, inbound model.Inbound, projectedOnly bool) []int {
-	if inbound.Protocol == model.ProtocolSnell && !projectedOnly && inbound.SnellActiveMode == SnellListenerShared {
-		if inbound.SnellActivePort > 0 {
-			return []int{inbound.SnellActivePort}
-		}
+// SnellRuntimeProbePorts uses the configured port for deployment and the verified active port for diagnostics.
+func SnellRuntimeProbePorts(inbound model.Inbound, projectedOnly bool) []int {
+	if inbound.Protocol != model.ProtocolSnell {
 		return nil
 	}
-	if SnellSharedPort(inbound) && projectedOnly {
+	if projectedOnly {
 		return []int{inbound.Port}
 	}
-	if SnellSharedPort(inbound) && inbound.SnellActiveMode == "" {
-		return nil
+	if inbound.SnellActiveMode == SnellListenerShared && inbound.SnellActivePort > 0 {
+		return []int{inbound.SnellActivePort}
 	}
-	if ledger == nil || inbound.Protocol != model.ProtocolSnell {
-		return nil
-	}
-	prefix := fmt.Sprintf("inbound:%d:user:", inbound.ID)
-	ports := make([]int, 0)
-	seen := map[int]bool{}
-	for key, owner := range ledger.owners {
-		if key.Kind != model.ProxyPathPortKindSnellUser || key.ServerID != inbound.ServerID || !strings.HasPrefix(key.ScopeKey, prefix) {
-			continue
-		}
-		if projectedOnly && !ledger.used[key] {
-			continue
-		}
-		gen := owner.activeGeneration()
-		if gen == nil {
-			continue
-		}
-		row, ok := gen.primaryRow()
-		if !ok || row.Port <= 0 || seen[row.Port] {
-			continue
-		}
-		seen[row.Port] = true
-		ports = append(ports, row.Port)
-	}
-	sort.Ints(ports)
-	return ports
+	return nil
 }
 
-// SnellSubscriptionNode renders the client-facing node for one identity on one
-// branch. The generated listener still runs on its ledger port, but an explicit
-// advertise_port is the public NAT/forwarding entry and therefore replaces only
-// the client-facing server_port. It reads the ledger without allocating, so a
-// user whose listener has not been deployed yet yields ok=false and is omitted
-// rather than handed a port that does not exist.
-//
-// The caller must pass the same identity the config projection used — the
-// branch user for a proxy path branch, and in both cases the credential-scoped
-// user from UserCredentialForRoute — otherwise the derived PSK will not match.
+// SnellSubscriptionNode renders the shared endpoint with the identity-scoped standard PSK.
 func SnellSubscriptionNode(ledger *ProxyPathPortLedger, user model.User, inbound model.Inbound, server model.Server, pathID int64) (map[string]any, bool, error) {
-	if !SnellSharedPort(inbound) && inbound.AdvertisePort > 0 && activeSnellClientListenerCount(ledger, inbound) > 1 {
-		return nil, false, markInvalidDesiredState(fmt.Errorf(
-			"Snell 入站 %s 当前使用独立端口模式，对外端口 %d 对应多个运行端口；请编辑入站，将「监听方式」切换为「共享端口」，预览并确认切换后重新部署，再刷新订阅",
-			inbound.Name, inbound.AdvertisePort))
-	}
-	return snellUserNode(ledger, user, inbound, server, pathID)
-}
-
-func activeSnellClientListenerCount(ledger *ProxyPathPortLedger, inbound model.Inbound) int {
-	if ledger == nil {
-		return 0
-	}
-	prefix := fmt.Sprintf("inbound:%d:user:", inbound.ID)
-	count := 0
-	for key, owner := range ledger.owners {
-		if key.Kind != model.ProxyPathPortKindSnellUser || key.ServerID != inbound.ServerID || !strings.HasPrefix(key.ScopeKey, prefix) || owner.activeGeneration() == nil {
-			continue
-		}
-		userPart := strings.TrimPrefix(key.ScopeKey, prefix)
-		userPart, _, _ = strings.Cut(userPart, ":path:")
-		userID, err := strconv.ParseInt(userPart, 10, 64)
-		if err == nil && userID > 0 {
-			count++
-		}
-	}
-	return count
-}
-
-func snellUserNode(ledger *ProxyPathPortLedger, user model.User, inbound model.Inbound, server model.Server, pathID int64) (map[string]any, bool, error) {
 	extra := parseExtra(inbound.ConfigJSON)
 	panelVersion, err := snellPanelVersion(extra)
 	if err != nil {
@@ -369,20 +66,10 @@ func snellUserNode(ledger *ProxyPathPortLedger, user model.User, inbound model.I
 	if err != nil {
 		return nil, false, err
 	}
-	secret, err := snellInboundSecret(inbound)
-	if err != nil {
-		return nil, false, err
-	}
-	if user.ID > 0 && user.AuthorizationKey == "" {
+	if user.ID <= 0 || user.AuthorizationKey == "" || user.ProxyPassword == "" {
 		return nil, false, nil
 	}
-	runtimePort, ok := inbound.Port, true
-	if !SnellSharedPort(inbound) {
-		runtimePort, ok = ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellCredentialPortScopeKey(inbound.ID, user, pathID), inbound.ServerID)
-	}
-	if !ok {
-		return nil, false, nil
-	}
+	runtimePort := inbound.Port
 	serverPort := runtimePort
 	if inbound.AdvertisePort > 0 {
 		serverPort = inbound.AdvertisePort
@@ -393,7 +80,7 @@ func snellUserNode(ledger *ProxyPathPortLedger, user model.User, inbound model.I
 		"server":      server.EntryAddress,
 		"server_port": serverPort,
 		"version":     clientVersion,
-		"psk":         snellUserPSK(secret, inbound, user, pathID),
+		"psk":         user.ProxyPassword,
 	}
 	if clientVersion == SnellVersionV4 {
 		obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none"))

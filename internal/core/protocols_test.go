@@ -164,6 +164,8 @@ func TestSnellGeneratedConfigAcrossUDPModes(t *testing.T) {
 	for _, mode := range []model.UDPInboundMode{model.UDPInboundAllow, model.UDPInboundBlock, model.UDPInboundUoT} {
 		t.Run(string(mode), func(t *testing.T) {
 			server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", UDPInboundMode: model.UDPInboundMode(mode)}
+			server.KernelCapabilities = snellTestServer().KernelCapabilities
+			server.AgentID = "snell-agent"
 			v4 := model.Inbound{ID: 2, ServerID: 1, Name: "snell-v4", Protocol: model.ProtocolSnell, ListenIP: "", Port: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http","obfs_host":"bing.com"}`, Enabled: true}
 			v6 := model.Inbound{ID: 3, ServerID: 1, Name: "snell-v6", Protocol: model.ProtocolSnell, ListenIP: "", Port: 7177, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","mode":"unshaped"}`, Enabled: true}
 			config, err := generateFixtureConfig(server, []model.Inbound{v4, v6}, nil, testDNSState(1), []model.User{{ID: 1, Username: "alice", Status: "active", ProxyPassword: "user-pass"}}, ConfigOptions{})
@@ -174,30 +176,23 @@ func TestSnellGeneratedConfigAcrossUDPModes(t *testing.T) {
 			if err := json.Unmarshal([]byte(config), &parsed); err != nil {
 				t.Fatal(err)
 			}
-			// Each Snell inbound renders one single-user listener for the one
-			// bound user: no users table, a derived PSK rather than the
-			// inbound seed, and an auto-allocated port rather than the
-			// declared one.
 			var foundV4, foundV6 bool
 			for _, inbound := range parsed.Inbounds {
 				if inbound["type"] != "snell" {
 					continue
 				}
-				if _, ok := inbound["users"]; ok {
-					t.Fatalf("snell listener must stay single-user: %#v", inbound)
-				}
-				if inbound["psk"] == "secret-psk-1234" {
-					t.Fatalf("snell listener must use a derived per-user psk, not the inbound seed: %#v", inbound)
+				if inbound["auth_mode"] != "multi_psk" || inbound["psk"] != nil {
+					t.Fatalf("Snell must use a shared PSK table: %#v", inbound)
 				}
 				switch inbound["version"] {
 				case float64(5):
 					foundV4 = true
-					if inbound["tag"] != "in-2-u1" || inbound["obfs_mode"] != "http" || inbound["listen_port"] == float64(6160) {
+					if inbound["tag"] != "in-2" || inbound["obfs_mode"] != "http" || inbound["listen_port"] != float64(6160) {
 						t.Fatalf("snell v4 inbound block = %#v", inbound)
 					}
 				case float64(6):
 					foundV6 = true
-					if inbound["tag"] != "in-3-u1" || inbound["mode"] != "unshaped" || inbound["listen_port"] == float64(7177) {
+					if inbound["tag"] != "in-3" || inbound["mode"] != "unshaped" || inbound["listen_port"] != float64(7177) {
 						t.Fatalf("snell v6 inbound block = %#v", inbound)
 					}
 				}
@@ -635,8 +630,10 @@ func TestPathStageInterfaceRuleFollowsContinuationThroughBoundNextHop(t *testing
 	}
 }
 
-func TestPathStageInterfaceRuleOnSnellFollowsContinuationScopedByPerUserInbound(t *testing.T) {
+func TestPathStageInterfaceRuleOnSnellFollowsContinuationScopedByAuthUser(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "LQ", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverA.KernelCapabilities = snellTestServer().KernelCapabilities
+	serverA.AgentID = "snell-agent"
 	serverB := model.Server{ID: 2, Name: "Cogent", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
 	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "LQ-snell", Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 11787, ConfigJSON: `{"version":4,"psk":"secret-psk-1234"}`, Enabled: true}
 	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "LQ | Cogent", InboundID: root.ID, Secret: "path-secret", Enabled: true}
@@ -648,10 +645,11 @@ func TestPathStageInterfaceRuleOnSnellFollowsContinuationScopedByPerUserInbound(
 		Action: model.RouteActionInterface, InterfaceName: "eth0", Enabled: true,
 	}
 	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	var pkg *RuntimeUserPackage
 	config := mustServerConfig(t, serverA, []model.Inbound{root}, []model.User{user}, ConfigOptions{
 		Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path},
 		ProxyPathSteps: []model.ProxyPathStep{stepB}, InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
-		RoutingRules: []model.RoutingRule{rule},
+		RoutingRules: []model.RoutingRule{rule}, RuntimeUsersOut: &pkg,
 	})
 
 	baseTag := proxyPathStepTag(path.ID, stepB.Position)
@@ -661,29 +659,18 @@ func TestPathStageInterfaceRuleOnSnellFollowsContinuationScopedByPerUserInbound(
 		t.Fatalf("bound continuation %q = %#v, want bind_interface=eth0; config=%s", boundTag, bound, config)
 	}
 	routes := mapList(parseSingBoxConfig(t, config).Route["rules"])
-	if len(routes) < 2 || routes[0]["outbound"] != boundTag {
-		t.Fatalf("first path-stage rule = %#v, want route through %q; config=%s", routes, boundTag, config)
+	if len(routes) != 1 || routes[0]["outbound"] != "userselector-in-10" {
+		t.Fatalf("shared listener did not route through its identity selector: %#v", routes)
 	}
-	// A Snell branch is identified by the per-user listener the traffic
-	// arrived on, not by auth_user: each identity owns a dedicated
-	// single-user listener, so there is no user table to match against.
-	branchTag := snellUserInboundTag(root.ID, user.ID, path.ID)
-	for index, route := range []map[string]any{routes[0], routes[1]} {
-		if _, hasAuth := route["auth_user"]; hasAuth {
-			t.Fatalf("Snell rule %d must not constrain auth_user: %#v", index, route)
-		}
-		inbounds := route["inbound"].([]any)
-		if len(inbounds) != 1 || inbounds[0] != branchTag {
-			t.Fatalf("Snell rule %d must match the branch listener %q: %#v", index, branchTag, route)
-		}
-	}
-	if routes[1]["outbound"] != baseTag {
-		t.Fatalf("unmatched fallback = %#v, want %q", routes[1], baseTag)
+	if pkg == nil || len(pkg.Entries) != 1 || pkg.Entries[0].InboundTag != "in-10" || pkg.Entries[0].RouteOutbound != boundTag || pkg.Entries[0].Identity.PathID != path.ID {
+		t.Fatalf("branch identity did not select the bound continuation: %+v", pkg)
 	}
 }
 
 func TestPathStageInterfaceRuleSkipsBindWhenInterfaceLacksGlobalIPv4(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "LQ", PublicIPv4: "116.192.3.132", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverA.KernelCapabilities = snellTestServer().KernelCapabilities
+	serverA.AgentID = "snell-agent"
 	serverB := model.Server{ID: 2, Name: "Cogent", PublicIPv4: "82.29.38.156", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
 	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "LQ-snell", Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 11787, ConfigJSON: `{"version":4,"psk":"secret-psk-1234"}`, Enabled: true}
 	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "LQ | Cogent", InboundID: root.ID, Secret: "path-secret", Enabled: true}
@@ -696,10 +683,11 @@ func TestPathStageInterfaceRuleSkipsBindWhenInterfaceLacksGlobalIPv4(t *testing.
 		InterfaceBindKnown: true, InterfaceHasGlobalIPv4: false, InterfaceHasGlobalIPv6: true,
 	}
 	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	var pkg *RuntimeUserPackage
 	config := mustServerConfig(t, serverA, []model.Inbound{root}, []model.User{user}, ConfigOptions{
 		Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path},
 		ProxyPathSteps: []model.ProxyPathStep{stepB}, InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
-		RoutingRules: []model.RoutingRule{rule},
+		RoutingRules: []model.RoutingRule{rule}, RuntimeUsersOut: &pkg,
 	})
 	baseTag := proxyPathStepTag(path.ID, stepB.Position)
 	boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
@@ -714,8 +702,11 @@ func TestPathStageInterfaceRuleSkipsBindWhenInterfaceLacksGlobalIPv4(t *testing.
 		t.Fatalf("continuation dest = %#v, want Cogent IPv4", bound["server"])
 	}
 	routes := mapList(parseSingBoxConfig(t, config).Route["rules"])
-	if len(routes) < 1 || routes[0]["outbound"] != boundTag {
-		t.Fatalf("path-stage rule = %#v, want continuation %q", routes, boundTag)
+	if len(routes) != 1 || routes[0]["outbound"] != "userselector-in-10" {
+		t.Fatalf("shared listener did not route through its identity selector: %#v", routes)
+	}
+	if pkg == nil || len(pkg.Entries) != 1 || pkg.Entries[0].InboundTag != "in-10" || pkg.Entries[0].RouteOutbound != boundTag || pkg.Entries[0].Identity.PathID != path.ID {
+		t.Fatalf("branch identity did not select the bound continuation: %+v", pkg)
 	}
 }
 
@@ -2627,23 +2618,6 @@ func testOutboundConfig(protocol model.Protocol) string {
 	return `{}`
 }
 
-func TestSnellAdapterRejectsSharedListenerRendering(t *testing.T) {
-	adapter, err := AdapterFor(model.ProtocolSnell)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inbound := model.Inbound{ID: 7, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234"}`, Enabled: true}
-	// A Snell inbound has no shared listener and no shared client node: both
-	// need the per-user port and PSK, so the adapter must refuse rather than
-	// emit something pointing at the declared port.
-	if _, err := adapter.Inbound(inbound, []model.User{{ID: 1, Username: "alice", ProxyPassword: "pass-a"}}); err == nil {
-		t.Fatal("snell adapter must refuse to render a shared listener")
-	}
-	if _, err := adapter.SubscriptionNode(model.User{ID: 1, Username: "alice", ProxyPassword: "pass-a"}, inbound, model.Server{EntryAddress: "203.0.113.10"}); err == nil {
-		t.Fatal("snell adapter must refuse to render a shared subscription node")
-	}
-}
-
 func TestSnellVersionMappingAndValidation(t *testing.T) {
 	adapter, err := AdapterFor(model.ProtocolSnell)
 	if err != nil {
@@ -2666,12 +2640,11 @@ func TestSnellVersionMappingAndValidation(t *testing.T) {
 	}
 
 	v4 := model.Inbound{ID: 7, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http","obfs_host":"bing.com"}`, Enabled: true}
-	listener := snellUserListener{Tag: "in-7-u1", Port: 30001, PSK: "derived-psk-abcdefghijkl"}
-	block, err := snellListenerInbound(v4, listener)
+	block, err := snellListenerInbound(v4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if block["version"] != 5 || block["psk"] != listener.PSK || block["obfs_mode"] != "http" || block["listen_port"] != listener.Port {
+	if block["version"] != 5 || block["obfs_mode"] != "http" || block["listen_port"] != v4.Port {
 		t.Fatalf("snell v4 listener = %#v", block)
 	}
 	if _, ok := block["users"]; ok {
@@ -2683,7 +2656,7 @@ func TestSnellVersionMappingAndValidation(t *testing.T) {
 	}
 
 	v6 := model.Inbound{ID: 8, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 7177, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","mode":"unshaped"}`, Enabled: true}
-	block6, err := snellListenerInbound(v6, snellUserListener{Tag: "in-8-u1", Port: 30002, PSK: "derived-psk-abcdefghijkl"})
+	block6, err := snellListenerInbound(v6)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2707,10 +2680,7 @@ func TestSnellVersionMappingAndValidation(t *testing.T) {
 	if err := adapter.ValidateInbound(model.Inbound{ID: 14, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6164, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http"}`, Enabled: true}); err != nil {
 		t.Fatalf("snell v4 http obfs without host must be accepted: %v", err)
 	}
-	// The inbound seed itself still has to satisfy the version's PSK contract.
-	if _, err := snellInboundSecret(model.Inbound{ID: 15, Protocol: model.ProtocolSnell, ConfigJSON: `{"version":4}`}); err == nil {
-		t.Fatal("snell inbound without psk must be rejected")
-	}
+
 }
 
 func TestSnellAdapterOutboundVersionMapping(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 // inbound id from the unmodified source map.
 func TestSingleUserInboundRuntimeLimitCarriesInboundID(t *testing.T) {
 	server := snellTestServer()
-	inbound := snellTestInbound()
+	inbound := model.Inbound{ID: 2, ServerID: server.ID, Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 6160, ConfigJSON: `{"method":"aes-128-gcm","password":"server-password"}`, Enabled: true}
 	users := snellTestUsers(1)
 	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound},

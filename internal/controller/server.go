@@ -6253,12 +6253,6 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 }
 
 func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
-	for _, suffix := range []string{"/listener-mode/preview", "/listener-mode/apply"} {
-		if strings.HasSuffix(r.URL.Path, suffix) {
-			s.snellModeHTTP(w, r, idFromPath(strings.TrimSuffix(r.URL.Path, suffix), "/api/v1/inbounds/"), strings.HasSuffix(suffix, "apply"))
-			return
-		}
-	}
 
 	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/padding") {
 		path := strings.TrimSuffix(strings.TrimRight(r.URL.Path, "/"), "/padding")
@@ -6268,6 +6262,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/probe") {
 		path := strings.TrimSuffix(strings.TrimRight(r.URL.Path, "/"), "/probe")
 		s.inboundProbeNow(w, r, idFromPath(path, "/api/v1/inbounds/"))
+		return
+	}
+	if strings.Contains(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/inbounds"), "/"), "/") {
+		notFound(w, r)
 		return
 	}
 	id := idFromPath(r.URL.Path, "/api/v1/inbounds/")
@@ -6435,10 +6433,6 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		if v.ConfigJSON, err = applyInboundConfigDefaults(v.Protocol, v.ConfigJSON); err != nil {
 			fail(w, err, 400)
-			return
-		}
-		if err := validateSnellModeMutation(*current, v); err != nil {
-			write(w, http.StatusConflict, map[string]any{"error": snellErrorCode(err), "message": err.Error()})
 			return
 		}
 		if err := validateInbound(v); err != nil {

@@ -4,7 +4,6 @@ const (
 	AgentCapabilityRuntimeUsersVLESS       = "runtime_users:vless"
 	AgentCapabilityRuntimeUsersHysteria2   = "runtime_users:hysteria2"
 	AgentCapabilityRuntimeUsersShadowsocks = "runtime_users:shadowsocks-multi"
-	AgentCapabilityRuntimeUsersSnell       = "runtime_users:snell-multi"
 )
 
 type UsersInstallChunk struct {

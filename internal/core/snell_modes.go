@@ -3,13 +3,13 @@ package core
 import (
 	"errors"
 	"fmt"
+
 	"github.com/OboardProject/oboard/internal/model"
 )
 
 const (
-	SnellListenerShared      = "shared_port"
-	SnellListenerPerIdentity = "per_identity_port"
-	SnellCredentialLimit     = 64
+	SnellListenerShared  = "shared_port"
+	SnellCredentialLimit = 64
 )
 
 var (
@@ -17,12 +17,11 @@ var (
 	ErrSnellDuplicatePSK       = errors.New("snell_duplicate_psk")
 	ErrSnellCredentialLimit    = errors.New("snell_credential_limit_exceeded")
 	ErrSnellUnsafeMode         = errors.New("snell_unsafe_mode_not_allowed")
-	ErrSnellModeChange         = errors.New("snell_listener_mode_change_required")
 	ErrSnellRuntimeUnconfirmed = errors.New("snell_runtime_not_confirmed")
 )
 
 func SnellListenerMode(inbound model.Inbound) string {
-	return stringValue(parseExtra(inbound.ConfigJSON), "listener_mode", SnellListenerPerIdentity)
+	return stringValue(parseExtra(inbound.ConfigJSON), "listener_mode", SnellListenerShared)
 }
 func SnellSharedPort(inbound model.Inbound) bool {
 	return inbound.Protocol == model.ProtocolSnell && SnellListenerMode(inbound) == SnellListenerShared
@@ -32,8 +31,6 @@ func ValidateSnellListenerMode(inbound model.Inbound) error {
 		return nil
 	}
 	switch SnellListenerMode(inbound) {
-	case SnellListenerPerIdentity:
-		return nil
 	case SnellListenerShared:
 	default:
 		return fmt.Errorf("invalid snell listener_mode")
@@ -73,11 +70,10 @@ func snellSharedInbound(inbound model.Inbound, users []model.User) (map[string]a
 	if len(filtered) > SnellCredentialLimit {
 		return nil, ErrSnellCredentialLimit
 	}
-	item, err := snellListenerInbound(inbound, snellUserListener{Tag: tag("in", inbound.ID), Port: inbound.Port})
+	item, err := snellListenerInbound(inbound)
 	if err != nil {
 		return nil, err
 	}
-	delete(item, "psk")
 	item["auth_mode"] = "multi_psk"
 	entries := make([]map[string]any, 0, len(filtered))
 	seen := map[string]bool{}

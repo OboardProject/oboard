@@ -42,7 +42,6 @@ var inboundAutomationFields = map[string]bool{
 }
 
 func (s *Server) registerInboundAutomationOperations() {
-	s.registerSnellModeOperations()
 	s.automation.RegisterValidator("inbounds.padding.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		request, inbound, err := s.decodeInboundPaddingUpdateOperation(ctx, principal, input)
 		if err != nil {
@@ -337,9 +336,6 @@ func (s *Server) decodeInboundUpdateOperation(ctx context.Context, principal app
 		inbound.ConfigJSON, err = core.PreserveAnyTLSPaddingSnapshot(current.ConfigJSON, inbound.ConfigJSON)
 	} else if err == nil && current.Protocol != model.ProtocolAnyTLS && inbound.Protocol == model.ProtocolAnyTLS {
 		err = s.application.PrepareInboundCreate(ctx, &inbound)
-	}
-	if err == nil {
-		err = validateSnellModeMutation(*current, inbound)
 	}
 	return current, inbound, err
 }

@@ -45,7 +45,7 @@ func buildInboundProbePlans(version int64, server model.Server, inbounds []model
 		}
 		ports, err := core.MieruInboundPorts(inbound)
 		if inbound.Protocol == model.ProtocolSnell {
-			ports = core.SnellRuntimeProbePorts(ledger, inbound, projectedOnly)
+			ports = core.SnellRuntimeProbePorts(inbound, projectedOnly)
 		}
 		if err != nil || len(ports) == 0 {
 			continue
@@ -372,7 +372,7 @@ func (s *Server) inboundProbeNow(w http.ResponseWriter, r *http.Request, inbound
 	if len(localPlan.EntryTargets) == 0 {
 		message := "入口没有可探测的端口"
 		if inbound.Protocol == model.ProtocolSnell {
-			message = "Snell 当前没有已部署的逐用户监听端口；请先完成用户授权和部署"
+			message = "Snell 共享监听端口尚未确认运行；请先完成部署"
 		}
 		fail(w, errors.New(message), 400)
 		return

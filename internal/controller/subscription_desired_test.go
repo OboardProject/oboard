@@ -26,7 +26,6 @@ func TestSubscriptionPublishesSavedNodesBeforeDeployment(t *testing.T) {
 	}{
 		{"mieru", model.ProtocolMieru, `{"transport":"TCP"}`, "mihomo"},
 		{"snell-shared", model.ProtocolSnell, `{"version":4,"listener_mode":"shared_port","psk":"inbound-seed-psk-1234"}`, "surge"},
-		{"snell-independent", model.ProtocolSnell, `{"version":4,"listener_mode":"per_identity_port","psk":"inbound-seed-psk-1234"}`, "surge"},
 		{"ssh", model.ProtocolSSH, `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`, "sing-box"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

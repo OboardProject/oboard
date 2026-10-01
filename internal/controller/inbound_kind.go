@@ -40,7 +40,7 @@ func applyInboundKindDefaults(v *model.Inbound, current *model.Inbound) error {
 		if v.Reality != nil || v.RotateRealityKey {
 			return &core.ConfigFieldError{Path: "kind", Problem: "must be vless-reality when reality settings are provided"}
 		}
-		return applyNewSnellListenerDefault(v, current)
+		return applySnellListenerDefault(v)
 	}
 	protocol, ok := inboundKindProtocols[v.Kind]
 	if !ok {
@@ -61,13 +61,13 @@ func applyInboundKindDefaults(v *model.Inbound, current *model.Inbound) error {
 		if err := applyNonRealityInboundKindDefaults(v); err != nil {
 			return err
 		}
-		return applyNewSnellListenerDefault(v, current)
+		return applySnellListenerDefault(v)
 	}
 	return applyControlledRealityDefaults(v, current)
 }
 
-func applyNewSnellListenerDefault(v *model.Inbound, current *model.Inbound) error {
-	if v.Protocol != model.ProtocolSnell || (current != nil && current.Protocol == model.ProtocolSnell) {
+func applySnellListenerDefault(v *model.Inbound) error {
+	if v.Protocol != model.ProtocolSnell {
 		return nil
 	}
 	var cfg map[string]any
@@ -76,6 +76,9 @@ func applyNewSnellListenerDefault(v *model.Inbound, current *model.Inbound) erro
 	}
 	if cfg == nil {
 		cfg = map[string]any{}
+	}
+	if value, exists := cfg["listener_mode"]; exists && value != core.SnellListenerShared {
+		return &core.ConfigFieldError{Path: "config_json.listener_mode", Problem: "Snell supports shared_port only"}
 	}
 	if _, exists := cfg["listener_mode"]; !exists {
 		cfg["listener_mode"] = core.SnellListenerShared

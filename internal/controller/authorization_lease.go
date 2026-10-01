@@ -96,7 +96,6 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 		return err
 	}
 	desired = append(desired, core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, publication))...)
-	portProjection := core.MergeProjections(snap.Projection(), publication.Projection())
 	changes, err := s.store.ListAccessChangesByStatus(ctx, model.AccessChangePreparing, model.AccessChangeActivating, model.AccessChangeFinalizing)
 	if err != nil {
 		return err
@@ -106,7 +105,6 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(change.PrepareProjectionJSON), &projection); err != nil {
 			return err
 		}
-		portProjection = core.MergeProjections(portProjection, projection)
 		prepared := core.ProjectionSnapshot(projection, data.Users)
 		desired = append(desired, core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, prepared))...)
 	}
@@ -120,24 +118,6 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 		return err
 	}
 	data, err = s.loadProxyCredentialData(ctx, data)
-	if err != nil {
-		return err
-	}
-	s.deploymentMu.Lock()
-	err = func() error {
-		allocations, err := s.store.ListProxyPathPortAllocations(ctx)
-		if err != nil {
-			return err
-		}
-		ledger := core.NewProxyPathPortLedger(allocations)
-		opts := credentialOptions(data, core.ProjectionSnapshot(portProjection, data.Users))
-		opts.PortLedger = ledger
-		if err := core.ReserveSnellSubscriptionPorts(data.Inbounds, data.Servers, data.Users, opts); err != nil {
-			return err
-		}
-		return s.store.SaveProxyPathPortAllocations(ctx, ledger.Pending(), nil)
-	}()
-	s.deploymentMu.Unlock()
 	if err != nil {
 		return err
 	}

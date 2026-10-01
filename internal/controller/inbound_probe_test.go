@@ -86,10 +86,8 @@ func TestBuildInboundProbePlansUseMieruAdvertisedPort(t *testing.T) {
 func TestBuildInboundProbePlansUseSnellRuntimeAndAdvertisedPorts(t *testing.T) {
 	server := model.Server{ID: 2, PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0"}
 	inbound := model.Inbound{ID: 4, ServerID: server.ID, Name: "snell", Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 52243, AdvertisePort: 443, Enabled: true}
-	ledger := core.NewProxyPathPortLedger([]model.ProxyPathPortAllocation{
-		{Kind: model.ProxyPathPortKindSnellUser, ScopeKey: "inbound:4:user:7:path:0", ServerID: server.ID, Port: 32107, State: model.PortAllocationStateActive, Generation: 1},
-		{Kind: model.ProxyPathPortKindSnellUser, ScopeKey: "inbound:9:user:7:path:0", ServerID: server.ID, Port: 32108, State: model.PortAllocationStateActive, Generation: 1},
-	})
+	inbound.SnellActiveMode, inbound.SnellActivePort = "shared_port", 32107
+	ledger := core.NewProxyPathPortLedger(nil)
 	local, external := buildInboundProbePlans(9, server, []model.Inbound{inbound}, ledger, false)
 	if len(local.EntryTargets) != 1 || local.EntryTargets[0].Port != 32107 {
 		t.Fatalf("Snell local probe must use the runtime listener: %#v", local.EntryTargets)
@@ -98,7 +96,7 @@ func TestBuildInboundProbePlansUseSnellRuntimeAndAdvertisedPorts(t *testing.T) {
 		t.Fatalf("Snell external probe must use the advertised endpoint: %#v", external.EntryTargets)
 	}
 	if local.EntryTargets[0].Port == inbound.Port {
-		t.Fatalf("Snell logical port %d must not be probed", inbound.Port)
+		t.Fatalf("Snell unconfirmed desired port %d must not be probed", inbound.Port)
 	}
 }
 
@@ -109,7 +107,7 @@ func TestFocusedCoreRefreshPersistsSnellRuntimeProbePort(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
-	server := model.Server{Name: "snell-edge", AgentID: "agent-1", ListenIP: "0.0.0.0", PublicIPv4: "203.0.113.2", PortRangeStart: 32000, PortRangeEnd: 32100, Status: model.ServerOnline}
+	server := model.Server{Name: "snell-edge", AgentID: "agent-1", ListenIP: "0.0.0.0", PublicIPv4: "203.0.113.2", PortRangeStart: 32000, PortRangeEnd: 32100, Status: model.ServerOnline, KernelCapabilities: []string{model.AgentCapabilityRuntimeUsers, model.KernelCapabilityRuntimeUsers, "authorization_lease_v1", "runtime_users_snell_psk_v1", "runtime_users_snell_psk_control_v1", "snell_multi_psk_v4_v1"}}
 	if err := db.CreateServer(ctx, &server); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +115,7 @@ func TestFocusedCoreRefreshPersistsSnellRuntimeProbePort(t *testing.T) {
 	if err := db.CreateInbound(ctx, &inbound); err != nil {
 		t.Fatal(err)
 	}
-	otherServer := model.Server{Name: "other-edge", AgentID: "agent-2", ListenIP: "0.0.0.0", PublicIPv4: "203.0.113.3", PortRangeStart: 33000, PortRangeEnd: 33100, Status: model.ServerOnline}
+	otherServer := model.Server{Name: "other-edge", AgentID: "agent-2", ListenIP: "0.0.0.0", PublicIPv4: "203.0.113.3", PortRangeStart: 33000, PortRangeEnd: 33100, Status: model.ServerOnline, KernelCapabilities: []string{model.AgentCapabilityRuntimeUsers, model.KernelCapabilityRuntimeUsers, "authorization_lease_v1", "runtime_users_snell_psk_v1", "runtime_users_snell_psk_control_v1", "snell_multi_psk_v4_v1"}}
 	if err := db.CreateServer(ctx, &otherServer); err != nil {
 		t.Fatal(err)
 	}
@@ -133,12 +131,11 @@ func TestFocusedCoreRefreshPersistsSnellRuntimeProbePort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger := core.NewProxyPathPortLedger(allocations)
-	ports := core.SnellRuntimeProbePorts(ledger, inbound, false)
-	if len(ports) != 1 || ports[0] == inbound.Port {
-		t.Fatalf("focused refresh did not persist the generated Snell listener port: ports=%v allocations=%#v", ports, allocations)
+	ports := core.SnellRuntimeProbePorts(inbound, true)
+	if len(ports) != 1 || ports[0] != inbound.Port || len(allocations) != 0 {
+		t.Fatalf("focused refresh did not use the configured shared port: ports=%v allocations=%#v", ports, allocations)
 	}
-	if otherPorts := core.SnellRuntimeProbePorts(ledger, otherInbound, false); len(otherPorts) != 0 {
+	if otherPorts := core.SnellRuntimeProbePorts(otherInbound, false); len(otherPorts) != 0 {
 		t.Fatalf("focused refresh persisted ports for an unqueued server: %v", otherPorts)
 	}
 }
@@ -185,7 +182,7 @@ func TestControllerProbeTaskWaitsForAppliedConfigAndStoresResult(t *testing.T) {
 			_ = conn.Close()
 		}
 	}()
-	server := model.Server{Name: "probe", PublicIPv4: "127.0.0.1", ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	server := model.Server{Name: "probe", PublicIPv4: "127.0.0.1", ListenIP: "0.0.0.0", Status: model.ServerOnline, KernelCapabilities: []string{model.AgentCapabilityRuntimeUsers, model.KernelCapabilityRuntimeUsers, "authorization_lease_v1", "runtime_users_snell_psk_v1", "runtime_users_snell_psk_control_v1", "snell_multi_psk_v4_v1"}}
 	if err := db.CreateServer(context.Background(), &server); err != nil {
 		t.Fatal(err)
 	}

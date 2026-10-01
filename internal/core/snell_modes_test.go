@@ -19,15 +19,15 @@ func sharedSnellFixture() (model.Server, model.Inbound) {
 	in.ConfigJSON = `{"version":4,"psk":"unused-legacy-seed","listener_mode":"shared_port"}`
 	return s, in
 }
-func TestSnellListenerModeCapabilitiesAndOldConfig(t *testing.T) {
+func TestSnellListenerModeCapabilities(t *testing.T) {
 	_, in := sharedSnellFixture()
 	old := snellTestInbound()
-	if SnellListenerMode(old) != SnellListenerPerIdentity || !AuthCapabilities(old).PerIdentityListener || AuthCapabilities(old).MultiUser {
-		t.Fatal("upgrade changed existing listeners")
+	if SnellListenerMode(old) != SnellListenerShared || !AuthCapabilities(old).MultiUser || !AuthCapabilities(old).RoutingAuthUser {
+		t.Fatal("Snell must use the shared listener")
 	}
-	cap := AuthCapabilities(in)
-	if !cap.MultiUser || !cap.RoutingAuthUser || cap.PerIdentityListener {
-		t.Fatalf("shared capabilities: %+v", cap)
+	old.ConfigJSON = `{"version":4,"listener_mode":"per_identity_port"}`
+	if ValidateSnellListenerMode(old) == nil {
+		t.Fatal("retired independent port mode accepted")
 	}
 	in.ConfigJSON = `{"version":6,"listener_mode":"shared_port","mode":"unsafe-raw"}`
 	if !errors.Is(ValidateSnellListenerMode(in), ErrSnellUnsafeMode) {
@@ -124,7 +124,7 @@ func TestSnellSharedSubscriptionsUseDesiredEndpointAndOwnPSK(t *testing.T) {
 		}
 	}
 	in.Port++
-	if ports := SnellRuntimeProbePorts(nil, in, false); len(ports) != 1 || ports[0] != in.SnellActivePort {
+	if ports := SnellRuntimeProbePorts(in, false); len(ports) != 1 || ports[0] != in.SnellActivePort {
 		t.Fatalf("probe guessed desired port: %v", ports)
 	}
 }
@@ -133,6 +133,34 @@ func TestSnellSharedDuplicatePSKRejectedAtomically(t *testing.T) {
 	users := []model.User{{ID: 1, AuthorizationKey: "a", ProxyPassword: "duplicate-independent-key"}, {ID: 2, AuthorizationKey: "b", ProxyPassword: "duplicate-independent-key"}}
 	if _, err := snellSharedInbound(in, users); !errors.Is(err, ErrSnellDuplicatePSK) {
 		t.Fatal(err)
+	}
+}
+
+func TestSnellSharedPSKRotationIsScopedToOneIdentity(t *testing.T) {
+	server, inbound := sharedSnellFixture()
+	users := fixtureCredentials(snellTestUsers(2), []model.Inbound{inbound}, nil)
+	build := func() *RuntimeUserPackage {
+		t.Helper()
+		var pkg *RuntimeUserPackage
+		ledger := NewProxyPathPortLedger(nil)
+		_, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: ledger, RuntimeUsersOut: &pkg})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ledger.Pending()) != 0 {
+			t.Fatal("shared PSK changes allocated identity ports")
+		}
+		return pkg
+	}
+	before := build()
+	users[0].ProxyCredentials[0].Password = "rotated-independent-psk"
+	users[0].ProxyCredentials[0].ID = "rotated-credential-key"
+	after := build()
+	if len(before.Entries) != 2 || len(after.Entries) != 2 {
+		t.Fatal("rotation lost an identity")
+	}
+	if before.Entries[0].Credential.PSK == after.Entries[0].Credential.PSK || after.Entries[0].AuthorizationKey != "rotated-credential-key" || before.Entries[1] != after.Entries[1] {
+		t.Fatal("rotation changed the wrong identity")
 	}
 }
 
@@ -156,12 +184,6 @@ func TestSnellSharedAdvertisePortRoutesMultipleUsersAndBranches(t *testing.T) {
 			var pkg *RuntimeUserPackage
 			ledger := NewProxyPathPortLedger(nil)
 			opts := ConfigOptions{Servers: []model.Server{server, exitB, exitC}, Inbounds: []model.Inbound{inbound}, ProxyPaths: paths, ProxyPathSteps: steps, PortLedger: ledger, RuntimeUsersOut: &pkg}
-			old := inbound
-			old.ConfigJSON = fmt.Sprintf(`{"version":%d,"psk":"unused-legacy-seed"}`, version)
-			preview, err := PreviewSnellListener(old, server, SnellListenerShared, users, opts)
-			if err != nil || preview.CredentialCount != 4 || len(preview.TargetPorts) != 1 || preview.TargetPorts[0] != inbound.Port || !preview.RequiresRestart || !preview.CapabilityReady {
-				t.Fatalf("shared switch preview = %+v, err = %v", preview, err)
-			}
 			config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, opts)
 			if err != nil {
 				t.Fatal(err)
@@ -199,5 +221,31 @@ func TestSnellSharedAdvertisePortRoutesMultipleUsersAndBranches(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSnellSharedUsesGeneratedHopInsteadOfTargetPublicInbound(t *testing.T) {
+	source, root := sharedSnellFixture()
+	target := snellTestServer()
+	target.ID, target.Name, target.PublicIPv4 = 2, "target", "203.0.113.20"
+	public := snellTestInbound()
+	public.ID, public.ServerID, public.Port = 20, target.ID, 8443
+	path := model.ProxyPath{ID: 50, Name: "snell-chain", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	step := model.ProxyPathStep{ID: 101, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &target.ID}
+	users := fixtureCredentials(snellTestUsers(1), []model.Inbound{root}, []model.ProxyPath{path})
+	opts := ConfigOptions{Servers: []model.Server{source, target}, Inbounds: []model.Inbound{root, public}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: []model.ProxyPathStep{step}}
+	if _, err := BuildProxyPathPlans(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds); err != nil {
+		t.Fatal(err)
+	}
+	config, err := GenerateServerConfigWithOptions(source, opts.Inbounds, nil, testDNSState(1), users, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outbound := findOutbound(config, "path-50-step-1"); outbound["type"] != "shadowsocks" || intFromAny(outbound["server_port"]) == public.Port {
+		t.Fatalf("public shared Snell was used as an internal hop: %v", outbound)
+	}
+	step.InboundID = &public.ID
+	if _, err = BuildProxyPathPlans(opts.ProxyPaths, []model.ProxyPathStep{step}, opts.Servers, opts.Inbounds); err == nil {
+		t.Fatal("public shared Snell was accepted as an explicit internal hop")
 	}
 }

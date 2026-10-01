@@ -579,7 +579,7 @@ func (s *Server) registerProbeOperations() {
 		localPlan, externalPlan := buildInboundProbePlans(version, *server, []model.Inbound{*inbound}, core.NewProxyPathPortLedger(allocations), false)
 		if len(localPlan.EntryTargets) == 0 {
 			if inbound.Protocol == model.ProtocolSnell {
-				return nil, errors.New("Snell 当前没有已部署的逐用户监听端口；请先完成用户授权和部署")
+				return nil, errors.New("Snell 共享监听端口尚未确认运行；请先完成部署")
 			}
 			return nil, errors.New("入口没有可探测的端口")
 		}

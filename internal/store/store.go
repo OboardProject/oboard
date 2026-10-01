@@ -1221,6 +1221,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateSnellServerPSK(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateSnellSharedListeners(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateSnellProfileRemark(ctx); err != nil {
 		return err
 	}

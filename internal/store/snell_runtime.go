@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/OboardProject/oboard/internal/model"
 	"strings"
+
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 // ConfirmSnellRuntime publishes only endpoints from a verified running config.
@@ -73,18 +74,11 @@ func (s *Store) ConfirmSnellRuntime(ctx context.Context, serverID, version int64
 		return 0
 	}
 	for _, id := range ids {
-		mode := "per_identity_port"
+		mode := ""
 		port, pv := 0, 0
-		for tag, item := range listeners {
-			if tag == fmt.Sprintf("in-%d", id) && item["auth_mode"] == "multi_psk" {
-				mode = "shared_port"
-				port = integer(item["listen_port"])
-				pv = integer(item["version"])
-				break
-			}
-			if strings.HasPrefix(tag, fmt.Sprintf("in-%d-", id)) {
-				pv = integer(item["version"])
-			}
+		if item, ok := listeners[fmt.Sprintf("in-%d", id)]; ok && item["auth_mode"] == "multi_psk" {
+			mode = "shared_port"
+			port, pv = integer(item["listen_port"]), integer(item["version"])
 		}
 		if pv == 0 {
 			mode = ""
@@ -110,8 +104,9 @@ func (s *Store) ConfirmSnellRuntime(ctx context.Context, serverID, version int64
 			return err
 		}
 		used := false
-		for _, item := range listeners {
-			if integer(item["listen_port"]) == port {
+		parts := strings.Split(scope, ":")
+		for tag, item := range listeners {
+			if len(parts) >= 2 && parts[0] == "inbound" && strings.HasPrefix(tag, "in-"+parts[1]+"-") && integer(item["listen_port"]) == port {
 				used = true
 				break
 			}

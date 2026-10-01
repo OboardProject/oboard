@@ -402,12 +402,8 @@ func TestProxyPathReuseAutomationChangesetAndResourceAuthorization(t *testing.T)
 	})
 }
 
-// A Snell inbound serves every identity on its own single-user listener, so a
-// second enabled branch is projected as another listener rather than an
-// ambiguous user on a shared one. Only protocols that really cannot separate
-// identities — legacy Shadowsocks methods without a user table — stay limited
-// to one branch.
-func TestProxyPathReuseAllowsSecondBranchOnPerIdentityListenerProtocol(t *testing.T) {
+// Snell branches share one listener and separate authorized identities by PSK and auth_user.
+func TestProxyPathReuseAllowsSecondBranchOnSharedSnellListener(t *testing.T) {
 	fixture := newProxyPathReuseFixture(t)
 	ctx := context.Background()
 	serverA, serverD := fixture.servers["A"], fixture.servers["D"]

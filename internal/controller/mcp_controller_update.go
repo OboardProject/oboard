@@ -37,14 +37,6 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		return s.queryAccountAuditEvidence(ctx, principal, input)
 	case "audit.accounts.list", "audit.events.list", "audit.executions.list":
 		return s.queryAccountAudit(ctx, principal, capabilityName, input)
-	case "inbounds.listener_mode.preview":
-		var req snellModeRequest
-		if err := strictAutomationInput(input, &req); err != nil {
-			return nil, err
-		}
-		preview, _, err := s.previewSnellMode(ctx, principal, req)
-		return preview, err
-
 	case "config_health.report":
 		return s.readConfigHealthCapability(ctx, input)
 
