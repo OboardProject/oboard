@@ -7209,14 +7209,14 @@ body:has(.controller-update-immersive-layer) .top-toast-viewport {
     max-width: 100%;
     display: grid;
     grid-template-columns: 20px minmax(0, 1fr) 44px;
-    align-items: start;
+    align-items: center;
     gap: 10px;
-    padding: 12px 10px 12px 14px;
+    padding: 4px 6px 4px 14px;
     border-radius: var(--radius-md);
   }
 
   .toast .toast-icon {
-    margin-top: 2px;
+    margin-top: 0;
   }
 
   .toast .toast-message {
