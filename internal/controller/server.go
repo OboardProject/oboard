@@ -16670,7 +16670,11 @@ restore_reused_install() {
   if service_active "$STEALTH_AGENT_SERVICE" || service_active "$STEALTH_CORE_SERVICE"; then return 1; fi
   for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do
     [ -e "$asset.previous.$$" ] || continue
-    mv -f "$asset.previous.$$" "$asset" || return 1
+    if [ "$asset.previous.$$" -ef "$asset" ]; then
+      rm -f "$asset.previous.$$" || return 1
+    else
+      mv -f "$asset.previous.$$" "$asset" || return 1
+    fi
   done
   for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do rm -f "$asset.next.$$"; done
   for previous_service in $OLD_ACTIVE_SERVICES; do restart_managed_service "$previous_service" || return 1; done
@@ -16698,11 +16702,6 @@ install_reused_stealth() {
     for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do rm -f "$asset.previous.$$"; done
     return 1
   fi
-  if [ -n "${TARGET_BUILD:-}" ] && ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
-    restore_reused_install || true
-    echo "安装的 Agent 构建号与主控目标不一致，已尝试恢复旧服务。" >&2
-    return 1
-  fi
   if ! install -m 0755 "$tmp/$agent_name" "$STEALTH_AGENT_BIN.next.$$" ||
      ! install -m 0755 "$tmp/$core_name" "$STEALTH_CORE_BIN.next.$$" ||
      ! install -m 0755 "$tmp/$realm_name" "$STEALTH_REALM_BIN.next.$$" ||
@@ -16711,6 +16710,11 @@ install_reused_stealth() {
      ! mv -f "$STEALTH_REALM_BIN.next.$$" "$STEALTH_REALM_BIN"; then
     restore_reused_install || true
     echo "原路径组件替换失败，已尝试恢复旧服务；请检查日志：$INSTALL_LOG。" >&2
+    return 1
+  fi
+  if [ -n "${TARGET_BUILD:-}" ] && ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
+    restore_reused_install || true
+    echo "安装的 Agent 构建号与主控目标不一致，已尝试恢复旧服务。" >&2
     return 1
   fi
   if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$STEALTH_AGENT_BIN" \
