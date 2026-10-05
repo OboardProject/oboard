@@ -6854,6 +6854,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   const localServerSnapshotsRef = useRef(new Map<number, Server>())
   const [deleteServerDraft, setDeleteServerDraft] = useState<Server | null>(null)
   const [deleteServerBusy, setDeleteServerBusy] = useState(false)
+  const [deleteServerError, setDeleteServerError] = useState('')
   const [uninstallingServerIDs, setUninstallingServerIDs] = useState<Set<number>>(() => new Set())
   const [inspectedServerId, setInspectedServerId] = useState<number | null>(null)
   const inspectedServer = useMemo(() => servers.find(s => s.id === inspectedServerId) || null, [servers, inspectedServerId])
@@ -7320,7 +7321,10 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       try {
         const res = await client.request(`/servers/${serverID}/tasks?limit=20`)
         const task = (res.tasks || []).find((item: any) => item.type === 'uninstall_agent')
-        if (!task) return
+        if (!task) {
+          await client.request(`/servers/${serverID}`)
+          continue
+        }
         if (task.status === 'succeeded') {
           try {
             await client.request(`/servers/${serverID}`, { method: 'DELETE' })
@@ -7343,14 +7347,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   }
   const deleteServer = async (server: Server, uninstall: boolean) => {
     if (pendingDeleteServerIDsRef.current.has(server.id)) return
+    setDeleteServerError('')
+    setDeleteServerBusy(true)
     if (uninstall) {
       const id = server.id
+      pendingDeleteServerIDsRef.current.add(id)
       setUninstallingServerIDs(current => new Set(current).add(id))
-      setDeleteServerBusy(true)
       try {
         const res = await client.request(`/servers/${id}/agent-uninstall`, { method: 'POST', body: '{}' })
-        setDeleteServerDraft(null)
-        setDeleteServerBusy(false)
         notify?.(
           res.existing
             ? `${server.name || '服务器'} 已有卸载任务进行中，完成后自动删除`
@@ -7359,6 +7363,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         )
         await waitForUninstallTask(id)
         if (!serversMountedRef.current) return
+        setDeleteServerDraft(null)
         deletedServerIDsRef.current.add(id)
         localServerSnapshotsRef.current.delete(id)
         setServers(current => removeServerSnapshot(current, id))
@@ -7377,39 +7382,35 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
           next.delete(id)
           return next
         })
-        await refreshServers()
-        await dialogs.alert({ title: '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
+        setDeleteServerError(localizeErrorMessage(error?.message || error))
+        void refreshServers()
       } finally {
+        pendingDeleteServerIDsRef.current.delete(id)
         if (serversMountedRef.current) setDeleteServerBusy(false)
       }
       return
     }
 
-    // The card leaves the list immediately; a rejected delete puts it back.
     const id = server.id
     pendingDeleteServerIDsRef.current.add(id)
-    deletedServerIDsRef.current.add(id)
-    const localSnapshot = localServerSnapshotsRef.current.get(id)
-    localServerSnapshotsRef.current.delete(id)
-    setServers(current => removeServerSnapshot(current, id))
-    patchPageData?.((current: any) => ({ ...current, servers: removeServerSnapshot(current.servers || [], id) }))
-    setDeleteServerDraft(null)
-    setInspectedServerId(current => current === id ? null : current)
     try {
       await deleteServerRecord(client, id)
-      pendingDeleteServerIDsRef.current.delete(id)
+      if (!serversMountedRef.current) return
+      deletedServerIDsRef.current.add(id)
+      localServerSnapshotsRef.current.delete(id)
+      setServers(current => removeServerSnapshot(current, id))
+      patchPageData?.((current: any) => ({ ...current, servers: removeServerSnapshot(current.servers || [], id) }))
+      setDeleteServerDraft(null)
+      setInspectedServerId(current => current === id ? null : current)
       void refreshServers()
       notify?.(`服务器 ${server.name || `#${id}`} 已删除`, 'success')
     } catch (error: any) {
-      pendingDeleteServerIDsRef.current.delete(id)
-      deletedServerIDsRef.current.delete(id)
-      if (localSnapshot) localServerSnapshotsRef.current.set(id, localSnapshot)
-      if (!(error instanceof ServerMutationUncertainError)) {
-        setServers(current => upsertServerSnapshot(current, server))
-        patchPageData?.((current: any) => ({ ...current, servers: upsertServerSnapshot(current.servers || [], server) }))
-      }
+      if (!serversMountedRef.current) return
+      setDeleteServerError(localizeErrorMessage(error?.message || error))
       void refreshServers()
-      await dialogs.alert({ title: error instanceof ServerMutationUncertainError ? '服务器状态待确认' : '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
+    } finally {
+      pendingDeleteServerIDsRef.current.delete(id)
+      if (serversMountedRef.current) setDeleteServerBusy(false)
     }
   }
   const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }
@@ -7456,6 +7457,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         notify?.('这台服务器正在卸载 Agent，请等待完成', 'info')
         return
       }
+      setDeleteServerError('')
       setDeleteServerDraft(s)
     }
   }
@@ -7736,7 +7738,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} updateCommand={installTarget.updateCommand} uninstallCommand={installTarget.uninstallCommand} windowsInstallCommand={installTarget.windowsCommand} loading={Boolean(installTarget.loading)} error={installTarget.error} onRetry={() => void enroll(installTarget.server)} controllerURL={effectiveControllerURL(data)} onUpdate={updateAgent} onClose={() => { enrollRequestRef.current++; setInstallTarget(null) }} />}</AnimatePresence>
-    <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
+    <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} error={deleteServerError} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     </div>
   </section>
@@ -7854,9 +7856,9 @@ function agentBuildMismatch(server: Server, data: any) {
   return Boolean(expected && actual && expected !== actual)
 }
 
-function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Server; busy: boolean; onCancel: () => void; onSubmit: (uninstall: boolean) => void }) {
+export function DeleteServerDialog({ server, busy, error, onCancel, onSubmit }: { server: Server; busy: boolean; error?: string; onCancel: () => void; onSubmit: (uninstall: boolean) => void }) {
   const [uninstall, setUninstall] = useState(false)
-  return <MotionDialogPanel onCancel={busy ? () => undefined : onCancel} className="server-delete-dialog">
+  return <MotionDialogPanel onCancel={busy ? () => undefined : onCancel} className="server-delete-dialog" surfaceMotion="compact" aria-labelledby="server-delete-title">
     <header className="dialog-head">
       <div><h2 id="server-delete-title">确认删除</h2><p className="muted">{resourceLabel(server, `服务器 #${server.id}`)}</p></div>
       <button className="ghost dialog-close icon-button" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
@@ -7870,10 +7872,11 @@ function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Serv
           <small>先远程卸载 Agent 并清理本机配置，成功后自动删除服务器。</small>
         </span>
       </label>
+      {error && <p className="error" role="alert">{error}</p>}
     </div>
     <footer className="dialog-actions">
       <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
-      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy} aria-busy={busy}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? '删除中…' : '删除'}</button>
+      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy} aria-busy={busy}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? uninstall ? '卸载并删除中…' : '删除中…' : '删除'}</button>
     </footer>
   </MotionDialogPanel>
 }
