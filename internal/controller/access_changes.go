@@ -537,6 +537,8 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 	if phase != "prepare" && phase != "finalize" {
 		return 0, errors.New("invalid access change phase")
 	}
+	s.deploymentMu.Lock()
+	defer s.deploymentMu.Unlock()
 	projectionJSON := change.PrepareProjectionJSON
 	if phase == "finalize" {
 		projectionJSON = change.FinalizeProjectionJSON

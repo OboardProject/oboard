@@ -4834,11 +4834,8 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 	}
 	if versionGuardedTaskType(taskType) {
 		_ = s.store.SupersedePendingOperationalTasks(ctx, serverID, "配置下发优先，诊断类任务已取消")
-		// Anything still queued below this version lost its meaning the moment
-		// this task was allocated. Retiring both guarded types together matters
-		// because they share one watermark: a stale core refresh behind a newer
-		// deployment would otherwise sit in the queue only to be skipped.
-		_ = s.store.SupersedeStaleGuardedTasks(ctx, serverID, configVersion, "已被更新的配置下发取代")
+		// Access preparation and topology deployments are distinct required steps.
+		// Drain both in version order instead of discarding pending prerequisites.
 	}
 	if err := s.createTaskAndWake(ctx, &task); err != nil {
 		return model.AgentTask{}, err
@@ -14379,6 +14376,8 @@ func (s *Server) queueCoreConfigRefreshForServers(ctx context.Context, serverIDs
 }
 
 func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reason string, allowed map[int64]bool) error {
+	s.deploymentMu.Lock()
+	defer s.deploymentMu.Unlock()
 	if err := s.reconcileProxyCredentials(ctx); err != nil {
 		return err
 	}
@@ -16044,6 +16043,8 @@ func (s *Server) agentDNSBenchmarks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) queueDNSBenchmarkCoreApply(ctx context.Context, server model.Server, requestID string) error {
+	s.deploymentMu.Lock()
+	defer s.deploymentMu.Unlock()
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
 		return err
