@@ -20,7 +20,7 @@ func (s *Store) QuerySLAHistory(ctx context.Context, id int64, from, to time.Tim
 	if id <= 0 || !to.After(from) || to.Sub(from) > 30*24*time.Hour || resolution < 5*time.Minute {
 		return result, ErrHistoryCoverage
 	}
-	conn, err := s.db.Conn(ctx)
+	conn, err := s.db.ReadConn(ctx)
 	if err != nil {
 		return result, err
 	}

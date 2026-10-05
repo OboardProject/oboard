@@ -116,7 +116,7 @@ func TestSQLitePragmasApplyToEveryConnection(t *testing.T) {
 	ctx := context.Background()
 	conns := make([]interface{ Close() error }, 0, connections)
 	for i := 0; i < connections; i++ {
-		conn, err := s.db.Conn(ctx)
+		conn, err := s.db.ReadConn(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -185,8 +185,8 @@ func TestSQLiteConcurrentReadersAndWriter(t *testing.T) {
 	for err := range errs {
 		t.Fatal(err)
 	}
-	if got := s.DBStats().MaxOpenConnections; got != DefaultSQLiteOptions().MaxOpenConns {
-		t.Fatalf("MaxOpenConnections = %d, want %d", got, DefaultSQLiteOptions().MaxOpenConns)
+	if got := s.DBStats().MaxOpenConnections; got != DefaultSQLiteOptions().MaxOpenConns+1 {
+		t.Fatalf("MaxOpenConnections = %d, want %d", got, DefaultSQLiteOptions().MaxOpenConns+1)
 	}
 }
 

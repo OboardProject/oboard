@@ -52,11 +52,8 @@ type Store struct {
 }
 
 type SQLiteOptions struct {
-	// MaxOpenConns is the database/sql pool size. WAL allows concurrent
-	// readers beside one writer; IMMEDIATE transactions occupy a pool slot
-	// for their whole busy-wait, so a pool of four filled immediately when
-	// several Agents reported at once. Eight keeps readers moving without
-	// pushing per-connection page cache too high.
+	// MaxOpenConns bounds the read pool. WAL stores also keep one serialized
+	// writer so write-lock waiters cannot exhaust read connections.
 	MaxOpenConns int
 	MaxIdleConns int
 	BusyTimeout  time.Duration
@@ -219,12 +216,22 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if memory {
-		opts.MaxOpenConns = 1
-		opts.MaxIdleConns = 1
+	// Startup, in-memory databases and restore use the original connection.
+	if !memory && !restore {
+		reader, err := sql.Open("sqlite", dsn+"&_pragma=query_only(1)")
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		reader.SetMaxOpenConns(opts.MaxOpenConns)
+		reader.SetMaxIdleConns(opts.MaxIdleConns)
+		if err := reader.PingContext(ctx); err != nil {
+			_ = reader.Close()
+			_ = db.Close()
+			return nil, err
+		}
+		s.db.reader = reader
 	}
-	db.SetMaxOpenConns(opts.MaxOpenConns)
-	db.SetMaxIdleConns(opts.MaxIdleConns)
 	return s, nil
 }
 
@@ -2070,7 +2077,7 @@ func guardedConfigTaskTypesSQL() string {
 func (s *Store) NextConfigVersion(ctx context.Context) (int64, error) {
 	candidate := time.Now().UnixMilli()
 	var raw string
-	err := s.db.QueryRowContext(ctx, `insert into app_settings(key,value,updated_at)
+	err := s.db.WriteQueryRowContext(ctx, `insert into app_settings(key,value,updated_at)
 		values(?,cast(max(?,coalesce((select max(config_version)+1 from agent_tasks where config_version>0 and type in (`+guardedConfigTaskTypesSQL()+`)),?)) as text),?)
 		on conflict(key) do update set
 			value=cast(max(cast(app_settings.value as integer)+1,cast(excluded.value as integer)) as text),
@@ -6677,7 +6684,7 @@ func (s *Store) NextTask(ctx context.Context, serverID int64) (*model.AgentTask,
 	var createdAt, updatedAt string
 	var completedAt sql.NullString
 	ts := now()
-	err := s.db.QueryRowContext(ctx, `update agent_tasks set status='running', updated_at=? where id=(select id from agent_tasks where server_id=? and status='pending' order by `+guardedClaimOrderSQL()+`, `+agentTaskClaimPrioritySQL()+`, id limit 1) returning id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at`, ts, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
+	err := s.db.WriteQueryRowContext(ctx, `update agent_tasks set status='running', updated_at=? where id=(select id from agent_tasks where server_id=? and status='pending' order by `+guardedClaimOrderSQL()+`, `+agentTaskClaimPrioritySQL()+`, id limit 1) returning id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at`, ts, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -7419,17 +7426,17 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 	if _, err := conn.ExecContext(ctx, `begin immediate`); err != nil {
 		return TrafficLeaseAllocation{}, err
 	}
-	if last := s.leaseExpirySweepAt.Load(); sweepAt.Sub(time.Unix(0, last)) >= trafficLeaseExpirySweepInterval && s.leaseExpirySweepAt.CompareAndSwap(last, sweepAt.UnixNano()) {
-		if _, err := conn.ExecContext(ctx, `update traffic_leases set state=?, updated_at=? where coalesce(nullif(state,''),'active')=? and valid_until<>'' and valid_until<?`, trafficLeaseExpiredUnsettled, now(), trafficLeaseActive, now()); err != nil {
-			return TrafficLeaseAllocation{}, err
-		}
-	}
 	committed := false
 	defer func() {
 		if !committed {
 			_, _ = conn.ExecContext(context.Background(), `rollback`)
 		}
 	}()
+	if last := s.leaseExpirySweepAt.Load(); sweepAt.Sub(time.Unix(0, last)) >= trafficLeaseExpirySweepInterval && s.leaseExpirySweepAt.CompareAndSwap(last, sweepAt.UnixNano()) {
+		if _, err := conn.ExecContext(ctx, `update traffic_leases set state=?, updated_at=? where coalesce(nullif(state,''),'active')=? and valid_until<>'' and valid_until<?`, trafficLeaseExpiredUnsettled, now(), trafficLeaseActive, now()); err != nil {
+			return TrafficLeaseAllocation{}, err
+		}
+	}
 	nowTime := time.Now().UTC()
 	ts := nowTime.Format(time.RFC3339Nano)
 	validUntil := nowTime.Add(24 * time.Hour).Format(time.RFC3339Nano)

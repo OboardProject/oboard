@@ -10,8 +10,9 @@ import (
 
 func sqlitePragmaInt(t *testing.T, s *Store, pragma string) int64 {
 	t.Helper()
+	// Inspect the connection that executes maintenance; PRAGMA state is connection-local.
 	var value int64
-	if err := s.db.QueryRowContext(context.Background(), `pragma `+pragma).Scan(&value); err != nil {
+	if err := s.db.WriteQueryRowContext(context.Background(), `pragma `+pragma).Scan(&value); err != nil {
 		t.Fatalf("read pragma %s: %v", pragma, err)
 	}
 	return value

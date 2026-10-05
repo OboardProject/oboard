@@ -285,7 +285,7 @@ func (s *Store) CreateOAuthAuthorizationCode(ctx context.Context, item *model.OA
 func (s *Store) ConsumeOAuthAuthorizationCode(ctx context.Context, codeHash string) (*model.OAuthAuthorizationCode, error) {
 	var item model.OAuthAuthorizationCode
 	var expires, created, scopesJSON string
-	err := s.db.QueryRowContext(ctx, `delete from oauth_authorization_codes where code_hash=? returning code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,requested_scopes_json,expires_at,created_at`, codeHash).Scan(&item.CodeHash, &item.GrantID, &item.ClientID, &item.UserID, &item.PrincipalID, &item.RedirectURI, &item.Resource, &item.CodeChallenge, &scopesJSON, &expires, &created)
+	err := s.db.WriteQueryRowContext(ctx, `delete from oauth_authorization_codes where code_hash=? returning code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,requested_scopes_json,expires_at,created_at`, codeHash).Scan(&item.CodeHash, &item.GrantID, &item.ClientID, &item.UserID, &item.PrincipalID, &item.RedirectURI, &item.Resource, &item.CodeChallenge, &scopesJSON, &expires, &created)
 	if err != nil {
 		return nil, err
 	}

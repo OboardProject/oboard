@@ -309,7 +309,7 @@ func (s *Store) recordWALCheckpoint(ctx context.Context, result *MaintenanceResu
 	// wal_checkpoint returns (busy, log, checkpointed). busy=0 does not mean
 	// every frame was backfilled into the main database; compare log vs
 	// checkpointed. A database with no WAL reports (0, 0, 0).
-	if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(passive)`).Scan(
+	if err := s.db.WriteQueryRowContext(ctx, `pragma wal_checkpoint(passive)`).Scan(
 		&result.WALBusyFrames,
 		&result.WALLogFrames,
 		&result.WALCheckpointedFrames,
@@ -320,7 +320,7 @@ func (s *Store) recordWALCheckpoint(ctx context.Context, result *MaintenanceResu
 		return nil
 	}
 	var busy, log, checkpointed int
-	if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
+	if err := s.db.WriteQueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
 		result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames = busy, log, checkpointed
 	}
 	return nil
@@ -421,7 +421,7 @@ func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, quer
 				s.invalidateLatencyHistory(ids...)
 			}
 		} else if reportServers {
-			resultRows, err := s.db.QueryContext(ctx, query+" returning server_id", cutoffText, maintenanceBatchSize)
+			resultRows, err := s.db.WriteQueryContext(ctx, query+" returning server_id", cutoffText, maintenanceBatchSize)
 			if err != nil {
 				return deleted, deleted > 0, err
 			}

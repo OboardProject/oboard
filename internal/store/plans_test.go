@@ -873,6 +873,9 @@ func TestPlanVersionActivationWaitsForConcurrentWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	committed = true
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}

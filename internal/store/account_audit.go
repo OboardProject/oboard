@@ -200,7 +200,7 @@ func (s *Store) ListAccountAuditEvents(ctx context.Context, q AccountAuditQuery)
 // not cleared by a worker committing an older evaluation.
 func (s *Store) MarkAccountAuditDirty(ctx context.Context, userID int64) (int64, error) {
 	var revision int64
-	err := s.db.QueryRowContext(ctx, `INSERT INTO account_audit_dirty(user_id,revision) VALUES (?,COALESCE((SELECT revision FROM account_audit_snapshots WHERE user_id=?),0)+1) ON CONFLICT(user_id) DO UPDATE SET revision=revision+1 RETURNING revision`, userID, userID).Scan(&revision)
+	err := s.db.WriteQueryRowContext(ctx, `INSERT INTO account_audit_dirty(user_id,revision) VALUES (?,COALESCE((SELECT revision FROM account_audit_snapshots WHERE user_id=?),0)+1) ON CONFLICT(user_id) DO UPDATE SET revision=revision+1 RETURNING revision`, userID, userID).Scan(&revision)
 	return revision, err
 }
 

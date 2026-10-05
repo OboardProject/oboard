@@ -46,7 +46,7 @@ func (s *Store) ClaimAccountAuditNotifications(ctx context.Context, now time.Tim
 	if now.IsZero() || limit < 1 || limit > 100 {
 		return nil, errors.New("invalid notification claim")
 	}
-	rows, err := s.db.QueryContext(ctx, `UPDATE account_audit_notifications SET status='leased',lease_token=lease_token+1,lease_until=? WHERE id IN (
+	rows, err := s.db.WriteQueryContext(ctx, `UPDATE account_audit_notifications SET status='leased',lease_token=lease_token+1,lease_until=? WHERE id IN (
  SELECT n.id FROM account_audit_notifications n JOIN account_audit_workflow w ON w.event_id=n.event_id
  JOIN account_audit_events e ON e.id=n.event_id
  WHERE (n.status='pending' OR (n.status='leased' AND n.lease_until<=?)) AND w.muted_until<=? AND w.status NOT IN ('closed','false_positive','handled') AND e.status!='recovered'

@@ -69,7 +69,7 @@ func (s *Store) Backup(ctx context.Context, destination string, options BackupOp
 	if pagesPerStep <= 0 {
 		pagesPerStep = defaultBackupPagesPerStep
 	}
-	conn, err := s.db.Conn(ctx)
+	conn, err := s.db.ReadConn(ctx)
 	if err != nil {
 		return fmt.Errorf("reserve SQLite backup connection: %w", err)
 	}

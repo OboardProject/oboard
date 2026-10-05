@@ -31,15 +31,22 @@ func openPooledStore(t *testing.T) *Store {
 // once so no connection can answer twice, and checks each one.
 func assertEveryPooledConnectionEnforcesForeignKeys(t *testing.T, s *Store) {
 	t.Helper()
-	ctx := context.Background()
-	conns := make([]*sql.Conn, 0, 4)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conns := make([]*sql.Conn, 0, 5)
 	defer func() {
 		for _, conn := range conns {
 			conn.Close()
 		}
 	}()
-	for i := 0; i < 4; i++ {
-		conn, err := s.db.Conn(ctx)
+	for i := 0; i < 5; i++ {
+		var conn *sql.Conn
+		var err error
+		if i == 0 {
+			conn, err = s.db.Conn(ctx)
+		} else {
+			conn, err = s.db.ReadConn(ctx)
+		}
 		if err != nil {
 			t.Fatal(err)
 		}

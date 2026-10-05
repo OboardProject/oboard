@@ -286,7 +286,7 @@ func (s *Store) QueryLatencySummaryChart(ctx context.Context, serverID int64, fr
 	if interval < time.Minute || from.Nanosecond() != 0 || to.Nanosecond() != 0 || !to.After(from) || (to.Sub(from)+interval-1)/interval > 360 {
 		return empty, coverage, errors.New("invalid summary chart window")
 	}
-	conn, err := s.db.Conn(ctx)
+	conn, err := s.db.ReadConn(ctx)
 	if err != nil {
 		return empty, coverage, err
 	}
