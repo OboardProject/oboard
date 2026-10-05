@@ -138,3 +138,22 @@ it('maps known errors and preserves raw details including unknown errors', () =>
   const cases = [['invalid agent credentials', '认证失败'], ['Agent offline', '连接中断'], ['context deadline exceeded', '更新超时'], ['signature verification failed', '校验失败'], ['no space left on device', '空间不足'], ['dial tcp: connection refused', '网络连接失败'], ['unexpected EOF', '更新失败']]
   for (const [raw, title] of cases) expect(presentation.formatAgentUpdateError(raw)).toMatchObject({ raw, title })
 })
+it('renders active fleet states proportionally without counting failures twice', async () => {
+  fleet = { ...fleet, enrolled: 33, current: 8, running: 2, pending: 20, offline: 3, failure_count: 2 }
+  await render()
+  const bar = container.querySelector('.agent-update-summary [role="progressbar"]')!
+  expect([...bar.children].map(item => [item.className, (item as HTMLElement).style.flexGrow])).toEqual([
+    ['is-success', '8'], ['is-info', '2'], ['is-warning', '20'], ['is-muted', '3'],
+  ])
+  expect(bar.getAttribute('aria-valuenow')).toBe('24')
+  expect(container.querySelector('.segmented-progress-legend')?.textContent).toContain('失败2')
+})
+it('omits empty segments when the fleet finishes or has no enrolled agents', async () => {
+  fleet = { ...fleet, current: 34, pending: 0, running: 0, offline: 0, failure_count: 0 }
+  await render()
+  expect(container.querySelectorAll('.agent-update-summary [role="progressbar"] > span')).toHaveLength(1)
+  fleet = { ...fleet, enrolled: 0, current: 0 }
+  props.realtimeRevision++
+  await render()
+  expect(container.querySelectorAll('.agent-update-summary [role="progressbar"] > span')).toHaveLength(0)
+})

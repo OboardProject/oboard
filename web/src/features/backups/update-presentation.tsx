@@ -34,11 +34,16 @@ export function AgentUpdateSummary({ status }: { status: AgentUpdateOverview }) 
     { label: '离线', value: status.offline, tone: 'muted' },
     { label: '失败', value: status.failure_count, tone: 'danger' },
   ]
+  let remaining = Math.max(0, status.enrolled)
+  const barSegments = segments.slice(0, 4).map(item => {
+    const value = Math.min(remaining, Math.max(0, item.value))
+    remaining -= value
+    return { ...item, value }
+  }).filter(item => item.value > 0)
   return <div className="agent-update-summary segmented-progress">
     <span className="agent-update-target">目标构建 <strong>{status.target_build || '—'}</strong></span>
     <div className="segmented-progress-bar" role="progressbar" aria-label="Agent 版本同步进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={agentUpdateCompletion(status)} aria-valuetext={`${status.current} / ${status.enrolled} · ${agentUpdateCompletion(status)}%`}>
-      <span className="is-success" style={{ flexGrow: status.current }} />
-      <span className="is-muted" style={{ flexGrow: Math.max(0, status.enrolled - status.current) }} />
+      {barSegments.map(item => <span key={item.tone} className={'is-' + item.tone} style={{ flexGrow: item.value }} />)}
     </div>
     <div className="segmented-progress-legend">{segments.map(item => <span key={item.label} className={`is-${item.tone}`}><i aria-hidden="true" />{item.label}<strong>{item.value}</strong></span>)}</div>
   </div>
