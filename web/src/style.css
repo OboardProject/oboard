@@ -17048,6 +17048,7 @@ button.user-table-compact-button:hover {
 .user-credentials-action {
   display: flex;
   align-items: flex-start;
+  justify-content: flex-start;
   gap: 12px;
   width: 100%;
   min-height: 0;
@@ -17065,6 +17066,7 @@ button.user-table-compact-button:hover {
 
 .user-credentials-action span {
   display: grid;
+  flex: 1;
   gap: 4px;
   min-width: 0;
 }
@@ -17077,7 +17079,9 @@ button.user-table-compact-button:hover {
 .user-credentials-action small {
   color: var(--muted);
   font-size: 12px;
+  font-weight: 400;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .user-create-dialog.user-form-dialog {
