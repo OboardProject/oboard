@@ -159,6 +159,8 @@ export function ServerBasicSettingsDialog({ server, onCancel, onSubmit }: { serv
                 <Select value={draft.renewal_cycle} onChange={e=>update({renewal_cycle: e.target.value})}>
                   <option value="monthly">月付</option>
                   <option value="quarterly">季付</option>
+                  <option value="semiannual">半年付</option>
+                  <option value="annual">年付</option>
                 </Select>
               )}
             </div>

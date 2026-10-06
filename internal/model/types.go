@@ -62,8 +62,10 @@ const (
 type ServerRenewalCycle string
 
 const (
-	ServerRenewalCycleMonthly   ServerRenewalCycle = "monthly"
-	ServerRenewalCycleQuarterly ServerRenewalCycle = "quarterly"
+	ServerRenewalCycleMonthly    ServerRenewalCycle = "monthly"
+	ServerRenewalCycleQuarterly  ServerRenewalCycle = "quarterly"
+	ServerRenewalCycleSemiannual ServerRenewalCycle = "semiannual"
+	ServerRenewalCycleAnnual     ServerRenewalCycle = "annual"
 )
 
 type EntryIPMode string

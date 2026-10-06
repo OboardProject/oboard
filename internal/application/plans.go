@@ -95,8 +95,8 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	if input.AutoRenewEnabled == nil {
 		return PlanResult{Kind: "server_onboarding", Valid: false, Warnings: []string{"必须明确提供 auto_renew_enabled；新服务器默认开启自动续期。"}}, nil
 	}
-	if *input.AutoRenewEnabled && input.RenewalCycle != model.ServerRenewalCycleMonthly && input.RenewalCycle != model.ServerRenewalCycleQuarterly {
-		return PlanResult{Kind: "server_onboarding", Valid: false, Warnings: []string{"开启自动续期时必须明确提供 renewal_cycle：monthly 或 quarterly。"}}, nil
+	if *input.AutoRenewEnabled && input.RenewalCycle != model.ServerRenewalCycleMonthly && input.RenewalCycle != model.ServerRenewalCycleQuarterly && input.RenewalCycle != model.ServerRenewalCycleSemiannual && input.RenewalCycle != model.ServerRenewalCycleAnnual {
+		return PlanResult{Kind: "server_onboarding", Valid: false, Warnings: []string{"开启自动续期时必须明确提供 renewal_cycle：monthly、quarterly、semiannual 或 annual。"}}, nil
 	}
 	if input.IPStack == "" {
 		input.IPStack = string(model.IPStackAuto)

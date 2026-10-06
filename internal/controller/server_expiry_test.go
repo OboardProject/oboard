@@ -198,3 +198,26 @@ func TestServerExpirySettingsRoundTrip(t *testing.T) {
 		t.Fatalf("default expiry lead days = %#v", settings[settingServerExpiryNotifyLeadDays])
 	}
 }
+
+func TestServerRenewalLongCyclesClampDates(t *testing.T) {
+	for _, tc := range []struct {
+		cycle  model.ServerRenewalCycle
+		expiry string
+		want   string
+	}{
+		{model.ServerRenewalCycleMonthly, "2028-01-31", "2028-02-29"},
+		{model.ServerRenewalCycleQuarterly, "2026-11-30", "2027-02-28"},
+		{model.ServerRenewalCycleSemiannual, "2026-08-31", "2027-02-28"},
+		{model.ServerRenewalCycleSemiannual, "2027-08-31", "2028-02-29"},
+		{model.ServerRenewalCycleAnnual, "2028-02-29", "2029-02-28"},
+		{model.ServerRenewalCycleAnnual, "2026-10-06", "2027-10-06"},
+	} {
+		t.Run(string(tc.cycle)+tc.expiry, func(t *testing.T) {
+			expiry, _ := time.Parse("2006-01-02", tc.expiry)
+			got := nextRenewalDate(expiry, tc.cycle, time.UTC, expiry.AddDate(0, 0, 4))
+			if got.Format("2006-01-02") != tc.want {
+				t.Fatalf("next renewal = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}

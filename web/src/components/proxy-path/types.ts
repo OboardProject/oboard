@@ -125,7 +125,7 @@ export type Server = {
   offline_notify_enabled?: boolean
   offline_after_seconds?: number
   expires_at?: string
-  renewal_cycle?: 'monthly' | 'quarterly'
+  renewal_cycle?: 'monthly' | 'quarterly' | 'semiannual' | 'annual'
   auto_renew_enabled?: boolean
   expiry_notify_enabled?: boolean
   last_auto_renewed_at?: string

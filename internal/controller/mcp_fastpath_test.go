@@ -373,6 +373,7 @@ func TestMCPServerOnboardRedeemedActionEnablesBBR(t *testing.T) {
 	prepared := fastPathCall(t, session, "oboard_task", map[string]any{
 		"intent": "server.onboard",
 		"goal":   "新增一台 Tokyo 服务器，IPv6 优先，打开 BBR",
+		"params": map[string]any{"auto_renew_enabled": true, "renewal_cycle": "annual"},
 	})
 	preparedJSON, _ := json.Marshal(prepared)
 	if strings.Contains(string(preparedJSON), "OBOARD_ENROLL_TOKEN") {

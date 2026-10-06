@@ -13,6 +13,17 @@ import (
 )
 
 func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
+	for _, cycles := range [][2]model.ServerRenewalCycle{
+		{model.ServerRenewalCycleQuarterly, model.ServerRenewalCycleMonthly},
+		{model.ServerRenewalCycleSemiannual, model.ServerRenewalCycleAnnual},
+	} {
+		t.Run(string(cycles[0])+"-"+string(cycles[1]), func(t *testing.T) {
+			testMCPServerSettingsRoundTrip(t, cycles[0], cycles[1])
+		})
+	}
+}
+
+func testMCPServerSettingsRoundTrip(t *testing.T, createCycle, updateCycle model.ServerRenewalCycle) {
 	const trafficLimitBytes int64 = 578 * 1024 * 1024 * 1024
 	const trafficUsedBytes int64 = 123456789
 
@@ -46,7 +57,7 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 			"offline_after_seconds":     120,
 			"expires_at":                "2027-01-02T03:04:05Z",
 			"auto_renew_enabled":        true,
-			"renewal_cycle":             "quarterly",
+			"renewal_cycle":             createCycle,
 			"expiry_notify_enabled":     false,
 		},
 		"issue_enrollment_token": false,
@@ -59,13 +70,13 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 	}
 	stored := servers[0]
 	expiry, _ := time.Parse(time.RFC3339Nano, "2027-01-02T03:04:05Z")
-	assertStoredServerSettings(t, stored, 12000, 13000, 40000, 45000, expiry, model.ServerRenewalCycleQuarterly, true, false)
+	assertStoredServerSettings(t, stored, 12000, 13000, 40000, 45000, expiry, createCycle, true, false)
 
 	dto, err := srv.application.GetServer(ctx, principal, stored.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertServerDTOSettings(t, dto, 12000, 13000, 40000, 45000, expiry, model.ServerRenewalCycleQuarterly, true, false)
+	assertServerDTOSettings(t, dto, 12000, 13000, 40000, 45000, expiry, createCycle, true, false)
 	assertCapabilityOutputSchema(t, srv, "servers.get", dto)
 
 	update, _ := json.Marshal(map[string]any{
@@ -76,7 +87,7 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 			"internal_port_range_start": 50000,
 			"internal_port_range_end":   55000,
 			"expires_at":                "2028-03-04T05:06:07Z",
-			"renewal_cycle":             "monthly",
+			"renewal_cycle":             updateCycle,
 			"auto_renew_enabled":        false,
 			"traffic_limit_bytes":       trafficLimitBytes,
 			"traffic_used_bytes":        trafficUsedBytes,
@@ -89,7 +100,7 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 		t.Fatal(err)
 	}
 	nextExpiry, _ := time.Parse(time.RFC3339Nano, "2028-03-04T05:06:07Z")
-	assertStoredServerSettings(t, *updated, 14000, 15000, 50000, 55000, nextExpiry, model.ServerRenewalCycleMonthly, false, false)
+	assertStoredServerSettings(t, *updated, 14000, 15000, 50000, 55000, nextExpiry, updateCycle, false, false)
 	if updated.TrafficLimitBytes != trafficLimitBytes {
 		t.Fatalf("stored traffic_limit_bytes = %d, want %d", updated.TrafficLimitBytes, trafficLimitBytes)
 	}
@@ -101,7 +112,7 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertServerDTOSettings(t, updatedDTO, 14000, 15000, 50000, 55000, nextExpiry, model.ServerRenewalCycleMonthly, false, false)
+	assertServerDTOSettings(t, updatedDTO, 14000, 15000, 50000, 55000, nextExpiry, updateCycle, false, false)
 	assertCapabilityOutputSchema(t, srv, "servers.get", updatedDTO)
 
 	onboardDescriptor, ok := srv.capabilities.Get("servers.onboard")

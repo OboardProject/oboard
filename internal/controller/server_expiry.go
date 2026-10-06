@@ -27,7 +27,7 @@ var defaultServerExpiryNotifyLeadDays = []int{7, 3}
 
 func normalizeServerRenewalCycle(cycle model.ServerRenewalCycle) model.ServerRenewalCycle {
 	switch cycle {
-	case model.ServerRenewalCycleMonthly, model.ServerRenewalCycleQuarterly:
+	case model.ServerRenewalCycleMonthly, model.ServerRenewalCycleQuarterly, model.ServerRenewalCycleSemiannual, model.ServerRenewalCycleAnnual:
 		return cycle
 	default:
 		return model.ServerRenewalCycleMonthly
@@ -103,8 +103,13 @@ func addMonthsClamped(value time.Time, months int) time.Time {
 
 func nextRenewalDate(expiry time.Time, cycle model.ServerRenewalCycle, loc *time.Location, today time.Time) time.Time {
 	months := 1
-	if normalizeServerRenewalCycle(cycle) == model.ServerRenewalCycleQuarterly {
+	switch normalizeServerRenewalCycle(cycle) {
+	case model.ServerRenewalCycleQuarterly:
 		months = 3
+	case model.ServerRenewalCycleSemiannual:
+		months = 6
+	case model.ServerRenewalCycleAnnual:
+		months = 12
 	}
 	next := startOfDay(expiry.In(loc))
 	for i := 0; i < 120; i++ {

@@ -6503,7 +6503,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number; latency_probe_interval_seconds?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: true, renewal_cycle: '' as '' | 'monthly' | 'quarterly', expiry_notify_enabled: true, display_tags: [] }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: true, renewal_cycle: '' as '' | 'monthly' | 'quarterly' | 'semiannual' | 'annual', expiry_notify_enabled: true, display_tags: [] }
 }
 
 const serverSettingTabs = [
@@ -8178,11 +8178,13 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
           </FormField>
           {Boolean(draft.auto_renew_enabled) && (
-            <FormField label="续期周期" hint="月付顺延到下月同日，季付顺延到三个月后的同日，月底日期自动取当月最后一天。">
-              <Select value={draft.renewal_cycle || ''} onChange={e => { update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' }); setCycleMissing(false) }} aria-label="续期周期" aria-invalid={cycleMissing} aria-describedby={cycleMissing ? 'server-renewal-cycle-error' : undefined}>
+            <FormField label="续期周期" hint="按月付、季付、半年付或年付顺延 1、3、6 或 12 个月，月底日期自动取当月最后一天。">
+              <Select value={draft.renewal_cycle || ''} onChange={e => { update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' | 'semiannual' | 'annual' }); setCycleMissing(false) }} aria-label="续期周期" aria-invalid={cycleMissing} aria-describedby={cycleMissing ? 'server-renewal-cycle-error' : undefined}>
                 <option value="" disabled>请选择续期周期</option>
                 <option value="monthly">月付（下月同日）</option>
                 <option value="quarterly">季付（三个月后同日）</option>
+                <option value="semiannual">半年付（六个月后同日）</option>
+                <option value="annual">年付（次年同日）</option>
               </Select>
             </FormField>
           )}
@@ -8308,7 +8310,7 @@ function serverToDraft(server: Server) {
     traffic_used_bytes: (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0),
     service_start_at: serverExpiryInputValue((server as any).service_start_at),
     expires_at: serverExpiryInputValue(server.expires_at),
-    renewal_cycle: (server.renewal_cycle || 'monthly') as 'monthly' | 'quarterly',
+    renewal_cycle: (server.renewal_cycle || 'monthly') as 'monthly' | 'quarterly' | 'semiannual' | 'annual',
     auto_renew_enabled: Boolean(server.auto_renew_enabled),
     expiry_notify_enabled: server.expiry_notify_enabled !== false,
     display_tags: Array.isArray(server.display_tags) ? server.display_tags.map(tag => ({ text: String(tag.text || ''), tone: tag.tone || 'blue' })) : [],
@@ -8371,10 +8373,12 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
             <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
           </FormField>
           {Boolean(draft.auto_renew_enabled) && (
-            <FormField label="续期周期" hint="月付顺延到下月同日，季付顺延到三个月后的同日，月底日期自动取当月最后一天。">
-              <Select value={draft.renewal_cycle || 'monthly'} onChange={e => update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' })} aria-label="续期周期">
+            <FormField label="续期周期" hint="按月付、季付、半年付或年付顺延 1、3、6 或 12 个月，月底日期自动取当月最后一天。">
+              <Select value={draft.renewal_cycle || 'monthly'} onChange={e => update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' | 'semiannual' | 'annual' })} aria-label="续期周期">
                 <option value="monthly">月付（下月同日）</option>
                 <option value="quarterly">季付（三个月后同日）</option>
+                <option value="semiannual">半年付（六个月后同日）</option>
+                <option value="annual">年付（次年同日）</option>
               </Select>
             </FormField>
           )}
@@ -9699,7 +9703,7 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
             <ServerDetailItem label="到期日" value={serverExpiryDateLabel(server.expires_at)} />
             <ServerDetailItem label="到期状态" value={serverExpiryStatus(server).label} />
             <ServerDetailItem label="自动续期" value={server.auto_renew_enabled ? '开启' : '关闭'} />
-            <ServerDetailItem label="续期周期" value={server.renewal_cycle === 'quarterly' ? '季付' : server.auto_renew_enabled ? '月付' : '—'} />
+            <ServerDetailItem label="续期周期" value={server.auto_renew_enabled ? ({ monthly: '月付', quarterly: '季付', semiannual: '半年付', annual: '年付' }[server.renewal_cycle || 'monthly']) : '—'} />
             <ServerDetailItem label="到期提醒" value={server.expiry_notify_enabled === false ? '关闭' : '开启'} />
             <ServerDetailItem label="最近自动续期" value={server.last_auto_renewed_at ? formatTableTime(server.last_auto_renewed_at) : '—'} />
           </dl>

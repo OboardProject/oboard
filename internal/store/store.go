@@ -3259,7 +3259,7 @@ func normalizeTimeCorrectionMode(mode model.TimeCorrectionMode) model.TimeCorrec
 
 func normalizeRenewalCycle(cycle model.ServerRenewalCycle) model.ServerRenewalCycle {
 	switch cycle {
-	case model.ServerRenewalCycleMonthly, model.ServerRenewalCycleQuarterly:
+	case model.ServerRenewalCycleMonthly, model.ServerRenewalCycleQuarterly, model.ServerRenewalCycleSemiannual, model.ServerRenewalCycleAnnual:
 		return cycle
 	default:
 		return model.ServerRenewalCycleMonthly

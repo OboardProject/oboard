@@ -287,8 +287,8 @@ func requireServerRenewalCycle(enabled bool, raw json.RawMessage) error {
 		return nil
 	}
 	var cycle model.ServerRenewalCycle
-	if len(raw) == 0 || json.Unmarshal(raw, &cycle) != nil || (cycle != model.ServerRenewalCycleMonthly && cycle != model.ServerRenewalCycleQuarterly) {
-		return fmt.Errorf("开启自动续期时必须明确填写 renewal_cycle（monthly 或 quarterly）")
+	if len(raw) == 0 || json.Unmarshal(raw, &cycle) != nil || (cycle != model.ServerRenewalCycleMonthly && cycle != model.ServerRenewalCycleQuarterly && cycle != model.ServerRenewalCycleSemiannual && cycle != model.ServerRenewalCycleAnnual) {
+		return fmt.Errorf("开启自动续期时必须明确填写 renewal_cycle（monthly、quarterly、semiannual 或 annual）")
 	}
 	return nil
 }

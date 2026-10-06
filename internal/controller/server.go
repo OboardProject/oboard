@@ -3998,13 +3998,13 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		}
 		if input.RenewalCycle == nil {
 			if v.AutoRenewEnabled {
-				fail(w, errors.New("开启自动续期时必须明确填写 renewal_cycle（monthly 或 quarterly）"), http.StatusBadRequest)
+				fail(w, errors.New("开启自动续期时必须明确填写 renewal_cycle（monthly、quarterly、semiannual 或 annual）"), http.StatusBadRequest)
 				return
 			}
 			v.RenewalCycle = model.ServerRenewalCycleMonthly
 		} else {
-			if v.AutoRenewEnabled && *input.RenewalCycle != model.ServerRenewalCycleMonthly && *input.RenewalCycle != model.ServerRenewalCycleQuarterly {
-				fail(w, errors.New("renewal_cycle 必须为 monthly 或 quarterly"), http.StatusBadRequest)
+			if v.AutoRenewEnabled && *input.RenewalCycle != model.ServerRenewalCycleMonthly && *input.RenewalCycle != model.ServerRenewalCycleQuarterly && *input.RenewalCycle != model.ServerRenewalCycleSemiannual && *input.RenewalCycle != model.ServerRenewalCycleAnnual {
+				fail(w, errors.New("renewal_cycle 必须为 monthly、quarterly、semiannual 或 annual"), http.StatusBadRequest)
 				return
 			}
 			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
