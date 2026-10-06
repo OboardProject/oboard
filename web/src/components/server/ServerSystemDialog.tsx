@@ -50,7 +50,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
   }
 
   return (
-    <ServerWorkspaceDialog server={server} title="Agent 维护与日志" tabs={tabs as any} activeTab={tab} onTabChange={(id)=> setTab(id as Tab)} onClose={onClose}>
+    <ServerWorkspaceDialog className="server-system-dialog" server={server} title="Agent 维护与日志" tabs={tabs as any} activeTab={tab} onTabChange={(id)=> setTab(id as Tab)} onClose={onClose}>
       {tab==='overview' && <SystemOverviewTab server={server} />}
       {tab==='agent' && <SystemAgentTab server={server} expectedBuild={expectedBuild} onEnroll={handleEnroll} onUpdateAgent={handleUpdateAgent} notify={notify} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
       {tab==='settings' && <SystemSettingsTab server={server} onSave={handleSaveSystem} onCheckTime={handleCheckTime} disabled={isViewer} disabledReason="当前账号只有查看权限" />}

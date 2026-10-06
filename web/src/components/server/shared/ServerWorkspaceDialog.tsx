@@ -7,6 +7,7 @@ export type WorkspaceTab = { id: string; label: string; disabled?: boolean; hint
 
 type Props = {
   server: Server
+  className?: string
   title: string
   tabs: WorkspaceTab[]
   activeTab: string
@@ -39,11 +40,11 @@ function serverRegionCodeLocal(server?: Pick<Server, 'region_mode' | 'region_cod
   return /^[A-Z]{2}$/.test(v) ? v : ''
 }
 
-export function ServerWorkspaceDialog({ server, title, tabs, activeTab, onTabChange, onClose, children, footer, headerExtra }: Props) {
+export function ServerWorkspaceDialog({ server, className = '', title, tabs, activeTab, onTabChange, onClose, children, footer, headerExtra }: Props) {
   const status = serverStatusLabel(server)
   const region = serverRegionCodeLocal(server)
   return (
-    <MotionDialogPanel onCancel={onClose} className="server-workspace-dialog" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel={title}>
+    <MotionDialogPanel onCancel={onClose} className={`server-workspace-dialog ${className}`} placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel={title}>
       <header className="server-workspace-header">
         <div className="server-workspace-title">
           <RegionFlagInline code={region} size={22} />

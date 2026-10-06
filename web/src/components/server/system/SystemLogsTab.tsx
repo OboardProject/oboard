@@ -67,29 +67,24 @@ export function SystemLogsTab({ server, data, client, disabled, disabledReason }
   return (
     <div className="server-logs-tab">
       <div className="server-logs-toolbar">
-        <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
-          <Select value={services} onChange={e=> setServices(e.target.value)} aria-label="服务">
-            <option value="all">全部</option>
+        <div className="server-logs-filters">
+          <Select value={services} onChange={e=> setServices(e.target.value)} aria-label="日志服务" disabled={disabled || loading || Boolean(operation)}>
+            <option value="all">全部服务</option>
             <option value="agent">Agent</option>
             <option value="core">oboard-sb</option>
           </Select>
-          <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
-            <span>显示</span>
-            <select value={lines} onChange={e=> setLines(Number(e.target.value)||120)} disabled={disabled} style={{minWidth:90}}>
-              <option value={60}>60 行</option>
-              <option value={120}>120 行</option>
-              <option value={300}>300 行</option>
-              <option value={600}>600 行</option>
-            </select>
-          </label>
+          <Select value={lines} onChange={e=> setLines(Number(e.target.value)||120)} aria-label="日志行数" disabled={disabled || loading || Boolean(operation)}>
+            <option value={60}>60 行</option>
+            <option value={120}>120 行</option>
+            <option value={300}>300 行</option>
+            <option value={600}>600 行</option>
+          </Select>
         </div>
-        <div style={{display:'flex', gap:8}}>
-          <button type="button" onClick={()=>void pull()} disabled={loading|| disabled}>{loading? '拉取中…':'刷新'}</button>
-        </div>
+        <button type="button" onClick={()=>void pull()} disabled={loading || disabled || Boolean(operation)}>{loading ? '拉取中…' : '刷新'}</button>
       </div>
-      {disabled ? <small className="muted">{disabledReason}</small> : <small className="muted">按需拉取，最近日志会自动脱敏</small>}
+      {disabled && <small className="muted">{disabledReason}</small>}
 
-      <div className="server-logs-content">
+      <div className="server-logs-content" aria-busy={loading}>
         {task && <p className="muted">状态：{String(task.status)} {task.completed_at ? `· ${formatTableTime(String(task.completed_at))}` : '· 执行中'}</p>}
         {result ? (
           <div className="agent-log-result">
@@ -114,15 +109,15 @@ export function SystemLogsTab({ server, data, client, disabled, disabledReason }
             )}
             <details className="task-details"><summary>原始 JSON</summary><pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all'}}>{raw}</pre></details>
           </div>
-        ) : <p className="muted">点击“刷新”后，Agent 在线时会返回最近日志。</p>}
+        ) : <div className="server-logs-empty"><strong>{loading ? '正在获取日志…' : '尚未获取日志'}</strong><span>{loading ? '等待 Agent 返回最近日志' : '点击刷新，获取最近日志（自动脱敏）'}</span></div>}
       </div>
 
       <div className="server-logs-actions">
-        <div className="agent-log-actions" style={{display:'flex', gap:8, marginTop:12}}>
+        <div className="agent-log-actions">
           <button className="ghost" onClick={()=>void control('rotate')} disabled={Boolean(operation)|| loading|| disabled}>{operation==='rotate'? '轮转中...':'轮转日志'}</button>
           <button className="ghost danger-text" onClick={()=>void control('clear')} disabled={Boolean(operation)|| loading|| disabled}>{operation==='clear'? '清空中...':'清空日志'}</button>
         </div>
-        <small className="muted">轮转/清空为高影响操作，清空需二次确认</small>
+        <small className="muted">清空将删除日志及轮转备份</small>
       </div>
     </div>
   )

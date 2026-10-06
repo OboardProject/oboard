@@ -29111,6 +29111,106 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .server-logs-content { min-height:160px; }
 .server-logs-actions { margin-top:12px; }
 
+.server-system-dialog .server-workspace-tabs {
+  padding: 8px 18px;
+  gap: 6px;
+  overflow-y: hidden;
+}
+.server-system-dialog .server-workspace-tabs button {
+  margin: 0;
+  border-radius: var(--radius-sm);
+  border: 0;
+}
+.server-system-dialog .server-workspace-tabs button.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.server-system-overview,
+.server-agent-tab { display: grid; gap: 16px; }
+.server-system-dialog .server-detail-section { padding: 18px; }
+.server-system-dialog .server-detail-section > h3 {
+  margin: 0 0 14px;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+.server-system-dialog .server-detail-grid {
+  gap: 16px 24px;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+.server-system-dialog .server-about-item {
+  min-width: 0;
+  padding: 0;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+}
+.server-system-dialog .server-about-label { font-size: 12px; font-weight: 400; letter-spacing: normal; }
+.server-system-dialog .server-about-value {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.server-agent-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.server-agent-update-status { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.server-agent-enroll { margin-top: 12px; }
+.server-logs-tab { display: grid; gap: 14px; min-width: 0; }
+.server-logs-tab .server-logs-toolbar { margin: 0; }
+.server-logs-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.server-logs-filters .custom-select { width: auto; min-width: 110px; }
+.server-logs-filters .custom-select:first-child { min-width: 150px; }
+.server-logs-tab .server-logs-content {
+  min-width: 0;
+  min-height: 220px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+}
+.server-logs-empty {
+  display: flex;
+  min-height: 186px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.server-logs-empty strong { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.server-logs-tab .server-logs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+}
+.server-logs-tab .agent-log-actions { display: flex; gap: 8px; margin: 0; }
+.server-logs-tab .service-log-block pre { max-height: 360px; overflow: auto; }
+@media (max-width: 640px) {
+  .server-system-dialog .server-detail-section { padding: 14px; }
+  .server-system-dialog .server-detail-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .server-system-dialog .server-workspace-tabs { padding-inline: 12px; }
+  .server-logs-filters .custom-select:first-child { min-width: 130px; }
+  .server-logs-filters .custom-select { min-width: 90px; }
+}
+
 /* Tasks dialog */
 .server-tasks-table th { font-size:11px; font-weight:700; color:var(--muted); letter-spacing:0.03em; }
 .server-tasks-table td { font-size:13px; border-top:1px solid var(--border); }

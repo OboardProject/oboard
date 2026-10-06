@@ -71,7 +71,7 @@ export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent,
         <section className="server-detail-section">
           <h3>尚未接入 OBoard Agent</h3>
           <p className="muted">需要在目标服务器执行接入命令以完成注册。</p>
-          <div className="server-operation-card" style={{flexDirection:'column', alignItems:'stretch'}}>
+          <div className="server-agent-enroll">
             <button type="button" onClick={()=>void handleEnroll()} disabled={loading || disabled}>{loading? '生成中...':'生成接入命令'}</button>
             {commands ? <EnrollCommandBlocks commands={commands} /> : null}
             {disabled && <small className="muted">{disabledReason}</small>}
@@ -86,34 +86,24 @@ export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent,
       <section className="server-detail-section">
         <h3>OBoard Agent</h3>
         <dl className="server-detail-grid">
-          <div className="server-about-item"><span className="server-about-label">状态</span><span className="server-about-value">{isOnline ? '● 已连接' : '○ 离线'}</span></div>
-          <div className="server-about-item"><span className="server-about-label">当前版本</span><span className="server-about-value">{server.agent_version||'—'}</span></div>
-          <div className="server-about-item"><span className="server-about-label">当前 Build</span><span className="server-about-value">{currentBuild || '—'}</span></div>
-          <div className="server-about-item"><span className="server-about-label">Controller 期望</span><span className="server-about-value">{expectedBuild||'—'}</span></div>
-          <div className="server-about-item"><span className="server-about-label">安全进程</span><span className="server-about-value">{stealthActive ? '已启用' : (server.stealth_enabled ? '待重新安装' : '未启用')}</span></div>
+          <div className="server-about-item"><dt className="server-about-label">状态</dt><dd className="server-about-value">{isOnline ? '● 已连接' : '○ 离线'}</dd></div>
+          <div className="server-about-item"><dt className="server-about-label">当前版本</dt><dd className="server-about-value">{server.agent_version||'—'}</dd></div>
+          <div className="server-about-item"><dt className="server-about-label">当前构建</dt><dd className="server-about-value">{currentBuild || '—'}</dd></div>
+          <div className="server-about-item"><dt className="server-about-label">目标构建</dt><dd className="server-about-value">{expectedBuild||'—'}</dd></div>
+          <div className="server-about-item"><dt className="server-about-label">安全进程</dt><dd className="server-about-value">{stealthActive ? '已启用' : (server.stealth_enabled ? '待重新安装' : '未启用')}</dd></div>
         </dl>
-        {needUpdate ? (
-          <div className="access-note warning">
-            <strong>有新版本可用</strong>
-            <span>当前 {currentBuild} · 目标 {expectedBuild}</span>
-            <button type="button" onClick={()=>void handleUpdate()} disabled={updating || !isOnline || disabled} title={!isOnline? 'Agent 离线' : undefined} style={{marginTop:8}}>{updating? '更新中...':'更新 Agent'}</button>
-            {!isOnline && <small className="muted">Agent 离线时无法通过面板更新，请在服务器上执行命令</small>}
-          </div>
-        ) : (
-          <div className="access-note"><strong>已是最新版本</strong><span>当前构建与主控期望一致</span></div>
-        )}
-        <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
-          <button type="button" className="ghost" onClick={()=>void handleUpdate()} disabled={updating || !isOnline || disabled || !needUpdate} title={!needUpdate ? '已是最新版本，无需更新' : undefined}>{updating? '更新中...':'更新 Agent'}</button>
-          {disabled && <small className="muted">{disabledReason}</small>}
-          {!needUpdate && <small className="muted">已是最新版本</small>}
+        <div className="server-agent-update-row">
+          <span className="server-agent-update-status">{needUpdate ? '有新版本可用' : currentBuild && expectedBuild && expectedBuild !== 'dev' ? '已是最新版本' : '版本信息待确认'}</span>
+          {needUpdate && <button type="button" onClick={()=>void handleUpdate()} disabled={updating || !isOnline || disabled}>{updating ? '更新中…' : '更新 Agent'}</button>}
         </div>
+        {disabled ? <small className="muted">{disabledReason}</small> : needUpdate && !isOnline ? <small className="muted">Agent 离线，恢复连接后可更新。</small> : null}
       </section>
 
       <section className="server-detail-section">
         <h3>Agent 接入</h3>
         <dl className="server-detail-grid">
-          <div className="server-about-item"><span className="server-about-label">Agent ID</span><span className="server-about-value">{server.agent_id||'—'}</span></div>
-          <div className="server-about-item"><span className="server-about-label">最后连接</span><span className="server-about-value">{server.last_seen_at ? formatTableTime(server.last_seen_at) : server.telemetry_updated_at ? formatTableTime(server.telemetry_updated_at) : '—'}</span></div>
+          <div className="server-about-item"><dt className="server-about-label">Agent ID</dt><dd className="server-about-value">{server.agent_id||'—'}</dd></div>
+          <div className="server-about-item"><dt className="server-about-label">最后连接</dt><dd className="server-about-value">{server.last_seen_at ? formatTableTime(server.last_seen_at) : server.telemetry_updated_at ? formatTableTime(server.telemetry_updated_at) : '—'}</dd></div>
         </dl>
         <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
           <button type="button" className="ghost" onClick={()=>void handleEnroll()} disabled={loading || disabled}><Terminal size={14}/> {loading? '生成中...':'重新生成接入 Token'}</button>
