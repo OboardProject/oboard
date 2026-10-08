@@ -54,23 +54,24 @@ func parseNotificationContext(raw string) notificationContext {
 }
 
 type telegramActionPayload struct {
-	Action         string  `json:"action"`
-	Stage          string  `json:"stage,omitempty"`
-	ServerID       int64   `json:"server_id,omitempty"`
-	TaskID         int64   `json:"task_id,omitempty"`
-	TaskType       string  `json:"task_type,omitempty"`
-	CertificateID  int64   `json:"certificate_id,omitempty"`
-	InboundID      int64   `json:"inbound_id,omitempty"`
-	UserID         int64   `json:"user_id,omitempty"`
-	Days           int     `json:"days,omitempty"`
-	IncidentID     int64   `json:"incident_id,omitempty"`
-	EventVersion   int64   `json:"event_version,omitempty"`
-	InboundIDs     []int64 `json:"inbound_ids,omitempty"`
-	RecoveryPolicy string  `json:"recovery_policy,omitempty"`
-	IsolationID    int64   `json:"isolation_id,omitempty"`
-	Event          string  `json:"event,omitempty"`
-	ContextJSON    string  `json:"context_json,omitempty"`
-	Notice         string  `json:"notice,omitempty"`
+	Action          string  `json:"action"`
+	Stage           string  `json:"stage,omitempty"`
+	ServerID        int64   `json:"server_id,omitempty"`
+	TaskID          int64   `json:"task_id,omitempty"`
+	TaskType        string  `json:"task_type,omitempty"`
+	CertificateID   int64   `json:"certificate_id,omitempty"`
+	InboundID       int64   `json:"inbound_id,omitempty"`
+	UserID          int64   `json:"user_id,omitempty"`
+	Days            int     `json:"days,omitempty"`
+	IncidentID      int64   `json:"incident_id,omitempty"`
+	EventVersion    int64   `json:"event_version,omitempty"`
+	InboundIDs      []int64 `json:"inbound_ids,omitempty"`
+	RecoveryPolicy  string  `json:"recovery_policy,omitempty"`
+	DurationMinutes int     `json:"duration_minutes,omitempty"`
+	IsolationID     int64   `json:"isolation_id,omitempty"`
+	Event           string  `json:"event,omitempty"`
+	ContextJSON     string  `json:"context_json,omitempty"`
+	Notice          string  `json:"notice,omitempty"`
 }
 
 type telegramActionSpec struct {
@@ -169,19 +170,26 @@ func telegramIncidentActionSpecs(in telegramIncidentButtonInput) []telegramActio
 	}()}}
 	if in.Status == string(model.NodeIncidentActive) && len(in.Published) > 0 {
 		ids := append([]int64(nil), in.Published...)
+		until := base
+		until.Action = "incident_isolate"
+		until.InboundIDs = ids
+		until.RecoveryPolicy = "auto"
+		specs = append(specs, telegramActionSpec{Label: "直至恢复在线", Action: "incident_isolate", Row: 1, Payload: until})
 		for _, choice := range []struct {
-			action, label, policy string
-		}{
-			{"incident_isolate", "临时剔除·手动恢复", "manual"},
-			{"incident_isolate", "临时剔除·自动恢复", "auto"},
-			{"incident_remove", "永久移除", ""},
-		} {
+			label   string
+			minutes int
+		}{{"剔除 1 小时", 60}, {"剔除 6 小时", 360}, {"剔除 24 小时", 1440}} {
 			payload := base
-			payload.Action = choice.action
+			payload.Action = "incident_isolate"
 			payload.InboundIDs = ids
-			payload.RecoveryPolicy = choice.policy
-			specs = append(specs, telegramActionSpec{Label: choice.label, Action: choice.action, Row: len(specs), Payload: payload})
+			payload.RecoveryPolicy = "manual"
+			payload.DurationMinutes = choice.minutes
+			specs = append(specs, telegramActionSpec{Label: choice.label, Action: "incident_isolate", Row: 2, Payload: payload})
 		}
+		remove := base
+		remove.Action = "incident_remove"
+		remove.InboundIDs = ids
+		specs = append(specs, telegramActionSpec{Label: "永久移除", Action: "incident_remove", Row: 3, Payload: remove})
 	}
 	shown := 0
 	for _, isolation := range in.Isolations {
@@ -741,7 +749,7 @@ func (s *Server) executeTelegramAction(ctx context.Context, user model.User, rol
 		if payload.Action == "incident_remove" {
 			action = "permanent_remove"
 		}
-		return s.executeNodeIncidentAction(ctx, user, role, nodeIncidentConfirmationPayload{EventID: payload.IncidentID, EventVersion: payload.EventVersion, Action: action, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy, ChatID: 0, TelegramUserID: user.ID}, confirmToken)
+		return s.executeNodeIncidentAction(ctx, user, role, nodeIncidentConfirmationPayload{EventID: payload.IncidentID, EventVersion: payload.EventVersion, Action: action, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy, DurationMinutes: payload.DurationMinutes, ChatID: 0, TelegramUserID: user.ID}, confirmToken)
 	case "incident_restore":
 		return s.applyTelegramChangeset(ctx, principal, "node_incidents.restore", map[string]any{"event_id": payload.IncidentID, "isolation_id": payload.IsolationID}, confirmToken, "Telegram 通知撤销节点剔除")
 	default:
@@ -907,7 +915,7 @@ func (s *Server) executeNodeIncidentAction(ctx context.Context, user model.User,
 	}
 	operations := []automation.OperationRequest{}
 	if payload.Action == "isolate" {
-		input, _ := json.Marshal(nodeIncidentIsolationOperation{EventID: event.ID, EventVersion: event.Version, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy})
+		input, _ := json.Marshal(nodeIncidentIsolationOperation{EventID: event.ID, EventVersion: event.Version, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy, DurationMinutes: payload.DurationMinutes})
 		operations = append(operations, automation.OperationRequest{Capability: "node_incidents.isolate", Input: input, ResourceRefs: json.RawMessage(`{}`)})
 	} else {
 		for _, inboundID := range payload.InboundIDs {

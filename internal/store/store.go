@@ -649,7 +649,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create unique index if not exists idx_node_incidents_one_open on node_incidents(server_id,kind) where status in ('active','recovering')`,
 		`create index if not exists idx_node_incidents_status_time on node_incidents(status,recovery_deadline_at,detected_at desc)`,
 		`create table if not exists node_incident_telegram_messages (id integer primary key autoincrement, incident_id integer not null references node_incidents(id) on delete cascade, channel_id integer references notification_channels(id) on delete set null, chat_id integer not null, message_id integer not null default 0, fallback_message_id integer not null default 0, last_event_version integer not null default 0, last_edited_at text, last_error text not null default '', created_at text not null, updated_at text not null, unique(incident_id,chat_id))`,
-		`create table if not exists node_publication_isolations (id integer primary key autoincrement, incident_id integer not null references node_incidents(id) on delete restrict, inbound_id integer references inbounds(id) on delete set null, inbound_name text not null, server_id integer not null, recovery_policy text not null check(recovery_policy in ('manual','auto')), status text not null check(status in ('hidden','restored','removed')), actor_user_id integer not null, restored_by integer, restored_at text, created_at text not null, updated_at text not null)`,
+		`create table if not exists node_publication_isolations (id integer primary key autoincrement, incident_id integer not null references node_incidents(id) on delete restrict, inbound_id integer references inbounds(id) on delete set null, inbound_name text not null, server_id integer not null, recovery_policy text not null check(recovery_policy in ('manual','auto')), restore_at text, status text not null check(status in ('hidden','restored','removed')), actor_user_id integer not null, restored_by integer, restored_at text, created_at text not null, updated_at text not null)`,
 		`create unique index if not exists idx_node_publication_one_hidden on node_publication_isolations(inbound_id) where status='hidden' and inbound_id is not null`,
 		`create index if not exists idx_node_publication_incident on node_publication_isolations(incident_id,status)`,
 		`create table if not exists node_incident_actions (id integer primary key autoincrement, incident_id integer not null references node_incidents(id) on delete restrict, actor_user_id integer not null, kind text not null, status text not null check(status in ('deployment_pending','succeeded','failed')), inbound_ids_json text not null, changeset_id text not null, config_version integer not null default 0, task_count integer not null default 0, error text not null default '', created_at text not null, completed_at text, updated_at text not null)`,
@@ -796,6 +796,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		}
 	}
 	if err := s.ensureColumn(ctx, "notification_deliveries", "context_json", `alter table notification_deliveries add column context_json text not null default '{}'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "node_publication_isolations", "restore_at", `alter table node_publication_isolations add column restore_at text`); err != nil {
 		return err
 	}
 	if err := s.migratePluginSchema(ctx); err != nil {

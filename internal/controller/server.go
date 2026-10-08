@@ -2587,6 +2587,12 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = timing.run("settings", addSettings)
 		}
+		if err == nil {
+			err = timing.run("offline_isolation", func() error {
+				out["offline_isolation"], err = s.offlineIsolationPanel(ctx)
+				return err
+			})
+		}
 	case "return-latency":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
@@ -2594,6 +2600,12 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	case "servers":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
+		}
+		if err == nil {
+			err = timing.run("offline_isolation", func() error {
+				out["offline_isolation"], err = s.offlineIsolationPanel(ctx)
+				return err
+			})
 		}
 		if err == nil {
 			err = s.store.AttachServerMonitoringDisplays(ctx, serverSnapshot)

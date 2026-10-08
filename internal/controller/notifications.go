@@ -304,6 +304,11 @@ func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
 	}
 	s.fireDueOfflineNotices(ctx, merge, now)
 	s.fireDueOnlineNotices(ctx, now)
+	if restored, err := s.store.RestoreDueNodePublicationIsolations(ctx, now); err != nil {
+		log.Printf("restore timed publication isolations: %v", err)
+	} else if restored > 0 {
+		s.publishRealtime("subscriptions", "node_incidents")
+	}
 	s.finalizeRecoveredNodeIncidents(ctx, now)
 	s.reconcileNodeIncidentActions(ctx)
 }

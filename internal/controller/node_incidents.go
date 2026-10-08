@@ -359,3 +359,54 @@ func (s *Server) nodeIncidentPublishedInbounds(item model.NodeIncident) []nodeIn
 func nodeIncidentNotFound(err error) bool {
 	return err == sql.ErrNoRows
 }
+
+func (s *Server) offlineIsolationPanel(ctx context.Context) (map[string]any, error) {
+	events := []model.NodeIncident{}
+	for _, status := range []model.NodeIncidentStatus{model.NodeIncidentActive, model.NodeIncidentRecovering} {
+		items, err := s.store.ListNodeIncidents(ctx, string(status), 50, 0)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, items...)
+	}
+	prompts := []map[string]any{}
+	active := []map[string]any{}
+	for _, event := range events {
+		isolations, err := s.store.ListNodePublicationIsolations(ctx, event.ID)
+		if err != nil {
+			return nil, err
+		}
+		hidden := map[int64]bool{}
+		for _, isolation := range isolations {
+			if isolation.Status != "hidden" || isolation.InboundID == nil {
+				continue
+			}
+			hidden[*isolation.InboundID] = true
+			row := map[string]any{
+				"id": isolation.ID, "incident_id": event.ID, "server_id": event.ServerID, "server_name": event.ServerName,
+				"inbound_name": isolation.InboundName, "recovery_policy": isolation.RecoveryPolicy,
+			}
+			if isolation.RestoreAt != nil {
+				row["restore_at"] = isolation.RestoreAt
+			}
+			active = append(active, row)
+		}
+		if event.Status != model.NodeIncidentActive {
+			continue
+		}
+		inbounds := []map[string]any{}
+		for _, inbound := range s.nodeIncidentPublishedInbounds(event) {
+			if hidden[inbound.ID] {
+				continue
+			}
+			inbounds = append(inbounds, map[string]any{"id": inbound.ID, "name": inbound.Name})
+		}
+		if len(inbounds) == 0 {
+			continue
+		}
+		prompts = append(prompts, map[string]any{
+			"id": event.ID, "version": event.Version, "server_id": event.ServerID, "server_name": event.ServerName, "inbounds": inbounds,
+		})
+	}
+	return map[string]any{"incidents": prompts, "active": active}, nil
+}

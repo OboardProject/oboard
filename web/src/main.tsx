@@ -165,6 +165,7 @@ const AboutSettingsPanel = lazySurface(() => import('./components/AboutSettingsP
 import type { NodePreset } from './components/NodePresetsPanel'
 const NodePresetsPanel = lazySurface(() => import('./components/NodePresetsPanel').then(module => ({ default: module.NodePresetsPanel })))
 const SubscriptionTemplatesPanel = lazySurface(() => import('./components/SubscriptionTemplatesPanel').then(module => ({ default: module.SubscriptionTemplatesPanel })))
+import { OfflineIsolationList, OfflineIsolationPrompt } from './offline-isolation'
 import { StealthTransportSettings } from './components/settings/StealthTransportSettings'
 import { AppearanceSettingsPanel } from './components/settings/AppearanceSettingsPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
@@ -6440,6 +6441,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
         </div>
       </section>
 
+      <OfflineIsolationPrompt isolation={data.offline_isolation} client={client} onManage={() => goTab('servers')} onChanged={() => onCleaned?.()} />
       <ConfigHealthCard summary={configHealth} onOpen={() => setConfigHealthOpen(true)} />
       {configHealthOpen && (
         <ConfigHealthDialog
@@ -7522,6 +7524,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   }
   return <section className="panel server-management-panel">
     <div className="panel-body">
+    <OfflineIsolationList isolation={data.offline_isolation} client={client} onChanged={() => void load?.()} />
     <div className="section-toolbar server-management-toolbar">
       {servers.length > 0 && <div className="server-list-toolbar">
         <button

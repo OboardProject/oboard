@@ -496,7 +496,7 @@ func (s *Server) handleTelegramCallback(ctx context.Context, channel telegramBot
 	}
 	operations := []automation.OperationRequest{}
 	if payload.Action == "isolate" {
-		input, _ := json.Marshal(nodeIncidentIsolationOperation{EventID: event.ID, EventVersion: event.Version, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy})
+		input, _ := json.Marshal(nodeIncidentIsolationOperation{EventID: event.ID, EventVersion: event.Version, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy, DurationMinutes: payload.DurationMinutes})
 		operations = append(operations, automation.OperationRequest{Capability: "node_incidents.isolate", Input: input, ResourceRefs: json.RawMessage(`{}`)})
 	} else if payload.Action == "permanent_remove" {
 		for _, inboundID := range payload.InboundIDs {

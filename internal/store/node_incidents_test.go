@@ -84,11 +84,11 @@ func TestNodeIncidentLifecycleReusesFlapAndAutoRestoresIsolation(t *testing.T) {
 	if err != nil || created || again.ID != incident.ID || again.Version != incident.Version {
 		t.Fatalf("duplicate incident=%#v created=%v err=%v", again, created, err)
 	}
-	isolations, err := db.CreateNodePublicationIsolations(ctx, incident.ID, user.ID, []int64{inbound.ID}, "auto")
+	isolations, err := db.CreateNodePublicationIsolations(ctx, incident.ID, user.ID, []int64{inbound.ID}, "auto", nil)
 	if err != nil || len(isolations) != 1 {
 		t.Fatalf("isolate=%#v err=%v", isolations, err)
 	}
-	if _, err := db.CreateNodePublicationIsolations(ctx, incident.ID, user.ID, []int64{manualInbound.ID}, "manual"); err != nil {
+	if _, err := db.CreateNodePublicationIsolations(ctx, incident.ID, user.ID, []int64{manualInbound.ID}, "manual", nil); err != nil {
 		t.Fatal(err)
 	}
 	candidate := detected.Add(3 * time.Minute)
@@ -205,5 +205,44 @@ func TestNotificationBroadcastRetryNeverRepeatsSentTarget(t *testing.T) {
 	created, err = db.CreateNotificationBroadcast(ctx, &duplicate, []BroadcastRecipient{{UserID: user.ID}})
 	if err != nil || created || duplicate.ID != broadcast.ID {
 		t.Fatalf("idempotent create=%v duplicate=%#v err=%v", created, duplicate, err)
+	}
+}
+
+func TestTimedPublicationIsolationRestoresWhenDue(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "timed-isolation.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "edge", Status: model.ServerOffline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "admin", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "uuid", ProxyPassword: "password"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "published", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 8, 3, 0, 0, 0, time.UTC)
+	incident, _, err := db.OpenOrReopenNodeIncident(ctx, *server, now.Add(-time.Hour), now, time.Minute, 5*time.Minute, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	due := now.Add(-time.Minute)
+	items, err := db.CreateNodePublicationIsolations(ctx, incident.ID, user.ID, []int64{inbound.ID}, "manual", &due)
+	if err != nil || len(items) != 1 || items[0].RestoreAt == nil {
+		t.Fatalf("create=%#v err=%v", items, err)
+	}
+	restored, err := db.RestoreDueNodePublicationIsolations(ctx, now)
+	if err != nil || restored != 1 {
+		t.Fatalf("restored=%d err=%v", restored, err)
+	}
+	left, err := db.ListNodePublicationIsolations(ctx, incident.ID)
+	if err != nil || len(left) != 1 || left[0].Status != "restored" {
+		t.Fatalf("after due=%#v err=%v", left, err)
 	}
 }

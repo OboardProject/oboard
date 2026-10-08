@@ -13,10 +13,25 @@ import (
 )
 
 type nodeIncidentIsolationOperation struct {
-	EventID        int64   `json:"event_id"`
-	EventVersion   int64   `json:"event_version"`
-	InboundIDs     []int64 `json:"inbound_ids"`
-	RecoveryPolicy string  `json:"recovery_policy"`
+	EventID         int64   `json:"event_id"`
+	EventVersion    int64   `json:"event_version"`
+	InboundIDs      []int64 `json:"inbound_ids"`
+	RecoveryPolicy  string  `json:"recovery_policy"`
+	DurationMinutes int     `json:"duration_minutes,omitempty"`
+}
+
+func isolationRestoreAt(policy string, minutes int, now time.Time) (*time.Time, error) {
+	if minutes == 0 {
+		return nil, nil
+	}
+	if policy != "manual" {
+		return nil, errors.New("指定剔除时长时恢复方式必须是手动计时")
+	}
+	if minutes < 15 || minutes > 7*24*60 {
+		return nil, errors.New("剔除时长需在 15 分钟到 7 天之间")
+	}
+	restoreAt := now.UTC().Add(time.Duration(minutes) * time.Minute)
+	return &restoreAt, nil
 }
 
 func (s *Server) registerNodeIncidentAutomationOperations() {
@@ -47,7 +62,11 @@ func (s *Server) registerNodeIncidentAutomationOperations() {
 		if principal.UserID == nil {
 			return nil, errors.New("node publication isolation requires a user actor")
 		}
-		items, err := s.store.CreateNodePublicationIsolations(ctx, event.ID, *principal.UserID, request.InboundIDs, request.RecoveryPolicy)
+		restoreAt, err := isolationRestoreAt(request.RecoveryPolicy, request.DurationMinutes, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		items, err := s.store.CreateNodePublicationIsolations(ctx, event.ID, *principal.UserID, request.InboundIDs, request.RecoveryPolicy, restoreAt)
 		if err != nil {
 			return nil, err
 		}
@@ -97,6 +116,9 @@ func (s *Server) validateNodeIncidentIsolationOperation(ctx context.Context, pri
 	}
 	if request.RecoveryPolicy != "manual" && request.RecoveryPolicy != "auto" {
 		return request, nil, errors.New("recovery_policy must be manual or auto")
+	}
+	if _, err := isolationRestoreAt(request.RecoveryPolicy, request.DurationMinutes, time.Now().UTC()); err != nil {
+		return request, nil, err
 	}
 	event, err := s.store.GetNodeIncident(ctx, request.EventID)
 	if err != nil {

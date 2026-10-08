@@ -19,19 +19,21 @@ import (
 )
 
 type nodeIncidentActionRequest struct {
-	Action         string  `json:"action"`
-	InboundIDs     []int64 `json:"inbound_ids"`
-	RecoveryPolicy string  `json:"recovery_policy"`
+	Action          string  `json:"action"`
+	InboundIDs      []int64 `json:"inbound_ids"`
+	RecoveryPolicy  string  `json:"recovery_policy"`
+	DurationMinutes int     `json:"duration_minutes,omitempty"`
 }
 
 type nodeIncidentConfirmationPayload struct {
-	EventID        int64   `json:"event_id"`
-	EventVersion   int64   `json:"event_version"`
-	Action         string  `json:"action"`
-	InboundIDs     []int64 `json:"inbound_ids"`
-	RecoveryPolicy string  `json:"recovery_policy,omitempty"`
-	ChatID         int64   `json:"chat_id,omitempty"`
-	TelegramUserID int64   `json:"telegram_user_id,omitempty"`
+	EventID         int64   `json:"event_id"`
+	EventVersion    int64   `json:"event_version"`
+	Action          string  `json:"action"`
+	InboundIDs      []int64 `json:"inbound_ids"`
+	RecoveryPolicy  string  `json:"recovery_policy,omitempty"`
+	DurationMinutes int     `json:"duration_minutes,omitempty"`
+	ChatID          int64   `json:"chat_id,omitempty"`
+	TelegramUserID  int64   `json:"telegram_user_id,omitempty"`
 }
 
 func (s *Server) apiV1NodeIncidents(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +102,10 @@ func (s *Server) apiV1NodeIncidents(w http.ResponseWriter, r *http.Request) {
 		v2Write(w, r, http.StatusOK, map[string]any{"event": event, "isolations": isolations, "actions": actions}, nil)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "restore" && r.Method == http.MethodPost {
+		s.apiV1NodeIncidentRestore(w, r, principal, *event)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "preview" && r.Method == http.MethodPost {
 		s.apiV1NodeIncidentPreview(w, r, principal, *event)
 		return
@@ -109,6 +115,35 @@ func (s *Server) apiV1NodeIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v2Error(w, r, http.StatusNotFound, "not_found", "节点事件操作不存在")
+}
+
+func (s *Server) apiV1NodeIncidentRestore(w http.ResponseWriter, r *http.Request, principal application.Principal, event model.NodeIncident) {
+	if principal.UserID == nil || !principal.Interactive {
+		v2Error(w, r, http.StatusForbidden, "interactive_required", "恢复订阅需要人工登录")
+		return
+	}
+	var request struct {
+		IsolationID int64 `json:"isolation_id"`
+	}
+	if !decodeV2(w, r, &request) {
+		return
+	}
+	if request.IsolationID <= 0 {
+		v2Error(w, r, http.StatusBadRequest, "invalid_isolation", "剔除记录无效")
+		return
+	}
+	if _, allowed := s.capabilities.Authorize(principal, "node_incidents.restore"); !allowed {
+		v2Error(w, r, http.StatusForbidden, "capability_denied", "当前角色不能恢复已剔除入口")
+		return
+	}
+	input, _ := json.Marshal(map[string]any{"event_id": event.ID, "isolation_id": request.IsolationID})
+	changeset, err := s.applyConfirmedChangeset(r.Context(), principal, []automation.OperationRequest{{Capability: "node_incidents.restore", Input: input, ResourceRefs: json.RawMessage(`{}`)}}, fmt.Sprintf("panel-restore:%d:%d", request.IsolationID, time.Now().UnixNano()), "面板恢复临时剔除")
+	if err != nil {
+		v2Error(w, r, http.StatusConflict, "changeset_failed", err.Error())
+		return
+	}
+	s.publishRealtime("node_incidents", "subscriptions")
+	v2Write(w, r, http.StatusOK, map[string]any{"changeset": changeset, "restored": true}, nil)
 }
 
 func (s *Server) apiV1NodeIncidentPreview(w http.ResponseWriter, r *http.Request, principal application.Principal, event model.NodeIncident) {
@@ -140,12 +175,18 @@ func (s *Server) apiV1NodeIncidentPreview(w http.ResponseWriter, r *http.Request
 		v2Error(w, r, http.StatusBadRequest, "invalid_recovery_policy", "恢复策略必须是 manual 或 auto")
 		return
 	}
+	if request.Action == "isolate" {
+		if _, err := isolationRestoreAt(request.RecoveryPolicy, request.DurationMinutes, time.Now().UTC()); err != nil {
+			v2Error(w, r, http.StatusBadRequest, "invalid_duration", err.Error())
+			return
+		}
+	}
 	preview, err := s.nodeIncidentImpactPreview(r.Context(), event, request.InboundIDs, request.Action, request.RecoveryPolicy)
 	if err != nil {
 		v2Error(w, r, http.StatusBadRequest, "invalid_selection", err.Error())
 		return
 	}
-	payload := nodeIncidentConfirmationPayload{EventID: event.ID, EventVersion: event.Version, Action: request.Action, InboundIDs: preview["inbound_ids"].([]int64), RecoveryPolicy: request.RecoveryPolicy}
+	payload := nodeIncidentConfirmationPayload{EventID: event.ID, EventVersion: event.Version, Action: request.Action, InboundIDs: preview["inbound_ids"].([]int64), RecoveryPolicy: request.RecoveryPolicy, DurationMinutes: request.DurationMinutes}
 	payloadJSON, _ := json.Marshal(payload)
 	token, err := security.RandomToken(24)
 	if err != nil {
@@ -194,7 +235,7 @@ func (s *Server) apiV1NodeIncidentConfirm(w http.ResponseWriter, r *http.Request
 	capabilityName := "node_incidents.isolate"
 	operations := []automation.OperationRequest{}
 	if payload.Action == "isolate" {
-		input, _ := json.Marshal(nodeIncidentIsolationOperation{EventID: event.ID, EventVersion: event.Version, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy})
+		input, _ := json.Marshal(nodeIncidentIsolationOperation{EventID: event.ID, EventVersion: event.Version, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy, DurationMinutes: payload.DurationMinutes})
 		operations = append(operations, automation.OperationRequest{Capability: capabilityName, Input: input, ResourceRefs: json.RawMessage(`{}`)})
 	} else if payload.Action == "permanent_remove" {
 		capabilityName = "inbounds.delete"

@@ -2670,6 +2670,7 @@ type NodePublicationIsolation struct {
 	InboundName    string     `json:"inbound_name"`
 	ServerID       int64      `json:"server_id"`
 	RecoveryPolicy string     `json:"recovery_policy"`
+	RestoreAt      *time.Time `json:"restore_at,omitempty"`
 	Status         string     `json:"status"`
 	ActorUserID    int64      `json:"actor_user_id"`
 	RestoredBy     *int64     `json:"restored_by,omitempty"`

@@ -371,9 +371,12 @@ func (s *Store) ReconcileNodeIncidentActions(ctx context.Context) ([]model.NodeI
 	return completed, nil
 }
 
-func (s *Store) CreateNodePublicationIsolations(ctx context.Context, incidentID, actorUserID int64, inboundIDs []int64, recoveryPolicy string) ([]model.NodePublicationIsolation, error) {
+func (s *Store) CreateNodePublicationIsolations(ctx context.Context, incidentID, actorUserID int64, inboundIDs []int64, recoveryPolicy string, restoreAt *time.Time) ([]model.NodePublicationIsolation, error) {
 	if recoveryPolicy != "manual" && recoveryPolicy != "auto" {
 		return nil, errors.New("recovery policy must be manual or auto")
+	}
+	if recoveryPolicy == "auto" && restoreAt != nil {
+		return nil, errors.New("until-online isolation does not take an end time")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -402,7 +405,7 @@ func (s *Store) CreateNodePublicationIsolations(ctx context.Context, incidentID,
 		if serverID != incident.ServerID {
 			return nil, fmt.Errorf("inbound %d is not on incident server", inboundID)
 		}
-		if _, err := tx.ExecContext(ctx, `insert into node_publication_isolations(incident_id,inbound_id,inbound_name,server_id,recovery_policy,status,actor_user_id,created_at,updated_at) values(?,?,?,?,?,'hidden',?,?,?) on conflict(inbound_id) where status='hidden' and inbound_id is not null do update set recovery_policy=excluded.recovery_policy,actor_user_id=excluded.actor_user_id,updated_at=excluded.updated_at`, incidentID, inboundID, name, serverID, recoveryPolicy, actorUserID, ts, ts); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into node_publication_isolations(incident_id,inbound_id,inbound_name,server_id,recovery_policy,restore_at,status,actor_user_id,created_at,updated_at) values(?,?,?,?,?,?,'hidden',?,?,?) on conflict(inbound_id) where status='hidden' and inbound_id is not null do update set recovery_policy=excluded.recovery_policy,restore_at=excluded.restore_at,actor_user_id=excluded.actor_user_id,updated_at=excluded.updated_at`, incidentID, inboundID, name, serverID, recoveryPolicy, timePtrString(restoreAt), actorUserID, ts, ts); err != nil {
 			return nil, err
 		}
 	}
@@ -416,7 +419,7 @@ func (s *Store) CreateNodePublicationIsolations(ctx context.Context, incidentID,
 }
 
 func (s *Store) ListNodePublicationIsolations(ctx context.Context, incidentID int64) ([]model.NodePublicationIsolation, error) {
-	query := `select id,incident_id,inbound_id,inbound_name,server_id,recovery_policy,status,actor_user_id,restored_by,restored_at,created_at,updated_at from node_publication_isolations`
+	query := `select id,incident_id,inbound_id,inbound_name,server_id,recovery_policy,restore_at,status,actor_user_id,restored_by,restored_at,created_at,updated_at from node_publication_isolations`
 	args := []any{}
 	if incidentID > 0 {
 		query += ` where incident_id=?`
@@ -432,9 +435,9 @@ func (s *Store) ListNodePublicationIsolations(ctx context.Context, incidentID in
 	for rows.Next() {
 		var item model.NodePublicationIsolation
 		var inboundID, restoredBy sql.NullInt64
-		var restoredAt sql.NullString
+		var restoreAt, restoredAt sql.NullString
 		var created, updated string
-		if err := rows.Scan(&item.ID, &item.IncidentID, &inboundID, &item.InboundName, &item.ServerID, &item.RecoveryPolicy, &item.Status, &item.ActorUserID, &restoredBy, &restoredAt, &created, &updated); err != nil {
+		if err := rows.Scan(&item.ID, &item.IncidentID, &inboundID, &item.InboundName, &item.ServerID, &item.RecoveryPolicy, &restoreAt, &item.Status, &item.ActorUserID, &restoredBy, &restoredAt, &created, &updated); err != nil {
 			return nil, err
 		}
 		if inboundID.Valid {
@@ -443,12 +446,22 @@ func (s *Store) ListNodePublicationIsolations(ctx context.Context, incidentID in
 		if restoredBy.Valid {
 			item.RestoredBy = &restoredBy.Int64
 		}
+		item.RestoreAt = parseNullTime(restoreAt)
 		item.RestoredAt = parseNullTime(restoredAt)
 		item.CreatedAt = parseTime(created)
 		item.UpdatedAt = parseTime(updated)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) RestoreDueNodePublicationIsolations(ctx context.Context, at time.Time) (int64, error) {
+	ts := at.UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `update node_publication_isolations set status='restored',restored_at=?,updated_at=? where status='hidden' and restore_at is not null and restore_at<=?`, ts, ts, ts)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (s *Store) RestoreNodePublicationIsolation(ctx context.Context, isolationID, actorUserID int64) error {

@@ -67,7 +67,7 @@ func TestTelegramNotificationActionSpecs(t *testing.T) {
 
 func TestTelegramIncidentActionSpecs(t *testing.T) {
 	active := telegramIncidentActionSpecs(telegramIncidentButtonInput{ID: 5, Version: 2, ServerID: 9, Status: string(model.NodeIncidentActive), Published: []int64{3, 4}})
-	if len(active) != 4 || active[0].Action != "view_server" || active[1].Payload.RecoveryPolicy != "manual" || active[2].Payload.RecoveryPolicy != "auto" || active[3].Action != "incident_remove" {
+	if len(active) != 6 || active[0].Action != "view_server" || active[1].Payload.RecoveryPolicy != "auto" || active[2].Payload.DurationMinutes != 60 || active[5].Action != "incident_remove" {
 		t.Fatalf("active specs = %#v", active)
 	}
 	restored := telegramIncidentActionSpecs(telegramIncidentButtonInput{ID: 5, Version: 3, ServerID: 9, Status: string(model.NodeIncidentResolved), Isolations: []struct {
