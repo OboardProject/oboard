@@ -83,6 +83,8 @@ type trustedProxyState struct {
 type trustedProxyStateContextKey struct{}
 
 type Server struct {
+	runtimeSecurityReports     sync.Map
+	runtimeSecurityQueueMu     sync.Mutex
 	proxyCredentialMu          sync.Mutex
 	proxyCredentialRevision    atomic.Uint64
 	authorizationProjections   authorizationProjectionCache
@@ -1727,7 +1729,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_runtime_security.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
 			continue
 		}
 		out[key] = value
@@ -15442,6 +15444,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				if pendingAccess != nil {
 					s.commitRemoteAccessStatus(server.ID, server.AgentID, accessIdentity)
 				}
+				s.recordRuntimeSecurity(ctx, server, h.RuntimeSecurity)
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
 				s.recordUsersApplied(ctx, server, h.AppliedUsers)
@@ -15698,6 +15701,14 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	if task.Type == model.AgentTaskTypeRemoteExec || task.Type == model.AgentTaskTypeRemoteOperation {
 		req.ResultJSON = s.captureRemoteExecResult(*task, req.Status, req.ResultJSON)
 	}
+	if task.Type == model.AgentTaskTypeRuntimeSecurity {
+		var result struct {
+			Report *model.RuntimeSecurityReport `json:"runtime_security"`
+		}
+		if json.Unmarshal([]byte(req.ResultJSON), &result) == nil {
+			s.recordRuntimeSecurity(r.Context(), server, result.Report)
+		}
+	}
 	if task.Type == model.AgentTaskTypeListNetworkInterfaces && req.Status == "succeeded" {
 		if err := validateNetworkInterfacesTaskResult(req.ResultJSON); err != nil {
 			fail(w, err, http.StatusBadRequest)
@@ -15792,6 +15803,9 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		if task.Type == model.AgentTaskTypeUpdateAgent {
 			s.recordAgentUpdateTaskOutcome(r.Context(), *task, req.Status, taskResultMessage(model.AgentTask{ResultJSON: req.ResultJSON}))
 		}
+	}
+	if task.Type == model.AgentTaskTypeRuntimeSecurity {
+		s.reconcileRuntimeSecurityDesired(r.Context(), server)
 	}
 	s.recordConfigurationTaskResult(r.Context(), *task, req.Status, req.ResultJSON)
 	// A completed task may advance an access-change phase or open an

@@ -3,10 +3,11 @@ import { ServerWorkspaceDialog } from './shared/ServerWorkspaceDialog'
 import { SystemOverviewTab } from './system/SystemOverviewTab'
 import { SystemAgentTab } from './system/SystemAgentTab'
 import { SystemSettingsTab } from './system/SystemSettingsTab'
+import { SystemRuntimeSecurityTab } from './system/SystemRuntimeSecurityTab'
 import { SystemLogsTab } from './system/SystemLogsTab'
 import type { Server } from '../proxy-path/types'
 
-type Tab = 'overview'|'agent'|'settings'|'logs'
+type Tab = 'overview'|'agent'|'settings'|'logs'|'security'
 
 export function ServerSystemDialog({ server, initialTab='overview', data, client, onClose, onUpdated, notify, controllerURL, role='viewer' }: { server: Server; initialTab?: Tab; data:any; client:any; onClose:()=>void; onUpdated?:()=>void; notify?:(m:string,t?:string)=>void; controllerURL:string; role?: string }) {
   const [tab, setTab]=useState<Tab>(initialTab)
@@ -16,6 +17,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
   const isViewer = role !== 'admin' && role !== 'operator'
   const tabs: Array<{id:Tab,label:string; disabled?:boolean; hint?:string}> = [
     { id:'overview', label:'主机信息' },
+    { id:'security', label:'运行安全' },
     { id:'agent', label:'接入与更新', disabled: isViewer, hint: isViewer? '需要管理员权限': undefined },
     { id:'logs', label:'日志', disabled: isViewer || !enrolled || !isOnline, hint: isViewer? '需要管理员权限' : !enrolled? '未接入 Agent' : !isOnline? 'Agent 离线' : undefined },
   ]
@@ -51,6 +53,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
 
   return (
     <ServerWorkspaceDialog className="server-system-dialog" server={server} title="Agent 维护与日志" tabs={tabs as any} activeTab={tab} onTabChange={(id)=> setTab(id as Tab)} onClose={onClose}>
+      {tab==='security' && <SystemRuntimeSecurityTab serverID={server.id} client={client} disabled={isViewer} />}
       {tab==='overview' && <SystemOverviewTab server={server} />}
       {tab==='agent' && <SystemAgentTab server={server} expectedBuild={expectedBuild} onEnroll={handleEnroll} onUpdateAgent={handleUpdateAgent} notify={notify} disabled={isViewer} disabledReason="当前账号只有查看权限" />}
       {tab==='settings' && <SystemSettingsTab server={server} onSave={handleSaveSystem} onCheckTime={handleCheckTime} disabled={isViewer} disabledReason="当前账号只有查看权限" />}

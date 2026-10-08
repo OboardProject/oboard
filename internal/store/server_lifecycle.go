@@ -56,6 +56,7 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 		{`delete from server_dns_policies where server_id=?`, []any{serverID}},
 		{`delete from dns_lists where owner_server_id=?`, []any{serverID}},
 		{`delete from app_settings where key='server_stealth_layout.'||?`, []any{serverID}},
+		{`delete from app_settings where key in ('server_runtime_security.'||?||'.desired', 'server_runtime_security.'||?||'.report')`, []any{serverID, serverID}},
 		{`delete from servers where id=?`, []any{serverID}},
 	} {
 		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {

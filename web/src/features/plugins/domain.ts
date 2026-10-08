@@ -63,7 +63,6 @@ export const envTypeLabels: Record<string, string> = {
 
 export const errorCodeLabels: Record<string, string> = {
   CAPABILITY_DENIED: '插件未获得该能力授权',
-  NOT_FOUND: '目标不存在',
   RESOURCE_DENIED: '目标资源不在授权范围内',
   INVALID_ENVIRONMENT: '环境变量无效',
   CONFIGURATION_REQUIRED: '实例尚未完成配置',

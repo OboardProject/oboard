@@ -37,6 +37,12 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		return s.queryAccountAuditEvidence(ctx, principal, input)
 	case "audit.accounts.list", "audit.events.list", "audit.executions.list":
 		return s.queryAccountAudit(ctx, principal, capabilityName, input)
+	case "servers.runtime_security.read":
+		var inputValue runtimeSecurityOperation
+		if err := strictAutomationInput(input, &inputValue); err != nil {
+			return nil, err
+		}
+		return s.readRuntimeSecurity(ctx, principal, inputValue.ServerID)
 	case "config_health.report":
 		return s.readConfigHealthCapability(ctx, input)
 

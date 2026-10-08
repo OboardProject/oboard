@@ -51,7 +51,7 @@ type Manager struct {
 	closed bool
 }
 
-var sensitiveValue = regexp.MustCompile(`(?i)(authorization|agent_token|api_token|token|password|private_key|secret)(["'=:\s]+)([^\s",}]+)`)
+var sensitiveValue = regexp.MustCompile(`(?i)(authorization|agent_token|api_token|token|password|private_key|secret|psk|userkey|uuid)(["'=:\s]+)([^\s",}]+)`)
 var logURL = regexp.MustCompile(`https?://[^\s"<>]+`)
 var telegramCredential = regexp.MustCompile(`(?i)(/bot)[0-9]+(?::|%3a)[A-Za-z0-9_-]+`)
 var bearerValue = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+`)
@@ -115,7 +115,10 @@ func (m *Manager) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+var privateKeyBlock = regexp.MustCompile("(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----")
+
 func redact(p []byte) []byte {
+	p = privateKeyBlock.ReplaceAll(p, []byte("[REDACTED PRIVATE KEY]"))
 	clean := logURL.ReplaceAllFunc(p, func(raw []byte) []byte {
 		parsed, err := url.Parse(string(raw))
 		if err != nil {

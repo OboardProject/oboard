@@ -508,6 +508,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, trafficDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, externalOutboundDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, networkDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, runtimeSecurityDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, configHealthDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, forwardsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, opsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)

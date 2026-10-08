@@ -395,6 +395,10 @@ func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 		v2Error(w, r, http.StatusForbidden, "scope_denied", "缺少 servers:read 权限")
 		return
 	}
+	if len(parts) == 2 && parts[1] == "runtime-security" {
+		s.apiRuntimeSecurity(w, r, principal, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "connectivity" {
 		if r.Method != http.MethodGet {
 			v2Error(w, r, 405, "method_not_allowed", "仅支持 GET")
@@ -810,6 +814,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerNodeIncidentAutomationOperations()
 	s.registerNodeWorkspaceAutomationOperations()
 	s.registerRemoteAccessPolicyOperation()
+	s.registerRuntimeSecurityOperations()
 	s.registerPluginAutomationOperations()
 	s.automation.RegisterValidator("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request struct {
