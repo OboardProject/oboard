@@ -51,7 +51,7 @@ func (s *Store) CreateNotificationBroadcast(ctx context.Context, item *model.Not
 			continue
 		}
 		for _, binding := range recipient.Bindings {
-			if _, err := tx.ExecContext(ctx, `insert into notification_broadcast_targets(broadcast_id,user_id,binding_id,channel_id,chat_id,status,next_attempt_at,created_at,updated_at) values(?,?,?,?,?,'pending',?,?,?)`, item.ID, recipient.UserID, binding.ID, binding.ChannelID, binding.ChatID, ts, ts, ts); err != nil {
+			if _, err := tx.ExecContext(ctx, `insert into notification_broadcast_targets(broadcast_id,user_id,binding_id,channel_id,chat_id,status,attempts,next_attempt_at,created_at,updated_at) select ?,?,?,?,?,case when enabled=1 then 'pending' else 'failed' end,case when enabled=1 then 0 else 3 end,?,?,? from notification_channels where id=?`, item.ID, recipient.UserID, binding.ID, binding.ChannelID, binding.ChatID, ts, ts, ts, binding.ChannelID); err != nil {
 				return false, err
 			}
 		}
@@ -213,7 +213,7 @@ func (s *Store) CompleteNotificationBroadcastTarget(ctx context.Context, targetI
 	}
 	ts := now()
 	if sendErr == nil {
-		if _, err := tx.ExecContext(ctx, `update notification_broadcast_targets set status='sent',attempts=attempts+1,error='',sent_at=?,updated_at=? where id=? and status<>'sent'`, ts, ts, targetID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update notification_broadcast_targets set status='sent',attempts=attempts+1,error='',sent_at=?,updated_at=? where id=? and status in ('pending','failed') and attempts<3`, ts, ts, targetID); err != nil {
 			return err
 		}
 	} else {
@@ -221,7 +221,7 @@ func (s *Store) CompleteNotificationBroadcastTarget(ctx context.Context, targetI
 		if len(errorText) > 1000 {
 			errorText = errorText[:1000]
 		}
-		if _, err := tx.ExecContext(ctx, `update notification_broadcast_targets set status='failed',attempts=attempts+1,error=?,next_attempt_at=?,updated_at=? where id=? and status<>'sent'`, errorText, retryAt.UTC().Format(time.RFC3339Nano), ts, targetID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update notification_broadcast_targets set status='failed',attempts=attempts+1,error=?,next_attempt_at=?,updated_at=? where id=? and status in ('pending','failed') and attempts<3`, errorText, retryAt.UTC().Format(time.RFC3339Nano), ts, targetID); err != nil {
 			return err
 		}
 	}

@@ -54,6 +54,7 @@ const (
 )
 
 type notificationEvent struct {
+	OccurredAt      time.Time
 	Name            string
 	Key             string
 	TargetUserID    int64
@@ -324,32 +325,30 @@ func (s *Server) fireDueOfflineNotices(ctx context.Context, merge bool, now time
 	}
 	ids := make([]int64, 0, len(due))
 	if merge {
-		queued := s.enqueueMergedOfflineNotification(ctx, due, "telegram")
+		s.enqueueMergedOfflineNotification(ctx, due, "telegram")
 		for _, item := range due {
-			queued += s.enqueueNotificationEvent(ctx, notificationEvent{
+			s.enqueueNotificationEvent(ctx, notificationEvent{
 				Name:            notificationServerOffline,
+				OccurredAt:      item.SinceAt,
 				Key:             fmt.Sprintf("server:%d:offline:%s", item.ServerID, lastSeen(item.LastSeenAt)),
 				OnlyChannelType: "telegram",
 				Context:         notificationContext{ServerID: item.ServerID},
 				Data:            map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "LastSeen": lastSeen(item.LastSeenAt), "Time": s.notificationNow(ctx)},
 			})
 		}
-		if queued > 0 {
-			for _, item := range due {
-				ids = append(ids, item.ServerID)
-			}
+		for _, item := range due {
+			ids = append(ids, item.ServerID)
 		}
 	} else {
 		for _, item := range due {
-			queued := s.enqueueNotificationEvent(ctx, notificationEvent{
-				Name:    notificationServerOffline,
-				Key:     fmt.Sprintf("server:%d:offline:%s", item.ServerID, lastSeen(item.LastSeenAt)),
-				Context: notificationContext{ServerID: item.ServerID},
-				Data:    map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "LastSeen": lastSeen(item.LastSeenAt), "Time": s.notificationNow(ctx)},
+			s.enqueueNotificationEvent(ctx, notificationEvent{
+				Name:       notificationServerOffline,
+				OccurredAt: item.SinceAt,
+				Key:        fmt.Sprintf("server:%d:offline:%s", item.ServerID, lastSeen(item.LastSeenAt)),
+				Context:    notificationContext{ServerID: item.ServerID},
+				Data:       map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "LastSeen": lastSeen(item.LastSeenAt), "Time": s.notificationNow(ctx)},
 			})
-			if queued > 0 {
-				ids = append(ids, item.ServerID)
-			}
+			ids = append(ids, item.ServerID)
 		}
 	}
 	if len(ids) > 0 {
@@ -360,6 +359,28 @@ func (s *Server) fireDueOfflineNotices(ctx context.Context, merge bool, now time
 }
 
 func (s *Server) enqueueMergedOfflineNotification(ctx context.Context, items []model.ServerOfflineNotice, skipChannelType string) int {
+	channels, err := s.store.ListEnabledNotificationChannels(ctx, notificationServerOffline)
+	if err != nil {
+		log.Printf("list merged notification channels: %v", err)
+		return 0
+	}
+	queued := 0
+	for _, channel := range channels {
+		if channel.Type == skipChannelType {
+			continue
+		}
+		eligible := make([]model.ServerOfflineNotice, 0, len(items))
+		for _, item := range items {
+			if !item.SinceAt.Before(channel.EnabledSince) {
+				eligible = append(eligible, item)
+			}
+		}
+		queued += s.enqueueMergedOfflineNotificationForChannel(ctx, eligible, channel)
+	}
+	return queued
+}
+
+func (s *Server) enqueueMergedOfflineNotificationForChannel(ctx context.Context, items []model.ServerOfflineNotice, channel model.NotificationChannel) int {
 	if len(items) == 0 {
 		return 0
 	}
@@ -382,17 +403,17 @@ func (s *Server) enqueueMergedOfflineNotification(ctx context.Context, items []m
 		idKey += strconv.FormatInt(id, 10)
 	}
 	groupedAt := items[0].NotifyAt.UTC().Format(time.RFC3339Nano)
-	return s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name:            notificationServerOffline,
-		Key:             fmt.Sprintf("servers:offline:merged:%s:%s", groupedAt, idKey),
-		SkipChannelType: skipChannelType,
+	return s.enqueueNotificationEventToChannels(ctx, notificationEvent{
+		Name:       notificationServerOffline,
+		OccurredAt: items[0].SinceAt,
+		Key:        fmt.Sprintf("servers:offline:merged:%s:%s", groupedAt, idKey),
 		Data: map[string]string{
 			"ServerName": strings.Join(names, "、"),
 			"ServerID":   fmt.Sprint(len(items)),
 			"LastSeen":   strings.Join(seenLines, "\n"),
 			"Time":       s.notificationNow(ctx),
 		},
-	})
+	}, []model.NotificationChannel{channel})
 }
 
 func (s *Server) fireDueOnlineNotices(ctx context.Context, now time.Time) {
@@ -403,14 +424,13 @@ func (s *Server) fireDueOnlineNotices(ctx context.Context, now time.Time) {
 	}
 	ids := make([]int64, 0, len(due))
 	for _, item := range due {
-		queued := s.enqueueNotificationEvent(ctx, notificationEvent{
-			Name: notificationServerOnline,
-			Key:  fmt.Sprintf("server:%d:online:%s", item.ServerID, item.SinceAt.Format(time.RFC3339Nano)),
-			Data: map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "Time": s.notificationNow(ctx)},
+		s.enqueueNotificationEvent(ctx, notificationEvent{
+			Name:       notificationServerOnline,
+			OccurredAt: item.SinceAt,
+			Key:        fmt.Sprintf("server:%d:online:%s", item.ServerID, item.SinceAt.Format(time.RFC3339Nano)),
+			Data:       map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "Time": s.notificationNow(ctx)},
 		})
-		if queued > 0 {
-			ids = append(ids, item.ServerID)
-		}
+		ids = append(ids, item.ServerID)
 	}
 	if len(ids) > 0 {
 		if err := s.store.DeleteServerOfflineNotices(ctx, ids); err != nil {
@@ -1107,6 +1127,9 @@ func (s *Server) notificationNow(ctx context.Context) string {
 }
 
 func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificationEvent) int {
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now().UTC()
+	}
 	if strings.TrimSpace(event.Name) == "" || strings.TrimSpace(event.Key) == "" {
 		return 0
 	}
@@ -1115,6 +1138,10 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 		log.Printf("list notification channels for %s: %v", event.Name, err)
 		return 0
 	}
+	return s.enqueueNotificationEventToChannels(ctx, event, channels)
+}
+
+func (s *Server) enqueueNotificationEventToChannels(ctx context.Context, event notificationEvent, channels []model.NotificationChannel) int {
 	queued := 0
 	for _, channel := range channels {
 		owner, err := s.store.GetUser(ctx, channel.OwnerUserID)
@@ -1136,7 +1163,7 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 			log.Printf("render notification %s for channel %d: %v", event.Name, channel.ID, err)
 			continue
 		}
-		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, ContextJSON: notificationContextJSON(event.Context), NextAttemptAt: time.Now().UTC()}
+		delivery := model.NotificationDelivery{OccurredAt: event.OccurredAt, ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, ContextJSON: notificationContextJSON(event.Context), NextAttemptAt: time.Now().UTC()}
 		inserted, err := s.store.QueueNotificationDelivery(ctx, &delivery)
 		if err != nil {
 			log.Printf("queue notification %s for channel %d: %v", event.Name, channel.ID, err)
@@ -1179,7 +1206,7 @@ func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notif
 			log.Printf("render notification %s for channel %d: %v", event.Name, channel.ID, err)
 			continue
 		}
-		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, ContextJSON: notificationContextJSON(event.Context), NextAttemptAt: time.Now().UTC()}
+		delivery := model.NotificationDelivery{OccurredAt: event.OccurredAt, ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, ContextJSON: notificationContextJSON(event.Context), NextAttemptAt: time.Now().UTC()}
 		inserted, err := s.store.QueueNotificationDelivery(ctx, &delivery)
 		if err != nil {
 			log.Printf("queue notification %s for channel %d: %v", event.Name, channel.ID, err)
@@ -1275,6 +1302,10 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 		return
 	}
 	for _, delivery := range deliveries {
+		channel, err := s.store.GetNotificationChannel(ctx, delivery.ChannelID)
+		if err != nil || !channel.Enabled || delivery.CreatedAt.Before(channel.EnabledSince) {
+			continue
+		}
 		if (delivery.Event == notificationUserRisk || delivery.Event == notificationSubscriptionRisk) && !s.auditSettingsState(ctx).Enabled {
 			continue
 		}

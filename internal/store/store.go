@@ -640,7 +640,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists mtu_detection_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, mode text not null default 'detect', target_host text not null default '', target_port integer not null default 0, interface_name text not null default '', current_mtu integer not null default 0, path_mtu integer not null default 0, recommended_mtu integer not null default 0, applied_mtu integer not null default 0, confidence text not null default '', error text not null default '', result_json text not null default '{}', created_at text not null)`,
 		`create table if not exists port_forward_probe_results (id integer primary key autoincrement, port_forward_id integer not null, server_id integer not null references servers(id) on delete cascade, mode text not null, available integer not null default 0, latency_ms integer not null default 0, sample_count integer not null default 0, error text not null default '', result_json text not null default '{}', created_at text not null)`,
 		`create table if not exists inbound_probe_results (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, config_version integer not null default 0, mode text not null, transport text not null, endpoint text not null default '', available integer not null default 0, confirmed integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', result_json text not null default '{}', created_at text not null)`,
-		`create table if not exists notification_channels (id integer primary key autoincrement, owner_user_id integer not null references users(id) on delete cascade, name text not null, type text not null, enabled integer not null default 1, events text not null default 'server_offline,server_online', config_json text not null default '{}', templates_json text not null default '{}', created_at text not null, updated_at text not null)`,
+		`create table if not exists notification_channels (id integer primary key autoincrement, owner_user_id integer not null references users(id) on delete cascade, name text not null, type text not null, enabled integer not null default 1, enabled_since text not null default '', events text not null default 'server_offline,server_online', config_json text not null default '{}', templates_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists notification_channel_user_targets (channel_id integer not null references notification_channels(id) on delete cascade, user_id integer not null references users(id) on delete cascade, created_at text not null, primary key(channel_id,user_id))`,
 		`create table if not exists notification_announcements (id integer primary key autoincrement, actor_user_id integer not null references users(id) on delete cascade, actor_name text not null, title text not null, body text not null, user_ids_json text not null default '[]', queued_count integer not null default 0, created_at text not null)`,
 		`create table if not exists notification_deliveries (id integer primary key autoincrement, channel_id integer not null references notification_channels(id) on delete cascade, event text not null, event_key text not null, title text not null, body text not null, context_json text not null default '{}', status text not null default 'pending', attempts integer not null default 0, error text not null default '', next_attempt_at text not null, created_at text not null, updated_at text not null, sent_at text, unique(channel_id,event,event_key))`,
@@ -794,6 +794,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn(ctx, "notification_channels", "enabled_since", `alter table notification_channels add column enabled_since text not null default ''`); err != nil {
+		return err
 	}
 	if err := s.ensureColumn(ctx, "notification_deliveries", "context_json", `alter table notification_deliveries add column context_json text not null default '{}'`); err != nil {
 		return err
@@ -7002,7 +7005,16 @@ func (s *Store) UpdateNotificationChannel(ctx context.Context, v *model.Notifica
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `update notification_channels set name=?,type=?,enabled=?,events=?,config_json=?,templates_json=?,updated_at=? where id=? and owner_user_id=?`, v.Name, v.Type, boolInt(v.Enabled), v.Events, v.ConfigJSON, v.TemplatesJSON, v.UpdatedAt.Format(time.RFC3339Nano), v.ID, v.OwnerUserID)
+	var wasEnabled bool
+	if err := tx.QueryRowContext(ctx, `select enabled from notification_channels where id=? and owner_user_id=?`, v.ID, v.OwnerUserID).Scan(&wasEnabled); err != nil {
+		return err
+	}
+	if !v.Enabled || !wasEnabled {
+		if err := discardChannelNotifications(ctx, tx, v.ID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `update notification_channels set name=?,type=?,enabled_since=case when enabled=0 and ?=1 then ? else enabled_since end,enabled=?,events=?,config_json=?,templates_json=?,updated_at=? where id=? and owner_user_id=?`, v.Name, v.Type, boolInt(v.Enabled), v.UpdatedAt.Format(time.RFC3339Nano), boolInt(v.Enabled), v.Events, v.ConfigJSON, v.TemplatesJSON, v.UpdatedAt.Format(time.RFC3339Nano), v.ID, v.OwnerUserID)
 	if err != nil {
 		return err
 	}
@@ -7112,18 +7124,19 @@ func (s *Store) DeleteNotificationDataForUser(ctx context.Context, userID int64)
 	return tx.Commit()
 }
 
-const notificationChannelSelect = `select c.id,c.owner_user_id,coalesce(u.username,''),c.name,c.type,c.enabled,c.events,c.config_json,c.templates_json,c.created_at,c.updated_at,coalesce(group_concat(t.user_id),'') from notification_channels c left join users u on u.id=c.owner_user_id left join notification_channel_user_targets t on t.channel_id=c.id`
+const notificationChannelSelect = `select c.id,c.owner_user_id,coalesce(u.username,''),c.name,c.type,c.enabled,c.events,c.config_json,c.templates_json,c.created_at,c.updated_at,c.enabled_since,coalesce(group_concat(t.user_id),'') from notification_channels c left join users u on u.id=c.owner_user_id left join notification_channel_user_targets t on t.channel_id=c.id`
 
 func scanNotificationChannels(rows *sql.Rows) ([]model.NotificationChannel, error) {
 	var out []model.NotificationChannel
 	for rows.Next() {
 		var v model.NotificationChannel
 		var enabled int
-		var ca, ua, targets string
-		if err := rows.Scan(&v.ID, &v.OwnerUserID, &v.OwnerUsername, &v.Name, &v.Type, &enabled, &v.Events, &v.ConfigJSON, &v.TemplatesJSON, &ca, &ua, &targets); err != nil {
+		var ca, ua, enabledSince, targets string
+		if err := rows.Scan(&v.ID, &v.OwnerUserID, &v.OwnerUsername, &v.Name, &v.Type, &enabled, &v.Events, &v.ConfigJSON, &v.TemplatesJSON, &ca, &ua, &enabledSince, &targets); err != nil {
 			return nil, err
 		}
 		v.Enabled = enabled == 1
+		v.EnabledSince = parseTime(enabledSince)
 		for _, value := range strings.Split(targets, ",") {
 			if id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && id > 0 {
 				v.UserIDs = append(v.UserIDs, id)
@@ -7222,12 +7235,15 @@ func (s *Store) QueueNotificationDelivery(ctx context.Context, v *model.Notifica
 	if v.NextAttemptAt.IsZero() {
 		v.NextAttemptAt = v.CreatedAt
 	}
+	if v.OccurredAt.IsZero() {
+		v.OccurredAt = v.CreatedAt
+	}
 	contextJSON := strings.TrimSpace(v.ContextJSON)
 	if contextJSON == "" {
 		contextJSON = "{}"
 	}
 	v.ContextJSON = contextJSON
-	res, err := s.db.ExecContext(ctx, `insert or ignore into notification_deliveries(channel_id,event,event_key,title,body,context_json,status,attempts,error,next_attempt_at,created_at,updated_at) values(?,?,?,?,?,?,'pending',0,'',?,?,?)`, v.ChannelID, v.Event, v.EventKey, v.Title, v.Body, contextJSON, v.NextAttemptAt.UTC().Format(time.RFC3339Nano), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert or ignore into notification_deliveries(channel_id,event,event_key,title,body,context_json,status,attempts,error,next_attempt_at,created_at,updated_at) select ?,?,?,?,?,?,'pending',0,'',?,?,? where exists (select 1 from notification_channels where id=? and enabled=1 and (enabled_since='' or enabled_since<=?))`, v.ChannelID, v.Event, v.EventKey, v.Title, v.Body, contextJSON, v.NextAttemptAt.UTC().Format(time.RFC3339Nano), ts, ts, v.ChannelID, v.OccurredAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return false, err
 	}
@@ -7291,14 +7307,14 @@ func (s *Store) ListPendingNotificationDeliveries(ctx context.Context, at time.T
 func (s *Store) CompleteNotificationDelivery(ctx context.Context, id int64, sendErr error, retryAt time.Time) error {
 	ts := now()
 	if sendErr == nil {
-		_, err := s.db.ExecContext(ctx, `update notification_deliveries set status='sent',attempts=attempts+1,error='',updated_at=?,sent_at=? where id=?`, ts, ts, id)
+		_, err := s.db.ExecContext(ctx, `update notification_deliveries set status='sent',attempts=attempts+1,error='',updated_at=?,sent_at=? where id=? and status in ('pending','failed')`, ts, ts, id)
 		return err
 	}
 	errorText := strings.TrimSpace(sendErr.Error())
 	if len(errorText) > 500 {
 		errorText = errorText[:500]
 	}
-	_, err := s.db.ExecContext(ctx, `update notification_deliveries set status='failed',attempts=attempts+1,error=?,next_attempt_at=?,updated_at=? where id=?`, errorText, retryAt.UTC().Format(time.RFC3339Nano), ts, id)
+	_, err := s.db.ExecContext(ctx, `update notification_deliveries set status='failed',attempts=attempts+1,error=?,next_attempt_at=?,updated_at=? where id=? and status in ('pending','failed')`, errorText, retryAt.UTC().Format(time.RFC3339Nano), ts, id)
 	return err
 }
 

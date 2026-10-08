@@ -956,3 +956,53 @@ func TestNotificationChannelValidationRejectsUnknownType(t *testing.T) {
 		t.Fatalf("test channel config = %q", testChannel.ConfigJSON)
 	}
 }
+
+func TestNotificationDisableDuringDeliverySkipsFetchedBacklog(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "notifications.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	srv.monitorStarted.Store(true)
+	admin := &model.User{Username: "admin", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "a", ProxyPassword: "a"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	channel := &model.NotificationChannel{OwnerUserID: admin.ID, Name: "ops", Type: "test", Enabled: true, Events: notificationBackupFailed}
+	if err := db.CreateNotificationChannel(ctx, channel); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"first", "second"} {
+		if n := srv.enqueueNotificationEvent(ctx, notificationEvent{Name: notificationBackupFailed, Key: key, Data: map[string]string{"Stage": "backup", "Error": "test", "Time": "now"}}); n != 1 {
+			t.Fatalf("queued=%d", n)
+		}
+	}
+	sent := 0
+	srv.notificationSender = func(context.Context, model.NotificationChannel, string, string) error {
+		sent++
+		if sent == 1 {
+			channel.Enabled = false
+			if err := db.UpdateNotificationChannel(ctx, channel); err != nil {
+				t.Fatal(err)
+			}
+			channel.Enabled = true
+			if err := db.UpdateNotificationChannel(ctx, channel); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	}
+	srv.deliverPendingNotifications(ctx)
+	if sent != 1 {
+		t.Fatalf("sent old batch: %d", sent)
+	}
+	if n := srv.enqueueNotificationEvent(ctx, notificationEvent{Name: notificationBackupFailed, Key: "new", Data: map[string]string{"Stage": "backup", "Error": "test", "Time": "now"}}); n != 1 {
+		t.Fatalf("queued new=%d", n)
+	}
+	srv.deliverPendingNotifications(ctx)
+	if sent != 2 {
+		t.Fatalf("new delivery missing: %d", sent)
+	}
+}

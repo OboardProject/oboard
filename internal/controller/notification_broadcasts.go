@@ -217,6 +217,10 @@ func (s *Server) deliverPendingTelegramBroadcasts(ctx context.Context) {
 	}
 	bot, botErr := s.globalTelegramBot(ctx)
 	for _, target := range targets {
+		channel, err := s.store.GetNotificationChannel(ctx, target.Channel.ID)
+		if err != nil || !channel.Enabled || target.Broadcast.CreatedAt.Before(channel.EnabledSince) {
+			continue
+		}
 		var sendErr error
 		user, userErr := s.store.GetUser(ctx, target.UserID)
 		bindingActive := false

@@ -2559,6 +2559,7 @@ type TimeCheckResult struct {
 }
 
 type NotificationChannel struct {
+	EnabledSince  time.Time `json:"-"`
 	ID            int64     `json:"id"`
 	OwnerUserID   int64     `json:"owner_user_id"`
 	OwnerUsername string    `json:"owner_username,omitempty"`
@@ -2590,6 +2591,7 @@ type NotificationAnnouncement struct {
 }
 
 type NotificationDelivery struct {
+	OccurredAt    time.Time           `json:"-"`
 	ID            int64               `json:"id"`
 	ChannelID     int64               `json:"channel_id"`
 	Event         string              `json:"event"`

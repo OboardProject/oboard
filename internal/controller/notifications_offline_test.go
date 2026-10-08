@@ -444,3 +444,87 @@ func TestServerPatchKeepsOfflineNotifyDisabled(t *testing.T) {
 		t.Fatalf("unrelated patch must not re-enable offline notifications: %#v", server)
 	}
 }
+
+func TestDisabledNotificationsConsumeDueServerNotices(t *testing.T) {
+	for _, merge := range []bool{false, true} {
+		t.Run(strconv.FormatBool(merge), func(t *testing.T) {
+			ctx := context.Background()
+			db, err := store.Open(filepath.Join(t.TempDir(), "notifications.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			srv := newTestServer(db, "test-secret", "")
+			now := time.Now().UTC()
+			server := createServerWithLastSeen(t, db, "edge", "edge", now.Add(-time.Hour), true, 0)
+			for _, status := range []string{store.ServerOfflineNoticeStatusOffline, store.ServerOfflineNoticeStatusOnline} {
+				if err := db.UpsertServerOfflineNotice(ctx, server.ID, status, now.Add(-time.Minute), now.Add(-time.Second), ""); err != nil {
+					t.Fatal(err)
+				}
+				srv.fireDueOfflineNotices(ctx, merge, now)
+				srv.fireDueOnlineNotices(ctx, now)
+				offline, err := db.ListDueOfflineNotices(ctx, now.Add(time.Hour))
+				if err != nil || len(offline) != 0 {
+					t.Fatalf("offline backlog=%+v err=%v", offline, err)
+				}
+				online, err := db.ListDueOnlineNotices(ctx, now.Add(time.Hour))
+				if err != nil || len(online) != 0 {
+					t.Fatalf("online backlog=%+v err=%v", online, err)
+				}
+			}
+		})
+	}
+}
+
+func TestReenabledNotificationsFilterDelayedServerEvents(t *testing.T) {
+	for _, merge := range []bool{false, true} {
+		t.Run(strconv.FormatBool(merge), func(t *testing.T) {
+			ctx := context.Background()
+			db, err := store.Open(filepath.Join(t.TempDir(), "notifications.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			srv := newTestServer(db, "test-secret", "")
+			// Keep deliveries durable for inspection without starting the monitor.
+			srv.monitorStarted.Store(true)
+			admin := &model.User{Username: "admin", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "a", ProxyPassword: "a"}
+			if err := db.CreateUser(ctx, admin); err != nil {
+				t.Fatal(err)
+			}
+			channel := &model.NotificationChannel{OwnerUserID: admin.ID, Name: "ops", Type: "bark", Enabled: false, Events: "server_offline,server_online", ConfigJSON: "{}"}
+			if err := db.CreateNotificationChannel(ctx, channel); err != nil {
+				t.Fatal(err)
+			}
+			before := time.Now().Add(-time.Hour)
+			oldServer := createServerWithLastSeen(t, db, "old", "old", before, true, 0)
+			channel.Enabled = true
+			if err := db.UpdateNotificationChannel(ctx, channel); err != nil {
+				t.Fatal(err)
+			}
+			after := time.Now().UTC()
+			newServer := createServerWithLastSeen(t, db, "new", "new", after, true, 0)
+			for _, status := range []string{store.ServerOfflineNoticeStatusOffline, store.ServerOfflineNoticeStatusOnline} {
+				for _, entry := range []struct {
+					server model.Server
+					since  time.Time
+				}{{oldServer, before}, {newServer, after}} {
+					if err := db.UpsertServerOfflineNotice(ctx, entry.server.ID, status, entry.since, after, ""); err != nil {
+						t.Fatal(err)
+					}
+				}
+				srv.fireDueOfflineNotices(ctx, merge, after.Add(time.Second))
+				srv.fireDueOnlineNotices(ctx, after.Add(time.Second))
+			}
+			deliveries, err := db.ListPendingNotificationDeliveries(ctx, after.Add(time.Hour), 50)
+			if err != nil || len(deliveries) != 2 {
+				t.Fatalf("deliveries=%+v err=%v", deliveries, err)
+			}
+			for _, delivery := range deliveries {
+				if strings.Contains(delivery.Body, "old") || !strings.Contains(delivery.Body, "new") {
+					t.Fatalf("unexpected notification: %+v", delivery)
+				}
+			}
+		})
+	}
+}
