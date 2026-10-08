@@ -26,18 +26,18 @@ import (
 )
 
 type Store struct {
-	subscriptionLimiter subscriptionMemoryLimiter
+	subscriptionLimiter            subscriptionMemoryLimiter
 	subscriptionActivitySchemaOnce sync.Once
-	subscriptionActivitySchemaErr error
-	db                     *countingDB
-	path                   string
-	metricSamples          metricSampleAdmission
-	latencyPlanVersionMu   sync.Mutex
-	latencyHistoryMu       sync.Mutex
-	latencyRollupBusy      atomic.Bool
-	latencyIngestSlowUntil atomic.Int64
-	latencyHistoryVersion  uint64
-	latencyHistory         map[int64]latencyHistoryRevision
+	subscriptionActivitySchemaErr  error
+	db                             *countingDB
+	path                           string
+	metricSamples                  metricSampleAdmission
+	latencyPlanVersionMu           sync.Mutex
+	latencyHistoryMu               sync.Mutex
+	latencyRollupBusy              atomic.Bool
+	latencyIngestSlowUntil         atomic.Int64
+	latencyHistoryVersion          uint64
+	latencyHistory                 map[int64]latencyHistoryRevision
 	// settingsRevision is a process-local monotonic counter bumped on every
 	// settings write. The Controller caches ListSettings behind it so hot
 	// paths (health reports, audit gates) avoid a per-message settings query.
@@ -643,7 +643,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists notification_channels (id integer primary key autoincrement, owner_user_id integer not null references users(id) on delete cascade, name text not null, type text not null, enabled integer not null default 1, events text not null default 'server_offline,server_online', config_json text not null default '{}', templates_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists notification_channel_user_targets (channel_id integer not null references notification_channels(id) on delete cascade, user_id integer not null references users(id) on delete cascade, created_at text not null, primary key(channel_id,user_id))`,
 		`create table if not exists notification_announcements (id integer primary key autoincrement, actor_user_id integer not null references users(id) on delete cascade, actor_name text not null, title text not null, body text not null, user_ids_json text not null default '[]', queued_count integer not null default 0, created_at text not null)`,
-		`create table if not exists notification_deliveries (id integer primary key autoincrement, channel_id integer not null references notification_channels(id) on delete cascade, event text not null, event_key text not null, title text not null, body text not null, status text not null default 'pending', attempts integer not null default 0, error text not null default '', next_attempt_at text not null, created_at text not null, updated_at text not null, sent_at text, unique(channel_id,event,event_key))`,
+		`create table if not exists notification_deliveries (id integer primary key autoincrement, channel_id integer not null references notification_channels(id) on delete cascade, event text not null, event_key text not null, title text not null, body text not null, context_json text not null default '{}', status text not null default 'pending', attempts integer not null default 0, error text not null default '', next_attempt_at text not null, created_at text not null, updated_at text not null, sent_at text, unique(channel_id,event,event_key))`,
 		`create table if not exists server_offline_notices (server_id integer primary key references servers(id) on delete cascade, status text not null, since_at text not null, notify_at text not null, group_key text not null default '', notified integer not null default 0, updated_at text not null)`,
 		`create table if not exists node_incidents (id integer primary key autoincrement, server_id integer not null, server_name text not null, kind text not null default 'server_offline', status text not null check(status in ('active','recovering','resolved')), version integer not null default 1, first_offline_at text not null, detected_at text not null, recovery_candidate_at text, recovery_deadline_at text, recovered_at text, resolved_at text, outage_duration_seconds integer not null default 0, offline_threshold_seconds integer not null, recovery_threshold_seconds integer not null, flap_count integer not null default 0, snapshot_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create unique index if not exists idx_node_incidents_one_open on node_incidents(server_id,kind) where status in ('active','recovering')`,
@@ -659,6 +659,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists telegram_bindings (id integer primary key autoincrement, channel_id integer not null references notification_channels(id) on delete cascade, user_id integer not null references users(id) on delete cascade, chat_id integer not null, telegram_user_id integer not null, chat_type text not null, created_at text not null, updated_at text not null, unique(channel_id,chat_id,telegram_user_id))`,
 		`create index if not exists idx_telegram_bindings_user on telegram_bindings(user_id,channel_id)`,
 		`create table if not exists telegram_bot_state (token_hash text primary key, update_offset integer not null default 0, lease_owner text not null default '', lease_until text, updated_at text not null)`,
+		`create table if not exists telegram_action_tokens (token_hash text primary key, chat_id integer not null, message_id integer not null default 0, action text not null, payload_json text not null, expires_at text not null, consumed_at text, created_at text not null)`,
+		`create index if not exists idx_telegram_action_tokens_expiry on telegram_action_tokens(expires_at, consumed_at)`,
 		`create table if not exists operation_confirmations (token_hash text primary key, capability text not null, event_id integer references node_incidents(id) on delete cascade, event_version integer not null default 0, actor_user_id integer not null references users(id) on delete cascade, payload_json text not null, expires_at text not null, consumed_at text, created_at text not null)`,
 		`create index if not exists idx_operation_confirmations_expiry on operation_confirmations(expires_at,consumed_at)`,
 		`create table if not exists notification_broadcasts (id integer primary key autoincrement, actor_user_id integer not null, actor_name text not null, title text not null, body text not null, filter_json text not null, idempotency_key text not null unique, status text not null check(status in ('pending','sending','completed','partial','failed')), recipient_count integer not null default 0, success_count integer not null default 0, failure_count integer not null default 0, created_at text not null, completed_at text)`,
@@ -792,6 +794,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn(ctx, "notification_deliveries", "context_json", `alter table notification_deliveries add column context_json text not null default '{}'`); err != nil {
+		return err
 	}
 	if err := s.migratePluginSchema(ctx); err != nil {
 		return err
@@ -7214,7 +7219,12 @@ func (s *Store) QueueNotificationDelivery(ctx context.Context, v *model.Notifica
 	if v.NextAttemptAt.IsZero() {
 		v.NextAttemptAt = v.CreatedAt
 	}
-	res, err := s.db.ExecContext(ctx, `insert or ignore into notification_deliveries(channel_id,event,event_key,title,body,status,attempts,error,next_attempt_at,created_at,updated_at) values(?,?,?,?,?,'pending',0,'',?,?,?)`, v.ChannelID, v.Event, v.EventKey, v.Title, v.Body, v.NextAttemptAt.UTC().Format(time.RFC3339Nano), ts, ts)
+	contextJSON := strings.TrimSpace(v.ContextJSON)
+	if contextJSON == "" {
+		contextJSON = "{}"
+	}
+	v.ContextJSON = contextJSON
+	res, err := s.db.ExecContext(ctx, `insert or ignore into notification_deliveries(channel_id,event,event_key,title,body,context_json,status,attempts,error,next_attempt_at,created_at,updated_at) values(?,?,?,?,?,?,'pending',0,'',?,?,?)`, v.ChannelID, v.Event, v.EventKey, v.Title, v.Body, contextJSON, v.NextAttemptAt.UTC().Format(time.RFC3339Nano), ts, ts)
 	if err != nil {
 		return false, err
 	}
@@ -7230,7 +7240,7 @@ func (s *Store) ListPendingNotificationDeliveries(ctx context.Context, at time.T
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `select d.id,d.channel_id,d.event,d.event_key,d.title,d.body,d.status,d.attempts,d.error,d.next_attempt_at,d.created_at,d.updated_at,d.sent_at,c.owner_user_id,coalesce(u.username,''),c.name,c.type,c.enabled,c.events,c.config_json,c.templates_json,c.created_at,c.updated_at from notification_deliveries d join notification_channels c on c.id=d.channel_id left join users u on u.id=c.owner_user_id where d.status in ('pending','failed') and d.attempts<3 and d.next_attempt_at<=? and c.enabled=1 order by d.id limit ?`, at.UTC().Format(time.RFC3339Nano), limit)
+	rows, err := s.db.QueryContext(ctx, `select d.id,d.channel_id,d.event,d.event_key,d.title,d.body,coalesce(d.context_json,'{}'),d.status,d.attempts,d.error,d.next_attempt_at,d.created_at,d.updated_at,d.sent_at,c.owner_user_id,coalesce(u.username,''),c.name,c.type,c.enabled,c.events,c.config_json,c.templates_json,c.created_at,c.updated_at from notification_deliveries d join notification_channels c on c.id=d.channel_id left join users u on u.id=c.owner_user_id where d.status in ('pending','failed') and d.attempts<3 and d.next_attempt_at<=? and c.enabled=1 order by d.id limit ?`, at.UTC().Format(time.RFC3339Nano), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -7241,7 +7251,7 @@ func (s *Store) ListPendingNotificationDeliveries(ctx context.Context, at time.T
 		var next, created, updated, channelCreated, channelUpdated string
 		var sent sql.NullString
 		var enabled int
-		if err := rows.Scan(&item.ID, &item.ChannelID, &item.Event, &item.EventKey, &item.Title, &item.Body, &item.Status, &item.Attempts, &item.Error, &next, &created, &updated, &sent, &item.Channel.OwnerUserID, &item.Channel.OwnerUsername, &item.Channel.Name, &item.Channel.Type, &enabled, &item.Channel.Events, &item.Channel.ConfigJSON, &item.Channel.TemplatesJSON, &channelCreated, &channelUpdated); err != nil {
+		if err := rows.Scan(&item.ID, &item.ChannelID, &item.Event, &item.EventKey, &item.Title, &item.Body, &item.ContextJSON, &item.Status, &item.Attempts, &item.Error, &next, &created, &updated, &sent, &item.Channel.OwnerUserID, &item.Channel.OwnerUsername, &item.Channel.Name, &item.Channel.Type, &enabled, &item.Channel.Events, &item.Channel.ConfigJSON, &item.Channel.TemplatesJSON, &channelCreated, &channelUpdated); err != nil {
 			return nil, err
 		}
 		item.NextAttemptAt = parseTime(next)

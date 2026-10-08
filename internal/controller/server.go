@@ -172,6 +172,8 @@ type Server struct {
 	serverDeletionWG              sync.WaitGroup
 	notificationSender            func(context.Context, model.NotificationChannel, string, string) error
 	telegramAPI                   func(context.Context, string, string, url.Values) ([]byte, error)
+	telegramMarkupSend            func(context.Context, model.NotificationChannel, int64, string, string, string) (int64, error)
+	telegramMarkupEdit            func(context.Context, int64, int64, string, string) error
 	telegramPollerID              string
 	certificateIssueMu            sync.Mutex
 	certificateIssues             map[int64]bool

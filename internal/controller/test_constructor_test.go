@@ -31,7 +31,15 @@ func snapshotBindingsFromData(data store.FullRoutingConfig) []model.ProxyPathUse
 }
 
 func newTestServer(store *store.Store, sessionSecret, staticDir string) *Server {
-	return New(store, sessionSecret, staticDir, "", nil)
+	srv := New(store, sessionSecret, staticDir, "", nil)
+	srv.telegramMarkupSend = func(ctx context.Context, channel model.NotificationChannel, chatID int64, title, body, markup string) (int64, error) {
+		if err := srv.notificationSender(ctx, channel, title, body); err != nil {
+			return 0, err
+		}
+		return 1, nil
+	}
+	srv.telegramMarkupEdit = func(context.Context, int64, int64, string, string) error { return nil }
+	return srv
 }
 
 func enableTestAudit(t testing.TB, db *store.Store) {

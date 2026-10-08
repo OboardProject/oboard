@@ -447,6 +447,10 @@ func (s *Server) telegramBotIncidentPreview(ctx context.Context, token string, c
 
 func (s *Server) handleTelegramCallback(ctx context.Context, channel telegramBotChannel, callback telegramCallbackQuery, rate *telegramBotRateLimiter) {
 	token := channel.botToken
+	if strings.HasPrefix(callback.Data, telegramActionPrefix) {
+		s.handleTelegramActionCallback(ctx, channel, callback, rate)
+		return
+	}
 	if callback.From == nil || callback.Message == nil || callback.Message.Chat == nil || !strings.HasPrefix(callback.Data, "confirm:") {
 		return
 	}
@@ -764,6 +768,7 @@ func telegramBotHelpText() string {
 		"/audit 审计概览\n" +
 		"/incident <事件ID> isolate <manual|auto> <入口ID列表> 临时剔除预览\n" +
 		"/incident <事件ID> remove <入口ID列表> 永久移除预览\n" +
+		"失联告警上的按钮可直接处置。\n" +
 		"/help 指令说明"
 }
 

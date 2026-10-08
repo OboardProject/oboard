@@ -149,8 +149,9 @@ func absInt64(value int64) int64 {
 
 func (s *Server) notifyServerClockSkew(ctx context.Context, server model.Server, result model.TimeCheckResult) {
 	event := notificationEvent{
-		Name: notificationServerClockSkew,
-		Key:  fmt.Sprintf("server:clock-skew:%d:%s", server.ID, time.Now().UTC().Format("2006-01-02")),
+		Name:    notificationServerClockSkew,
+		Key:     fmt.Sprintf("server:clock-skew:%d:%s", server.ID, time.Now().UTC().Format("2006-01-02")),
+		Context: notificationContext{ServerID: server.ID},
 		Data: map[string]string{
 			"ServerName": server.Name,
 			"ServerID":   fmt.Sprint(server.ID),

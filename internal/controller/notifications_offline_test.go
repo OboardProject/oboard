@@ -51,10 +51,10 @@ func TestOfflineNoticeMergedAndPerServerDisable(t *testing.T) {
 
 	var sentMu sync.Mutex
 	sent := []string{}
-	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
+	srv.notificationSender = func(_ context.Context, channel model.NotificationChannel, title, body string) error {
 		sentMu.Lock()
 		defer sentMu.Unlock()
-		sent = append(sent, title+"\n"+body)
+		sent = append(sent, channel.Type+"\n"+title+"\n"+body)
 		return nil
 	}
 	admin := &model.User{Username: "admin", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "admin-uuid", ProxyPassword: "admin-pass"}
@@ -66,6 +66,10 @@ func TestOfflineNoticeMergedAndPerServerDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindTestTelegramChannel(t, srv, db, channel.ID, 1)
+	bark := &model.NotificationChannel{Name: "bark-ops", Type: "bark", Enabled: true, Events: notificationServerOffline, ConfigJSON: `{"device_key":"ops"}`, OwnerUserID: admin.ID}
+	if err := db.CreateNotificationChannel(ctx, bark); err != nil {
+		t.Fatal(err)
+	}
 
 	srv.checkOfflineAt(ctx, now)
 
@@ -113,18 +117,38 @@ func TestOfflineNoticeMergedAndPerServerDisable(t *testing.T) {
 		}
 	}
 	srv.fireDueOfflineNotices(ctx, true, now)
-	waitNotificationCount(t, srv, &sentMu, &sent, 1)
+	waitNotificationCount(t, srv, &sentMu, &sent, 3)
 	sentMu.Lock()
 	defer sentMu.Unlock()
-	if len(sent) != 1 {
-		t.Fatalf("expected one merged offline notification, got %d: %#v", len(sent), sent)
+	if len(sent) != 3 {
+		t.Fatalf("expected two telegram notices and one merged bark notice, got %d: %#v", len(sent), sent)
 	}
-	message := sent[0]
-	if !strings.Contains(message, "香港-01") || !strings.Contains(message, "日本-01") {
-		t.Fatalf("merged notification should include both servers: %q", message)
+	merged, telegram := 0, 0
+	for _, message := range sent {
+		if strings.Contains(message, "禁用-01") {
+			t.Fatalf("disabled server must not be notified: %q", message)
+		}
+		if strings.HasPrefix(message, "bark\n") {
+			merged++
+			if !strings.Contains(message, "香港-01") || !strings.Contains(message, "日本-01") {
+				t.Fatalf("merged bark notice should include both servers: %q", message)
+			}
+			continue
+		}
+		telegram++
+		names := 0
+		if strings.Contains(message, "香港-01") {
+			names++
+		}
+		if strings.Contains(message, "日本-01") {
+			names++
+		}
+		if names != 1 {
+			t.Fatalf("telegram notice should name one server: %q", message)
+		}
 	}
-	if strings.Contains(message, "禁用-01") {
-		t.Fatalf("disabled server must not be notified: %q", message)
+	if merged != 1 || telegram != 2 {
+		t.Fatalf("split = bark %d telegram %d: %#v", merged, telegram, sent)
 	}
 }
 

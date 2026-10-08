@@ -230,7 +230,7 @@ func (s *Server) deliverPendingTelegramBroadcasts(ctx context.Context) {
 		} else if botErr != nil || target.ChannelID == nil || target.ChatID == nil {
 			sendErr = errors.New("telegram_binding_or_bot_unavailable")
 		} else {
-			_, sendErr = s.telegramIncidentSend(ctx, bot.botToken, *target.ChatID, target.Broadcast.Title+"\n"+target.Broadcast.Body)
+			_, sendErr = s.telegramIncidentSend(ctx, bot.botToken, *target.ChatID, target.Broadcast.Title+"\n"+target.Broadcast.Body, "")
 		}
 		retry := time.Now().UTC().Add(time.Minute)
 		if target.Attempts > 0 {

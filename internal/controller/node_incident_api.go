@@ -244,7 +244,11 @@ func (s *Server) apiV1NodeIncidentConfirm(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) applyConfirmedNodeChangeset(ctx context.Context, principal application.Principal, operations []automation.OperationRequest, key string) (*model.AutomationChangeset, error) {
-	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: "节点失联事件确认处置", IdempotencyKey: "node-incident:" + key, BaseRevisions: json.RawMessage(`{}`), Operations: operations})
+	return s.applyConfirmedChangeset(ctx, principal, operations, "node-incident:"+key, "节点失联事件确认处置")
+}
+
+func (s *Server) applyConfirmedChangeset(ctx context.Context, principal application.Principal, operations []automation.OperationRequest, idempotencyKey, reason string) (*model.AutomationChangeset, error) {
+	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: reason, IdempotencyKey: idempotencyKey, BaseRevisions: json.RawMessage(`{}`), Operations: operations})
 	if err != nil {
 		return nil, err
 	}

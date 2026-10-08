@@ -96,7 +96,7 @@ func (s *Server) queueAccountAuditNotification(ctx context.Context, item store.A
 		if err != nil {
 			return err
 		}
-		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, NextAttemptAt: now}
+		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, ContextJSON: notificationContextJSON(notificationContext{UserID: item.UserID}), NextAttemptAt: now}
 		inserted, err := s.store.QueueNotificationDelivery(ctx, &delivery)
 		if err != nil {
 			return err

@@ -206,7 +206,7 @@ func nodeIncidentTelegramText(item model.NodeIncident) string {
 				}
 			}
 			builder.WriteString(strings.Join(parts, "、"))
-			builder.WriteString("\n处置预览：/incident <事件ID> isolate <manual|auto> <入口ID列表>")
+			builder.WriteString("\n使用下方按钮可查看状态、临时剔除或永久移除。")
 		}
 		if item.FlapCount > 0 {
 			fmt.Fprintf(&builder, "\n抖动次数：%d", item.FlapCount)
@@ -247,7 +247,17 @@ func (s *Server) syncNodeIncidentTelegram(ctx context.Context, item model.NodeIn
 		}
 		text := nodeIncidentTelegramText(item)
 		if message.MessageID == 0 {
-			messageID, sendErr := s.telegramIncidentSend(ctx, target.Token, target.ChatID, text)
+			markup, hashes, markupErr := s.incidentTelegramMarkup(ctx, item, target.ChatID, 0, text)
+			if markupErr != nil {
+				log.Printf("telegram incident keyboard: %v", markupErr)
+				markup, hashes = "", nil
+			}
+			messageID, sendErr := s.telegramIncidentSend(ctx, target.Token, target.ChatID, text, markup)
+			if sendErr != nil {
+				_ = s.store.DeleteTelegramActionTokens(ctx, hashes)
+			} else if err := s.store.SetTelegramActionTokenMessages(ctx, hashes, messageID); err != nil {
+				log.Printf("telegram incident attach message: %v", err)
+			}
 			version := item.Version
 			if sendErr != nil {
 				version = message.LastEventVersion
@@ -255,7 +265,15 @@ func (s *Server) syncNodeIncidentTelegram(ctx context.Context, item model.NodeIn
 			_ = s.store.UpdateNodeIncidentTelegramMessage(ctx, message.ID, messageID, 0, version, sendErr)
 			continue
 		}
-		editErr := s.telegramIncidentEdit(ctx, target.Token, target.ChatID, message.MessageID, text)
+		markup, hashes, markupErr := s.incidentTelegramMarkup(ctx, item, target.ChatID, message.MessageID, text)
+		if markupErr != nil {
+			log.Printf("telegram incident keyboard: %v", markupErr)
+			markup, hashes = "", nil
+		}
+		editErr := s.telegramIncidentEdit(ctx, target.Token, target.ChatID, message.MessageID, text, markup)
+		if editErr != nil {
+			_ = s.store.DeleteTelegramActionTokens(ctx, hashes)
+		}
 		if editErr == nil {
 			_ = s.store.UpdateNodeIncidentTelegramMessage(ctx, message.ID, 0, 0, item.Version, nil)
 			continue
@@ -265,7 +283,13 @@ func (s *Server) syncNodeIncidentTelegram(ctx context.Context, item model.NodeIn
 			continue
 		}
 		fallback := fmt.Sprintf("原告警消息：#%d\n%s", message.MessageID, text)
-		fallbackID, fallbackErr := s.telegramIncidentSend(ctx, target.Token, target.ChatID, fallback)
+		fallbackMarkup, fallbackHashes, _ := s.incidentTelegramMarkup(ctx, item, target.ChatID, 0, text)
+		fallbackID, fallbackErr := s.telegramIncidentSend(ctx, target.Token, target.ChatID, fallback, fallbackMarkup)
+		if fallbackErr != nil {
+			_ = s.store.DeleteTelegramActionTokens(ctx, fallbackHashes)
+		} else if err := s.store.SetTelegramActionTokenMessages(ctx, fallbackHashes, fallbackID); err != nil {
+			log.Printf("telegram incident attach fallback: %v", err)
+		}
 		if fallbackErr != nil {
 			_ = s.store.UpdateNodeIncidentTelegramMessage(ctx, message.ID, 0, 0, message.LastEventVersion, fallbackErr)
 			continue
@@ -274,11 +298,14 @@ func (s *Server) syncNodeIncidentTelegram(ctx context.Context, item model.NodeIn
 	}
 }
 
-func (s *Server) telegramIncidentSend(ctx context.Context, token string, chatID int64, text string) (int64, error) {
+func (s *Server) telegramIncidentSend(ctx context.Context, token string, chatID int64, text, markup string) (int64, error) {
 	form := url.Values{}
 	form.Set("chat_id", strconv.FormatInt(chatID, 10))
 	form.Set("text", text)
 	form.Set("disable_web_page_preview", "true")
+	if strings.TrimSpace(markup) != "" {
+		form.Set("reply_markup", markup)
+	}
 	data, err := s.telegramAPI(ctx, "POST", "https://api.telegram.org/bot"+token+"/sendMessage", form)
 	if err != nil {
 		return 0, err
@@ -295,12 +322,15 @@ func (s *Server) telegramIncidentSend(ctx context.Context, token string, chatID 
 	return response.Result.MessageID, nil
 }
 
-func (s *Server) telegramIncidentEdit(ctx context.Context, token string, chatID, messageID int64, text string) error {
+func (s *Server) telegramIncidentEdit(ctx context.Context, token string, chatID, messageID int64, text, markup string) error {
 	form := url.Values{}
 	form.Set("chat_id", strconv.FormatInt(chatID, 10))
 	form.Set("message_id", strconv.FormatInt(messageID, 10))
 	form.Set("text", text)
-	form.Set("reply_markup", `{"inline_keyboard":[]}`)
+	if strings.TrimSpace(markup) == "" {
+		markup = `{"inline_keyboard":[]}`
+	}
+	form.Set("reply_markup", markup)
 	data, err := s.telegramAPI(ctx, "POST", "https://api.telegram.org/bot"+token+"/editMessageText", form)
 	if err != nil {
 		return err

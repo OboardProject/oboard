@@ -54,10 +54,13 @@ const (
 )
 
 type notificationEvent struct {
-	Name         string
-	Key          string
-	TargetUserID int64
-	Data         map[string]string
+	Name            string
+	Key             string
+	TargetUserID    int64
+	Data            map[string]string
+	Context         notificationContext
+	OnlyChannelType string
+	SkipChannelType string
 }
 
 type notificationEventDefinition struct {
@@ -316,7 +319,17 @@ func (s *Server) fireDueOfflineNotices(ctx context.Context, merge bool, now time
 	}
 	ids := make([]int64, 0, len(due))
 	if merge {
-		if s.enqueueMergedOfflineNotification(ctx, due) > 0 {
+		queued := s.enqueueMergedOfflineNotification(ctx, due, "telegram")
+		for _, item := range due {
+			queued += s.enqueueNotificationEvent(ctx, notificationEvent{
+				Name:            notificationServerOffline,
+				Key:             fmt.Sprintf("server:%d:offline:%s", item.ServerID, lastSeen(item.LastSeenAt)),
+				OnlyChannelType: "telegram",
+				Context:         notificationContext{ServerID: item.ServerID},
+				Data:            map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "LastSeen": lastSeen(item.LastSeenAt), "Time": s.notificationNow(ctx)},
+			})
+		}
+		if queued > 0 {
 			for _, item := range due {
 				ids = append(ids, item.ServerID)
 			}
@@ -324,9 +337,10 @@ func (s *Server) fireDueOfflineNotices(ctx context.Context, merge bool, now time
 	} else {
 		for _, item := range due {
 			queued := s.enqueueNotificationEvent(ctx, notificationEvent{
-				Name: notificationServerOffline,
-				Key:  fmt.Sprintf("server:%d:offline:%s", item.ServerID, lastSeen(item.LastSeenAt)),
-				Data: map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "LastSeen": lastSeen(item.LastSeenAt), "Time": s.notificationNow(ctx)},
+				Name:    notificationServerOffline,
+				Key:     fmt.Sprintf("server:%d:offline:%s", item.ServerID, lastSeen(item.LastSeenAt)),
+				Context: notificationContext{ServerID: item.ServerID},
+				Data:    map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "LastSeen": lastSeen(item.LastSeenAt), "Time": s.notificationNow(ctx)},
 			})
 			if queued > 0 {
 				ids = append(ids, item.ServerID)
@@ -340,7 +354,7 @@ func (s *Server) fireDueOfflineNotices(ctx context.Context, merge bool, now time
 	}
 }
 
-func (s *Server) enqueueMergedOfflineNotification(ctx context.Context, items []model.ServerOfflineNotice) int {
+func (s *Server) enqueueMergedOfflineNotification(ctx context.Context, items []model.ServerOfflineNotice, skipChannelType string) int {
 	if len(items) == 0 {
 		return 0
 	}
@@ -364,8 +378,9 @@ func (s *Server) enqueueMergedOfflineNotification(ctx context.Context, items []m
 	}
 	groupedAt := items[0].NotifyAt.UTC().Format(time.RFC3339Nano)
 	return s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name: notificationServerOffline,
-		Key:  fmt.Sprintf("servers:offline:merged:%s:%s", groupedAt, idKey),
+		Name:            notificationServerOffline,
+		Key:             fmt.Sprintf("servers:offline:merged:%s:%s", groupedAt, idKey),
+		SkipChannelType: skipChannelType,
 		Data: map[string]string{
 			"ServerName": strings.Join(names, "、"),
 			"ServerID":   fmt.Sprint(len(items)),
@@ -705,7 +720,7 @@ func (s *Server) testNotificationChannelByID(w http.ResponseWriter, r *http.Requ
 	title, body := notificationTestMessage(item.Name, item.Type)
 	var sendErr error
 	if item.Type == "telegram" {
-		sendErr = s.sendTelegramChannelNotification(r.Context(), *item, title, body)
+		sendErr = s.sendTelegramChannelNotification(r.Context(), model.NotificationDelivery{Channel: *item, Event: "notify_test", Title: title, Body: body})
 	} else {
 		sendErr = s.notificationSender(r.Context(), *item, title, body)
 	}
@@ -1105,12 +1120,18 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 		if err != nil || !notificationChannelEligible(channel, role, event) {
 			continue
 		}
+		if event.OnlyChannelType != "" && channel.Type != event.OnlyChannelType {
+			continue
+		}
+		if event.SkipChannelType != "" && channel.Type == event.SkipChannelType {
+			continue
+		}
 		title, body, err := renderNotificationEvent(channel, event)
 		if err != nil {
 			log.Printf("render notification %s for channel %d: %v", event.Name, channel.ID, err)
 			continue
 		}
-		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, NextAttemptAt: time.Now().UTC()}
+		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, ContextJSON: notificationContextJSON(event.Context), NextAttemptAt: time.Now().UTC()}
 		inserted, err := s.store.QueueNotificationDelivery(ctx, &delivery)
 		if err != nil {
 			log.Printf("queue notification %s for channel %d: %v", event.Name, channel.ID, err)
@@ -1153,7 +1174,7 @@ func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notif
 			log.Printf("render notification %s for channel %d: %v", event.Name, channel.ID, err)
 			continue
 		}
-		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, NextAttemptAt: time.Now().UTC()}
+		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, ContextJSON: notificationContextJSON(event.Context), NextAttemptAt: time.Now().UTC()}
 		inserted, err := s.store.QueueNotificationDelivery(ctx, &delivery)
 		if err != nil {
 			log.Printf("queue notification %s for channel %d: %v", event.Name, channel.ID, err)
@@ -1254,7 +1275,7 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 		}
 		var sendErr error
 		if delivery.Channel.Type == "telegram" {
-			sendErr = s.sendTelegramChannelNotification(ctx, delivery.Channel, delivery.Title, delivery.Body)
+			sendErr = s.sendTelegramChannelNotification(ctx, delivery)
 		} else {
 			sendErr = s.notificationSender(ctx, delivery.Channel, delivery.Title, delivery.Body)
 		}
@@ -1440,8 +1461,9 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 		s.notifyHTTPCertificateTaskFailure(ctx, task, errorText)
 	}
 	s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name: eventName,
-		Key:  fmt.Sprintf("task:%d:%s", task.ID, eventName),
+		Name:    eventName,
+		Key:     fmt.Sprintf("task:%d:%s", task.ID, eventName),
+		Context: notificationContext{ServerID: task.ServerID, TaskID: task.ID, TaskType: task.Type},
 		Data: map[string]string{
 			"TaskType":   taskNotificationLabel(task),
 			"TaskID":     fmt.Sprint(task.ID),
@@ -1510,8 +1532,9 @@ func (s *Server) notifyCertificateIssueFailure(ctx context.Context, certificate 
 		attempt = certificate.LastRenewalAttemptAt.UTC()
 	}
 	s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name: notificationCertificateFailed,
-		Key:  fmt.Sprintf("certificate:%d:failed:%s", certificate.ID, attempt.Format(time.RFC3339Nano)),
+		Name:    notificationCertificateFailed,
+		Key:     fmt.Sprintf("certificate:%d:failed:%s", certificate.ID, attempt.Format(time.RFC3339Nano)),
+		Context: notificationContext{CertificateID: certificate.ID},
 		Data: map[string]string{
 			"CertificateName": certificate.Name,
 			"Domains":         notificationCertificateDomains(certificate),
@@ -1535,8 +1558,9 @@ func (s *Server) notifyCertificateExpiring(ctx context.Context, certificate *mod
 	}
 	settings, _ := s.store.ListSettings(ctx)
 	s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name: notificationCertificateExpiry,
-		Key:  fmt.Sprintf("certificate:%d:expires:%s", certificate.ID, notAfter.Format(time.RFC3339Nano)),
+		Name:    notificationCertificateExpiry,
+		Key:     fmt.Sprintf("certificate:%d:expires:%s", certificate.ID, notAfter.Format(time.RFC3339Nano)),
+		Context: notificationContext{CertificateID: certificate.ID},
 		Data: map[string]string{
 			"CertificateName": certificate.Name,
 			"Domains":         notificationCertificateDomains(certificate),
@@ -1669,8 +1693,9 @@ func (s *Server) notifyDNSSyncFailure(ctx context.Context, inbound model.Inbound
 		serverName = fmt.Sprintf("服务器 #%d", inbound.ServerID)
 	}
 	s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name: notificationDNSSyncFailed,
-		Key:  fmt.Sprintf("dns:%d:%s:%s", inbound.ID, lastSuccess, notificationValueKey(errorText)),
+		Name:    notificationDNSSyncFailed,
+		Key:     fmt.Sprintf("dns:%d:%s:%s", inbound.ID, lastSuccess, notificationValueKey(errorText)),
+		Context: notificationContext{InboundID: inbound.ID, ServerID: inbound.ServerID},
 		Data: map[string]string{
 			"InboundName": inbound.Name,
 			"Domain":      normalizeDomainName(inbound.DNSDomain),
@@ -1788,47 +1813,6 @@ func formatNotificationBytesUnsigned(value uint64) string {
 		return fmt.Sprintf("%d %s", value, units[unit])
 	}
 	return fmt.Sprintf("%.2f %s", number, units[unit])
-}
-
-func (s *Server) sendTelegramChannelNotification(ctx context.Context, channel model.NotificationChannel, title, body string) error {
-	bot, err := s.globalTelegramBot(ctx)
-	if err != nil {
-		return err
-	}
-	bindings, err := s.store.ListTelegramBindingsByChannel(ctx, channel.ID)
-	if err != nil {
-		return err
-	}
-	if len(bindings) == 0 {
-		return errors.New("Telegram 通知渠道尚未绑定账号")
-	}
-	seen := map[int64]bool{}
-	sent := 0
-	failures := []string{}
-	for _, binding := range bindings {
-		if binding.ChatID == 0 || seen[binding.ChatID] {
-			continue
-		}
-		seen[binding.ChatID] = true
-		deliveryChannel := channel
-		config, _ := json.Marshal(map[string]string{
-			"bot_token": bot.botToken,
-			"chat_id":   strconv.FormatInt(binding.ChatID, 10),
-		})
-		deliveryChannel.ConfigJSON = string(config)
-		if err := s.notificationSender(ctx, deliveryChannel, title, body); err != nil {
-			failures = append(failures, err.Error())
-			continue
-		}
-		sent++
-	}
-	if sent == 0 {
-		if len(failures) > 0 {
-			return fmt.Errorf("Telegram 通知发送失败: %s", strings.Join(failures, "; "))
-		}
-		return errors.New("Telegram 通知渠道没有有效绑定")
-	}
-	return nil
 }
 
 func sendNotification(ctx context.Context, channel model.NotificationChannel, title, body string) error {

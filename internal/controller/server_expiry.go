@@ -219,8 +219,9 @@ func (s *Server) scheduleServerExpiryNotifications(ctx context.Context, settings
 		dateKey := today.Format("2006-01-02")
 		key := fmt.Sprintf("server:%d:expiry:%s:%d", server.ID, dateKey, remaining)
 		s.enqueueNotificationEvent(ctx, notificationEvent{
-			Name: notificationServerExpiry,
-			Key:  key,
+			Name:    notificationServerExpiry,
+			Key:     key,
+			Context: notificationContext{ServerID: server.ID},
 			Data: map[string]string{
 				"ServerName":    server.Name,
 				"ServerID":      strconv.FormatInt(server.ID, 10),

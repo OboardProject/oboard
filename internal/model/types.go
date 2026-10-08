@@ -2596,6 +2596,7 @@ type NotificationDelivery struct {
 	EventKey      string              `json:"event_key"`
 	Title         string              `json:"title"`
 	Body          string              `json:"body"`
+	ContextJSON   string              `json:"context_json,omitempty"`
 	Status        string              `json:"status"`
 	Attempts      int                 `json:"attempts"`
 	Error         string              `json:"error"`
