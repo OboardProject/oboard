@@ -304,7 +304,7 @@ func TestSubscriptionIsolationHidesOnlySelectedInboundWithoutDeployment(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateNodePublicationIsolations(ctx, incident.ID, user.ID, []int64{first.ID}, "manual"); err != nil {
+	if _, err := db.CreateNodePublicationIsolations(ctx, incident.ID, user.ID, []int64{first.ID}, "manual", nil); err != nil {
 		t.Fatal(err)
 	}
 	after := httptest.NewRecorder()
