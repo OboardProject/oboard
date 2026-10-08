@@ -55,6 +55,37 @@ type ServerInfo struct {
 	PluginsGate  bool
 }
 
+// UserInfo is the plugin-facing user. It never contains passwords, tokens or proxy credentials.
+type UserInfo struct {
+	ID       int64
+	Username string
+	Nickname string
+	Status   string
+}
+
+// PlanInfo is the plugin-facing subscription plan.
+type PlanInfo struct {
+	ID      int64
+	Name    string
+	Enabled bool
+}
+
+// UserNotifyRequest queues one user notification through the existing Telegram broadcast path.
+type UserNotifyRequest struct {
+	ActorUserID    int64
+	Title          string
+	Body           string
+	UserIDs        []int64
+	IdempotencyKey string
+}
+
+// UserNotifyResult reports how many selected users were queued. Delivery is asynchronous.
+type UserNotifyResult struct {
+	Recipients int
+	Queued     int
+	Unbound    int
+}
+
 // DiagnosticRequest is one validated network capability call bound to a run.
 type DiagnosticRequest struct {
 	Capability string
@@ -75,6 +106,12 @@ type Host interface {
 	ServerMetrics(ctx context.Context, id int64) (map[string]any, error)
 	NotificationChannelExists(ctx context.Context, id int64) bool
 	SendNotification(ctx context.Context, channelID int64, title, body string) error
+	User(ctx context.Context, id int64) (UserInfo, bool)
+	ListUsers(ctx context.Context) []UserInfo
+	Plan(ctx context.Context, id int64) (PlanInfo, bool)
+	ListPlans(ctx context.Context) []PlanInfo
+	UsersOnPlan(ctx context.Context, planID int64) ([]UserInfo, error)
+	NotifyUsers(ctx context.Context, request UserNotifyRequest) (UserNotifyResult, error)
 	RunNetworkDiagnostic(ctx context.Context, request DiagnosticRequest) (json.RawMessage, error)
 	HTTPDenied(ctx context.Context, ip netip.Addr) bool
 	EncryptSecret(plain string) (string, error)

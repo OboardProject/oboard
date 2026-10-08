@@ -19,7 +19,7 @@ import { RunDialog } from './RunDialog'
 import {
   describeError, errorMessage, formatTime, instanceStatusLabels, instanceStatusTone, publisherLabel, runStatusLabels, runTone, triggerLabels,
 } from './domain'
-import type { Catalog, Installation, InstallationDetail, NotificationChannelOption, PluginsWorkspaceProps, Run, RuntimeStatus, ServerOption } from './types'
+import type { Catalog, Installation, InstallationDetail, NotificationChannelOption, PlanOption, PluginsWorkspaceProps, Run, RuntimeStatus, ServerOption, UserOption } from './types'
 
 type EditorState = { pluginID?: number; manifest?: string; source?: string } | null
 
@@ -34,6 +34,8 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null)
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [servers, setServers] = useState<ServerOption[]>([])
+  const [users, setUsers] = useState<UserOption[]>([])
+  const [plans, setPlans] = useState<PlanOption[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -67,6 +69,8 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
   useEffect(() => {
     void api.catalog(request).then(setCatalog, () => undefined)
     void api.serverOptions(request).then(page => setServers(page.servers || []), () => undefined)
+    void api.userOptions(request).then(page => setUsers(page.users || []), () => undefined)
+    void api.planOptions(request).then(page => setPlans(page.plans || []), () => undefined)
   }, [request])
   useRegisterPageRefresh(() => refresh())
 
@@ -153,7 +157,7 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
       onActivate={packageID => void act(async () => { await api.activateVersion(request, detail.id, packageID); await reloadDetail() }, '已切换版本')}
       onEdit={() => setEditor({ pluginID: detail.id, manifest: detail.draft?.manifest || (detail.manifest ? JSON.stringify(detail.manifest, null, 2) : undefined), source: detail.draft?.source ?? detail.source })} />}
 
-    {detail && instanceID && <InstanceDialog key={instanceID} instanceID={instanceID} installation={detail} request={request} servers={servers} channels={channels}
+    {detail && instanceID && <InstanceDialog key={instanceID} instanceID={instanceID} installation={detail} request={request} servers={servers} channels={channels} users={users} plans={plans}
       customTypes={catalog?.custom_types || []} canConfigure={canOperate} canExecute={canOperate} canAuthorize={isAdmin} notify={notify}
       onChanged={() => void reloadDetail()} onOpenRun={setRunID} onClose={() => setInstanceID(null)} />}
 

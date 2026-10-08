@@ -67,6 +67,10 @@ declare global {
   type EnvType = 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'select' | 'multi_select'
     | 'server' | 'servers' | 'secret' | 'url' | 'duration' | 'json'
 
+  interface UserView { user_id: string; username: string; nickname: string; status: string }
+  interface PlanView { plan_id: string; name: string; enabled: boolean }
+  interface UserNotifyResult { recipients: number; queued: number; unbound: number }
+
   interface ServerView {
     server_id: ServerID
     name: string
@@ -213,8 +217,20 @@ declare global {
       /** Writes only if the stored version equals expectedVersion (0 = absent). */
       compareAndSwap(key: string, expectedVersion: number, value: unknown): { key: string; version: number }
     }
-    /** notifications.send: granted channels only. */
+    /** notifications.send: granted administrator channels only. */
     readonly notifications: { send(options: { title: string; body?: string; channel_ids?: string[] }): { sent: string[] } }
+    /** users.read / users.notify. Views never include passwords or subscription secrets. */
+    readonly users: {
+      get(userId: string): UserView
+      list(): UserView[]
+      notify(options: { user_ids: string[]; title: string; body?: string }): UserNotifyResult
+    }
+    /** plans.read / plans.notify. plan users are the plan's current effective members. */
+    readonly plans: {
+      list(): PlanView[]
+      users(planId: string): UserView[]
+      notify(options: { plan_id: string; title: string; body?: string }): UserNotifyResult
+    }
     /** ui.page: publish a closed view document for one declared page. */
     readonly ui: { publish(options: { page: string; document: ViewDocument }): { page: string; published_at: string } }
     /** Pure computation. HMAC with a SecretRef key requires secrets.use. */

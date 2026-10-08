@@ -1,6 +1,6 @@
 import type {
   AuditEvent, Catalog, CustomVar, EditorDiagnostics, Grant, Installation, InstallationDetail, InstanceDetail,
-  InstancePage, PackagePreview, PackageSource, RequestFn, Run, RunLog, RuntimeStatus, Schedule, ServerOption, StateEntry,
+  InstancePage, PackagePreview, PackageSource, PlanOption, RequestFn, Run, RunLog, RuntimeStatus, Schedule, ServerOption, StateEntry, UserOption,
 } from './types'
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
@@ -15,6 +15,8 @@ export const activateVersion = (request: RequestFn, id: number, packageID: numbe
   request(`/plugins/${id}/versions/${packageID}/activate`, { method: 'POST', ...json({ confirm: true }) })
 export const catalog = (request: RequestFn) => request<Catalog>('/plugins/catalog')
 export const serverOptions = (request: RequestFn) => request<{ servers: ServerOption[] }>('/plugins/servers')
+export const userOptions = (request: RequestFn) => request<{ users: UserOption[] }>('/plugins/users')
+export const planOptions = (request: RequestFn) => request<{ plans: PlanOption[] }>('/plugins/plans')
 
 export const previewPackage = (request: RequestFn, source: PackageSource) =>
   request<PackagePreview>('/plugins/packages/preview', { method: 'POST', ...json({ source }) })

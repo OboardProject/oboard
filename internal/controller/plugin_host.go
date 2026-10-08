@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/netip"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/OboardProject/oboard/internal/plugin"
 	"github.com/OboardProject/oboard/internal/pluginsandbox"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 // pluginWorkerState is the last heartbeat of the plugin worker.
@@ -151,6 +153,122 @@ func (h *pluginHost) SendNotification(ctx context.Context, channelID int64, titl
 		sender = sendNotification
 	}
 	return sender(ctx, *channel, title, body)
+}
+
+func pluginUserInfo(user *model.User) plugin.UserInfo {
+	return plugin.UserInfo{ID: user.ID, Username: user.Username, Nickname: user.Nickname, Status: user.Status}
+}
+
+func (h *pluginHost) User(ctx context.Context, id int64) (plugin.UserInfo, bool) {
+	user, err := h.server.store.GetUser(ctx, id)
+	if err != nil || user == nil {
+		return plugin.UserInfo{}, false
+	}
+	info := pluginUserInfo(user)
+	return info, true
+}
+
+func (h *pluginHost) ListUsers(ctx context.Context) []plugin.UserInfo {
+	users, err := h.server.store.ListUsers(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]plugin.UserInfo, 0, len(users))
+	for i := range users {
+		out = append(out, pluginUserInfo(&users[i]))
+	}
+	return out
+}
+
+func (h *pluginHost) Plan(ctx context.Context, id int64) (plugin.PlanInfo, bool) {
+	plan, err := h.server.store.GetSubscriptionPlan(ctx, id)
+	if err != nil || plan == nil {
+		return plugin.PlanInfo{}, false
+	}
+	return plugin.PlanInfo{ID: plan.ID, Name: plan.Name, Enabled: plan.Enabled}, true
+}
+
+func (h *pluginHost) ListPlans(ctx context.Context) []plugin.PlanInfo {
+	plans, err := h.server.store.ListSubscriptionPlans(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]plugin.PlanInfo, 0, len(plans))
+	for _, plan := range plans {
+		out = append(out, plugin.PlanInfo{ID: plan.ID, Name: plan.Name, Enabled: plan.Enabled})
+	}
+	return out
+}
+
+func (h *pluginHost) UsersOnPlan(ctx context.Context, planID int64) ([]plugin.UserInfo, error) {
+	bindings, err := h.server.store.ListUserPlanBindingsForPlan(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	users, err := h.server.store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	member := map[int64]bool{}
+	for _, binding := range bindings {
+		if binding.StartsAt != nil && binding.StartsAt.After(now) || binding.ExpiresAt != nil && !binding.ExpiresAt.After(now) {
+			continue
+		}
+		member[binding.UserID] = true
+	}
+	out := []plugin.UserInfo{}
+	for i := range users {
+		if member[users[i].ID] {
+			out = append(out, pluginUserInfo(&users[i]))
+		}
+	}
+	return out, nil
+}
+
+func (h *pluginHost) NotifyUsers(ctx context.Context, request plugin.UserNotifyRequest) (plugin.UserNotifyResult, error) {
+	if _, err := h.server.globalTelegramBot(ctx); err != nil {
+		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "还没有可用的 Telegram 机器人，无法向用户推送")
+	}
+	if request.ActorUserID <= 0 {
+		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "缺少授权管理员，无法向用户推送")
+	}
+	actor, err := h.server.store.GetUser(ctx, request.ActorUserID)
+	if err != nil || actor == nil {
+		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "授权管理员已不存在，无法向用户推送")
+	}
+	actorName := strings.TrimSpace(actor.Nickname)
+	if actorName == "" {
+		actorName = actor.Username
+	}
+	recipients := make([]store.BroadcastRecipient, 0, len(request.UserIDs))
+	result := plugin.UserNotifyResult{}
+	for _, userID := range request.UserIDs {
+		bindings, err := h.server.store.ListTelegramBindingsForUser(ctx, userID)
+		if err != nil {
+			return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "读取用户通知绑定失败")
+		}
+		recipients = append(recipients, store.BroadcastRecipient{UserID: userID, Bindings: bindings})
+		result.Recipients++
+		result.Queued += len(bindings)
+		if len(bindings) == 0 {
+			result.Unbound++
+		}
+	}
+	filter, _ := json.Marshal(map[string]any{"source": "plugin", "user_ids": request.UserIDs})
+	broadcast := model.NotificationBroadcast{ActorUserID: actor.ID, ActorName: actorName, Title: request.Title, Body: request.Body, FilterJSON: string(filter), IdempotencyKey: request.IdempotencyKey}
+	created, err := h.server.store.CreateNotificationBroadcast(ctx, &broadcast, recipients)
+	if err != nil {
+		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "用户通知没有进入发送队列")
+	}
+	if created {
+		announcement := model.NotificationAnnouncement{ActorUserID: actor.ID, ActorName: actorName, Title: request.Title, Body: request.Body, UserIDs: append([]int64(nil), request.UserIDs...), QueuedCount: result.Queued}
+		if err := h.server.store.CreateNotificationAnnouncement(ctx, &announcement); err != nil {
+			return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "用户通知没有进入发送队列")
+		}
+		h.server.wakeNotificationDelivery(ctx)
+	}
+	return result, nil
 }
 
 // HTTPDenied refuses the Controller's own addresses and every enrolled

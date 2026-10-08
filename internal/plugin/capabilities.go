@@ -24,6 +24,10 @@ const (
 	CapStateWrite         = "state.write"
 	CapSecretsUse         = "secrets.use"
 	CapNotificationsSend  = "notifications.send"
+	CapUsersRead          = "users.read"
+	CapUsersNotify        = "users.notify"
+	CapPlansRead          = "plans.read"
+	CapPlansNotify        = "plans.notify"
 	CapEventsServerStatus = "events.server_status"
 	CapUIPage             = "ui.page"
 )
@@ -34,6 +38,8 @@ const (
 	ResourceServer              = "server"
 	ResourceHTTPHost            = "http_host"
 	ResourceNotificationChannel = "notification_channel"
+	ResourceUser                = "user"
+	ResourcePlan                = "plan"
 )
 
 type Risk string
@@ -74,7 +80,11 @@ var capabilityCatalog = []CapabilitySpec{
 	{Name: CapStateRead, Group: "state", Label: "读取插件运行状态", Description: "读取本插件实例自己的私有状态。", Risk: RiskLow, Methods: []string{"state.get", "state.list"}, Timeout: 5 * time.Second, RatePerMinute: 600},
 	{Name: CapStateWrite, Group: "state", Label: "保存插件运行状态", Description: "写入、删除与条件更新本插件实例自己的私有状态。", Risk: RiskLow, Methods: []string{"state.set", "state.delete", "state.compareAndSwap"}, Timeout: 5 * time.Second, RatePerMinute: 600},
 	{Name: CapSecretsUse, Group: "secrets", Label: "使用已配置的密钥", Description: "在 HTTP 认证或 HMAC 签名中引用本实例密钥；插件代码拿不到明文。", Risk: RiskHigh, Audited: true, Methods: []string{"crypto.hmac"}, Timeout: 5 * time.Second, RatePerMinute: 240},
-	{Name: CapNotificationsSend, Group: "notifications", Label: "发送通知", Description: "通过已授权的主控通知渠道发送文本通知。", Resource: ResourceNotificationChannel, Risk: RiskMedium, Audited: true, Methods: []string{"notifications.send"}, Timeout: 20 * time.Second, RatePerMinute: 10},
+	{Name: CapNotificationsSend, Group: "notifications", Label: "向管理员发送通知", Description: "通过已授权的管理员通知渠道发送文本通知。", Resource: ResourceNotificationChannel, Risk: RiskMedium, Audited: true, Methods: []string{"notifications.send"}, Timeout: 20 * time.Second, RatePerMinute: 10},
+	{Name: CapUsersRead, Group: "users", Label: "读取用户列表", Description: "读取已授权用户的名称与状态，不含密码、订阅地址或代理凭证。", Resource: ResourceUser, Risk: RiskLow, Methods: []string{"users.get", "users.list"}, Timeout: 5 * time.Second, RatePerMinute: 120},
+	{Name: CapUsersNotify, Group: "users", Label: "向指定用户推送", Description: "向已授权用户发送通知。已绑定 Telegram 的用户进入发送队列。", Resource: ResourceUser, Risk: RiskMedium, Audited: true, Methods: []string{"users.notify"}, Timeout: 20 * time.Second, RatePerMinute: 10},
+	{Name: CapPlansRead, Group: "plans", Label: "读取套餐与套餐用户", Description: "读取已授权套餐，以及这些套餐当前有效用户的名称与状态。", Resource: ResourcePlan, Risk: RiskLow, Methods: []string{"plans.list", "plans.users"}, Timeout: 5 * time.Second, RatePerMinute: 120},
+	{Name: CapPlansNotify, Group: "plans", Label: "向套餐用户推送", Description: "向已授权套餐的当前有效用户发送通知。", Resource: ResourcePlan, Risk: RiskMedium, Audited: true, Methods: []string{"plans.notify"}, Timeout: 20 * time.Second, RatePerMinute: 5},
 	{Name: CapEventsServerStatus, Group: "events", Label: "订阅服务器上下线事件", Description: "已授权服务器上线或离线时触发本插件。", Resource: ResourceServer, Risk: RiskLow, Methods: []string{}, Timeout: 0, RatePerMinute: 0},
 	{Name: CapUIPage, Group: "ui", Label: "在插件页展示界面", Description: "在插件实例中展示一份封闭视图。插件只能发布视图文档，不能提供自己的页面脚本。", Risk: RiskLow, Methods: []string{"ui.publish"}, Timeout: 5 * time.Second, RatePerMinute: 60},
 }

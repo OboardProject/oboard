@@ -185,6 +185,22 @@ func (s *Server) apiV1PluginItem(w http.ResponseWriter, r *http.Request) {
 		}
 		pluginOK(w, r, http.StatusOK, map[string]any{"servers": servers})
 		return
+	case "users":
+		users, err := s.plugins.UserOptions(ctx, principal)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, map[string]any{"users": users})
+		return
+	case "plans":
+		plans, err := s.plugins.PlanOptions(ctx, principal)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, map[string]any{"plans": plans})
+		return
 	case "drafts":
 		s.apiV1PluginDrafts(w, r, principal, parts[1:])
 		return

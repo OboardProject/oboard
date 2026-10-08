@@ -63,6 +63,10 @@
           "state.write",
           "secrets.use",
           "notifications.send",
+          "users.read",
+          "users.notify",
+          "plans.read",
+          "plans.notify",
           "events.server_status",
           "ui.page"
         ]

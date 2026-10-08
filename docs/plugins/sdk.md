@@ -43,7 +43,12 @@ async function main(run) {
 | `http.request(opts)` | `http.request` | 经主控网关访问授权主机；见下文 |
 | `state.get/list` | `state.read` | 实例私有键值 |
 | `state.set/delete/compareAndSwap` | `state.write` | `compareAndSwap(key, expectedVersion, value)`，`0` 表示键不存在；冲突返回 `STATE_CONFLICT` |
-| `notifications.send({title, body, channel_ids?})` | `notifications.send` | 只发往授权的通知渠道 |
+| `notifications.send({title, body, channel_ids?})` | `notifications.send` | 向已授权的管理员通知渠道发送 |
+| `users.get(id)` / `users.list()` | `users.read` | 已授权用户的用户名、昵称和状态 |
+| `users.notify({user_ids, title, body})` | `users.notify` | 向已授权的指定用户推送，一次最多 64 人 |
+| `plans.list()` | `plans.read` | 已授权套餐的名称和是否启用 |
+| `plans.users(planId)` | `plans.read` | 该套餐当前有效用户 |
+| `plans.notify({plan_id, title, body})` | `plans.notify` | 向该套餐当前有效用户推送，一次最多 256 人 |
 | `ui.publish({page, document})` | `ui.page` | 发布一份封闭视图文档，覆盖该实例该页的最新快照 |
 | `crypto.*` | 无（带 `SecretRef` 的 HMAC 需要 `secrets.use`） | `sha256`、`sha1`、`hmacSha256`、`hmacSha1`、`base64Encode/Decode`、`hexEncode/Decode`、`randomBytes`、`uuid` |
 
@@ -87,6 +92,10 @@ oboard.ui.publish({
   },
 })
 ```
+
+## 通知
+
+`notifications.send` 只发给管理员已经授权的通知渠道。`users.notify` 和 `plans.notify` 发给用户：已绑定 Telegram 的用户进入发送队列，没有绑定的计入 `unbound`，不会假装已经送达。返回 `{ recipients, queued, unbound }`。手动或界面触发时，还要落在当前操作员自己的用户或套餐范围内。标题最多 120 个字符，正文最多 3000 个字符。用户视图不含密码、订阅地址或代理凭证。
 
 ## 日志
 

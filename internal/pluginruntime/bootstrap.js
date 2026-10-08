@@ -140,6 +140,24 @@
       compareAndSwap: function (key, expectedVersion, value) { return call('state.compareAndSwap', { key: String(key), expected_version: expectedVersion, value: value === undefined ? null : value }); }
     }),
     notifications: freeze({ send: function (opts) { return call('notifications.send', options(opts)); } }),
+    users: freeze({
+      get: function (userId) { return call('users.get', { user_id: String(userId) }); },
+      list: function () { return call('users.list', {}).users; },
+      notify: function (opts) {
+        var request = options(opts);
+        if (Array.isArray(request.user_ids)) request.user_ids = request.user_ids.map(function (id) { return String(id); });
+        return call('users.notify', request);
+      }
+    }),
+    plans: freeze({
+      list: function () { return call('plans.list', {}).plans; },
+      users: function (planId) { return call('plans.users', { plan_id: String(planId) }).users; },
+      notify: function (opts) {
+        var request = options(opts);
+        if (request.plan_id !== undefined) request.plan_id = String(request.plan_id);
+        return call('plans.notify', request);
+      }
+    }),
     ui: freeze({ publish: function (opts) { return call('ui.publish', options(opts)); } }),
     crypto: crypto
   });

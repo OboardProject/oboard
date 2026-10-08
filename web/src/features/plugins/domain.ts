@@ -52,7 +52,7 @@ export const riskLabels: Record<Risk, string> = { low: '低风险', medium: '中
 
 export const groupLabels: Record<string, string> = {
   servers: '服务器', network: '网络诊断', http: '外部 HTTP', state: '插件状态',
-  secrets: '密钥', notifications: '通知', events: '事件', ui: '界面',
+  secrets: '密钥', notifications: '通知', users: '用户', plans: '套餐', events: '事件', ui: '界面',
 }
 
 export const envTypeLabels: Record<string, string> = {
@@ -63,6 +63,7 @@ export const envTypeLabels: Record<string, string> = {
 
 export const errorCodeLabels: Record<string, string> = {
   CAPABILITY_DENIED: '插件未获得该能力授权',
+  NOT_FOUND: '目标不存在',
   RESOURCE_DENIED: '目标资源不在授权范围内',
   INVALID_ENVIRONMENT: '环境变量无效',
   CONFIGURATION_REQUIRED: '实例尚未完成配置',

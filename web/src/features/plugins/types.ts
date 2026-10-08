@@ -137,7 +137,10 @@ export interface VersionView {
   created_at: string
 }
 
-export interface CapabilityGrant { servers?: number[]; hosts?: string[]; channels?: number[] }
+export interface CapabilityGrant { servers?: number[]; hosts?: string[]; channels?: number[]; users?: number[]; plans?: number[] }
+
+export interface UserOption { id: string; username: string; nickname?: string; status: string }
+export interface PlanOption { id: string; name: string; enabled: boolean }
 export interface Grant { capabilities: Record<string, CapabilityGrant> }
 
 export interface GrantView extends Grant {

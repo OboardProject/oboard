@@ -51,6 +51,44 @@ func (h *fakeHost) ServerMetrics(_ context.Context, id int64) (map[string]any, e
 	return map[string]any{"server_id": strconv.FormatInt(id, 10)}, nil
 }
 func (h *fakeHost) NotificationChannelExists(_ context.Context, id int64) bool { return id == 5 }
+func (h *fakeHost) User(_ context.Context, id int64) (UserInfo, bool) {
+	switch id {
+	case 8:
+		return UserInfo{ID: 8, Username: "alice", Nickname: "Alice", Status: "active"}, true
+	case 9:
+		return UserInfo{ID: 9, Username: "bob", Status: "active"}, true
+	default:
+		return UserInfo{}, false
+	}
+}
+func (h *fakeHost) ListUsers(context.Context) []UserInfo {
+	alice, _ := h.User(context.Background(), 8)
+	bob, _ := h.User(context.Background(), 9)
+	return []UserInfo{alice, bob}
+}
+func (h *fakeHost) Plan(_ context.Context, id int64) (PlanInfo, bool) {
+	if id == 4 {
+		return PlanInfo{ID: 4, Name: "月付", Enabled: true}, true
+	}
+	return PlanInfo{}, false
+}
+func (h *fakeHost) ListPlans(context.Context) []PlanInfo {
+	plan, _ := h.Plan(context.Background(), 4)
+	return []PlanInfo{plan}
+}
+func (h *fakeHost) UsersOnPlan(_ context.Context, planID int64) ([]UserInfo, error) {
+	if planID != 4 {
+		return nil, nil
+	}
+	alice, _ := h.User(context.Background(), 8)
+	return []UserInfo{alice}, nil
+}
+func (h *fakeHost) NotifyUsers(_ context.Context, request UserNotifyRequest) (UserNotifyResult, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.notifications = append(h.notifications, request.Title+"|"+request.Body)
+	return UserNotifyResult{Recipients: len(request.UserIDs), Queued: len(request.UserIDs), Unbound: 0}, nil
+}
 func (h *fakeHost) SendNotification(_ context.Context, id int64, title, body string) error {
 	h.mu.Lock()
 	h.notifications = append(h.notifications, title+"|"+body)

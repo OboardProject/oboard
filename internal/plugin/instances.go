@@ -579,7 +579,9 @@ func (s *Service) SetGrant(ctx context.Context, actor application.Principal, ins
 	}
 	serverExists := func(id int64) bool { _, ok := s.host.Server(ctx, id); return ok }
 	channelExists := func(id int64) bool { return s.host.NotificationChannelExists(ctx, id) }
-	if err := ValidateGrant(*loaded.manifest, &grant, serverExists, channelExists); err != nil {
+	userExists := func(id int64) bool { _, ok := s.host.User(ctx, id); return ok }
+	planExists := func(id int64) bool { _, ok := s.host.Plan(ctx, id); return ok }
+	if err := ValidateGrant(*loaded.manifest, &grant, serverExists, channelExists, userExists, planExists); err != nil {
 		return InstanceDetail{}, err
 	}
 	if req := manifestServerRequirement(*loaded.manifest); req != nil && req.Min > 0 {
@@ -786,6 +788,51 @@ func (s *Service) ServerOptions(ctx context.Context, actor application.Principal
 			continue
 		}
 		out = append(out, ServerOption{ID: formatID(server.ID), Name: server.Name, RegionCode: server.RegionCode, Enrolled: server.Enrolled, Online: server.Online, IPv4: server.PublicIPv4 != "", IPv6: server.PublicIPv6 != ""})
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	return out, nil
+}
+
+// UserOption is one user the grant editor may select. It carries no credentials.
+type UserOption struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Nickname string `json:"nickname,omitempty"`
+	Status   string `json:"status"`
+}
+
+// PlanOption is one subscription plan the grant editor may select.
+type PlanOption struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (s *Service) UserOptions(ctx context.Context, actor application.Principal) ([]UserOption, error) {
+	if err := s.require(actor, PermRead); err != nil {
+		return nil, err
+	}
+	out := []UserOption{}
+	for _, user := range s.host.ListUsers(ctx) {
+		if !actor.AllowsInt64("user_ids", user.ID) {
+			continue
+		}
+		out = append(out, UserOption{ID: formatID(user.ID), Username: user.Username, Nickname: user.Nickname, Status: user.Status})
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Username) < strings.ToLower(out[j].Username) })
+	return out, nil
+}
+
+func (s *Service) PlanOptions(ctx context.Context, actor application.Principal) ([]PlanOption, error) {
+	if err := s.require(actor, PermRead); err != nil {
+		return nil, err
+	}
+	out := []PlanOption{}
+	for _, plan := range s.host.ListPlans(ctx) {
+		if !actor.AllowsInt64("subscription_plan_ids", plan.ID) {
+			continue
+		}
+		out = append(out, PlanOption{ID: formatID(plan.ID), Name: plan.Name, Enabled: plan.Enabled})
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out, nil

@@ -36,6 +36,10 @@
 | `state.read` / `state.write` | 本实例 | 低 | |
 | `secrets.use` | 本实例密钥 | 高 | ✓ |
 | `notifications.send` | 通知渠道 | 中 | ✓ |
+| `users.read` | 用户 | 低 | |
+| `users.notify` | 用户 | 中 | ✓ |
+| `plans.read` | 套餐 | 低 | |
+| `plans.notify` | 套餐 | 中 | ✓ |
 | `events.server_status` | 服务器 | 低 | |
 | `ui.page` | 无 | 低 | |
 

@@ -18,6 +18,8 @@ type CapabilityGrant struct {
 	Servers  []int64  `json:"servers,omitempty"`
 	Hosts    []string `json:"hosts,omitempty"`
 	Channels []int64  `json:"channels,omitempty"`
+	Users    []int64  `json:"users,omitempty"`
+	Plans    []int64  `json:"plans,omitempty"`
 }
 
 func ParseGrant(raw []byte) (Grant, error) {
@@ -38,7 +40,7 @@ func ParseGrant(raw []byte) (Grant, error) {
 
 // ValidateGrant checks a proposed grant against the manifest it binds to and
 // normalizes it. A grant can never exceed the declaration.
-func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) bool, channelExists func(int64) bool) error {
+func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) bool, channelExists func(int64) bool, userExists func(int64) bool, planExists func(int64) bool) error {
 	if grant.Capabilities == nil {
 		grant.Capabilities = map[string]CapabilityGrant{}
 	}
@@ -52,7 +54,7 @@ func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) boo
 		}
 		switch spec.Resource {
 		case ResourceServer:
-			if len(scope.Hosts) > 0 || len(scope.Channels) > 0 {
+			if len(scope.Hosts) > 0 || len(scope.Channels) > 0 || len(scope.Users) > 0 || len(scope.Plans) > 0 {
 				return FailField(CodeInvalidArgument, "capabilities."+name, "only a server scope is valid here")
 			}
 			ids, err := normalizeIDs(scope.Servers, serverExists)
@@ -64,7 +66,7 @@ func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) boo
 			}
 			scope.Servers = ids
 		case ResourceHTTPHost:
-			if len(scope.Servers) > 0 || len(scope.Channels) > 0 || manifest.HTTP == nil {
+			if len(scope.Servers) > 0 || len(scope.Channels) > 0 || len(scope.Users) > 0 || len(scope.Plans) > 0 || manifest.HTTP == nil {
 				return FailField(CodeInvalidArgument, "capabilities."+name, "only declared hosts are valid here")
 			}
 			declared := map[string]bool{}
@@ -88,8 +90,32 @@ func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) boo
 			}
 			sort.Strings(hosts)
 			scope.Hosts = hosts
+		case ResourceUser:
+			if len(scope.Hosts) > 0 || len(scope.Channels) > 0 || len(scope.Servers) > 0 || len(scope.Plans) > 0 {
+				return FailField(CodeInvalidArgument, "capabilities."+name, "only a user scope is valid here")
+			}
+			ids, err := normalizeIDs(scope.Users, userExists)
+			if err != nil {
+				return FailField(CodeInvalidArgument, "capabilities."+name+".users", err.Error())
+			}
+			if len(ids) == 0 {
+				return FailField(CodeInvalidArgument, "capabilities."+name+".users", "select at least one user or leave the capability ungranted")
+			}
+			scope.Users = ids
+		case ResourcePlan:
+			if len(scope.Hosts) > 0 || len(scope.Channels) > 0 || len(scope.Servers) > 0 || len(scope.Users) > 0 {
+				return FailField(CodeInvalidArgument, "capabilities."+name, "only a plan scope is valid here")
+			}
+			ids, err := normalizeIDs(scope.Plans, planExists)
+			if err != nil {
+				return FailField(CodeInvalidArgument, "capabilities."+name+".plans", err.Error())
+			}
+			if len(ids) == 0 {
+				return FailField(CodeInvalidArgument, "capabilities."+name+".plans", "select at least one plan or leave the capability ungranted")
+			}
+			scope.Plans = ids
 		case ResourceNotificationChannel:
-			if len(scope.Servers) > 0 || len(scope.Hosts) > 0 {
+			if len(scope.Servers) > 0 || len(scope.Hosts) > 0 || len(scope.Users) > 0 || len(scope.Plans) > 0 {
 				return FailField(CodeInvalidArgument, "capabilities."+name, "only a channel scope is valid here")
 			}
 			ids, err := normalizeIDs(scope.Channels, channelExists)
@@ -101,7 +127,7 @@ func ValidateGrant(manifest Manifest, grant *Grant, serverExists func(int64) boo
 			}
 			scope.Channels = ids
 		default:
-			if len(scope.Servers) > 0 || len(scope.Hosts) > 0 || len(scope.Channels) > 0 {
+			if len(scope.Servers) > 0 || len(scope.Hosts) > 0 || len(scope.Channels) > 0 || len(scope.Users) > 0 || len(scope.Plans) > 0 {
 				return FailField(CodeInvalidArgument, "capabilities."+name, "this capability has no resource scope")
 			}
 		}
@@ -159,6 +185,32 @@ func (g Grant) AllowsServer(capability string, serverID int64) bool {
 	}
 	for _, id := range scope.Servers {
 		if id == serverID {
+			return true
+		}
+	}
+	return false
+}
+
+func (g Grant) AllowsUser(capability string, userID int64) bool {
+	scope, ok := g.Capabilities[capability]
+	if !ok {
+		return false
+	}
+	for _, id := range scope.Users {
+		if id == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func (g Grant) AllowsPlan(capability string, planID int64) bool {
+	scope, ok := g.Capabilities[capability]
+	if !ok {
+		return false
+	}
+	for _, id := range scope.Plans {
+		if id == planID {
 			return true
 		}
 	}

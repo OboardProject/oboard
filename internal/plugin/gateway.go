@@ -158,18 +158,6 @@ func (s *Service) checkCaller(ctx context.Context, run model.PluginRun) *Error {
 	return nil
 }
 
-func (s *Service) callerAllowsServer(ctx context.Context, run model.PluginRun, serverID int64) bool {
-	if !operatorTriggered(run.Trigger) {
-		return true
-	}
-	var detail TriggerDetail
-	if json.Unmarshal(run.TriggerJSON, &detail) != nil || detail.Caller == nil {
-		return false
-	}
-	caller, err := s.host.ResolveCaller(ctx, *detail.Caller)
-	return err == nil && caller.AllowsInt64("server_ids", serverID)
-}
-
 func (s *Service) audit(ctx context.Context, call callContext, resource string, detail map[string]any, err error, duration time.Duration) {
 	result := "succeeded"
 	code := ""
@@ -211,6 +199,14 @@ func (s *Service) dispatch(ctx context.Context, call callContext, raw json.RawMe
 		return s.handleHMAC(ctx, call, raw)
 	case CapNotificationsSend:
 		return s.handleNotify(ctx, call, raw)
+	case CapUsersRead:
+		return s.handleUsers(ctx, call, raw)
+	case CapUsersNotify:
+		return s.handleUserNotify(ctx, call, raw)
+	case CapPlansRead:
+		return s.handlePlans(ctx, call, raw)
+	case CapPlansNotify:
+		return s.handlePlanNotify(ctx, call, raw)
 	case CapUIPage:
 		return s.handlePublish(ctx, call, raw)
 	default:

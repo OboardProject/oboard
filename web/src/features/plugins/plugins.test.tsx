@@ -94,7 +94,7 @@ it('grants server scope from explicit selection and warns about environment serv
     forbidden: ['Shell 与命令执行'],
   } as unknown as InstallationDetail
   const onSave = vi.fn()
-  const view = await render(<GrantEditor detail={detail} servers={servers} channels={[]} envServerIDs={['2']} onSave={onSave} />)
+  const view = await render(<GrantEditor detail={detail} servers={servers} channels={[]} users={[]} plans={[]} envServerIDs={['2']} onSave={onSave} />)
   try {
     expect(view.container.textContent).toContain('Shell 与命令执行')
     expect(view.container.textContent).toContain('不在任何授权范围内')

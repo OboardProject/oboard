@@ -228,6 +228,13 @@ func TestRuntimeSecretHMACIsComputedByTheGateway(t *testing.T) {
 	}
 }
 
+func TestRuntimeNotifiesUsersThroughSDK(t *testing.T) {
+	outcome, calls, _ := execute(t, `function main() { return oboard.users.notify({ user_ids: [8], title: 'hi' }) }`, nil, nil)
+	if outcome.Code != "" || len(calls) != 1 || calls[0].method != "users.notify" || !strings.Contains(calls[0].arguments, `"user_ids":["8"]`) {
+		t.Fatalf("user notify was not delegated: %+v %v", outcome, calls)
+	}
+}
+
 func TestRuntimePublishesViewThroughSDK(t *testing.T) {
 	outcome, calls, _ := execute(t, `function main() { return oboard.ui.publish({ page: 'overview', document: { body: [{ type: 'text', text: 'ok' }] } }) }`, nil, nil)
 	if outcome.Code != "" || len(calls) != 1 || calls[0].method != "ui.publish" || !strings.Contains(calls[0].arguments, `"page":"overview"`) {

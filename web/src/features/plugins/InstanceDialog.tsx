@@ -15,7 +15,7 @@ import {
   issuesByField, newIdempotencyKey, runStatusLabels, runTone, triggerLabels,
 } from './domain'
 import type {
-  AuditEvent, CustomVar, EnvType, Grant, InstallationDetail, InstanceDetail, InstancePage, NotificationChannelOption, RequestFn, Run, ServerOption, StateEntry, ToastTone,
+  AuditEvent, CustomVar, EnvType, Grant, InstallationDetail, InstanceDetail, InstancePage,   NotificationChannelOption, PlanOption, RequestFn, Run, ServerOption, StateEntry, ToastTone, UserOption,
 } from './types'
 
 type View = 'config' | 'grant' | 'schedules' | 'runs' | 'state' | 'activity' | 'pages'
@@ -26,6 +26,8 @@ export interface InstanceDialogProps {
   request: RequestFn
   servers: ServerOption[]
   channels: NotificationChannelOption[]
+  users: UserOption[]
+  plans: PlanOption[]
   customTypes: EnvType[]
   canConfigure: boolean
   canExecute: boolean
@@ -48,7 +50,7 @@ function serverIDsInValues(installation: InstallationDetail, values: Record<stri
 }
 
 export function InstanceDialog(props: InstanceDialogProps) {
-  const { instanceID, installation, request, servers, channels, customTypes, canConfigure, canExecute, canAuthorize, notify, onChanged, onOpenRun, onClose } = props
+  const { instanceID, installation, request, servers, channels, users, plans, customTypes, canConfigure, canExecute, canAuthorize, notify, onChanged, onOpenRun, onClose } = props
   const [instance, setInstance] = useState<InstanceDetail | null>(null)
   const [view, setView] = useState<View>('config')
   const [values, setValues] = useState<Record<string, unknown>>({})
@@ -180,7 +182,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
           </div>}
         </TabsContent>
         <TabsContent value="grant">
-          {canAuthorize ? <GrantEditor key={`${instance.grant?.revision || 0}-${instance.grant?.package_id || 0}`} detail={installation} grant={instance.grant} servers={servers} channels={channels}
+          {canAuthorize ? <GrantEditor key={`${instance.grant?.revision || 0}-${instance.grant?.package_id || 0}`} detail={installation} grant={instance.grant} servers={servers} channels={channels} users={users} plans={plans}
             envServerIDs={serverIDsInValues(installation, values, custom)} busy={busy}
             onSave={(grant: Grant) => void act(async () => applyInstance(await api.setGrant(request, instance.id, instance.grant?.revision || 0, grant)), '授权已保存')}
             onRevoke={() => void act(async () => { await api.revokeGrant(request, instance.id); await load() }, '授权已撤销')} />

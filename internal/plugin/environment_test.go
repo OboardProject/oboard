@@ -169,12 +169,12 @@ func TestGrantNeverExceedsManifestAndCarriesForwardSafely(t *testing.T) {
 		{Capabilities: map[string]CapabilityGrant{"shell.exec": {}}},
 	}
 	for i, grant := range bad {
-		if err := ValidateGrant(manifest, &grant, exists, exists); err == nil {
+		if err := ValidateGrant(manifest, &grant, exists, exists, exists, exists); err == nil {
 			t.Errorf("grant %d accepted", i)
 		}
 	}
 	grant := Grant{Capabilities: map[string]CapabilityGrant{"network.trace": {Servers: []int64{3, 1, 3}}, "http.request": {Hosts: []string{"*.AliyunCS.com"}}, "notifications.send": {Channels: []int64{5}}}}
-	if err := ValidateGrant(manifest, &grant, exists, exists); err != nil {
+	if err := ValidateGrant(manifest, &grant, exists, exists, exists, exists); err != nil {
 		t.Fatal(err)
 	}
 	if !grant.AllowsServer("network.trace", 1) || grant.AllowsServer("network.trace", 2) || grant.AllowsServer("network.ping", 1) || !grant.AllowsChannel(5) {

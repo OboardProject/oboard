@@ -5,7 +5,7 @@ import { Button } from '../../components/ui/button'
 import { Switch } from '../../components/ui/switch'
 import { SearchableMultiSelect } from '../../components/ui/SearchableMultiSelect'
 import { groupLabels, riskLabels } from './domain'
-import type { Grant, GrantView, InstallationDetail, NotificationChannelOption, PermissionLine, ServerOption } from './types'
+import type { Grant, GrantView, InstallationDetail, NotificationChannelOption, PermissionLine, PlanOption, ServerOption, UserOption } from './types'
 
 // initialGrant proposes the narrowest useful grant: nothing is selected for
 // resource-scoped capabilities unless the current grant already holds it.
@@ -18,11 +18,13 @@ function initialGrant(permissions: PermissionLine[], current?: GrantView): Grant
   return out
 }
 
-export function GrantEditor({ detail, grant, servers, channels, envServerIDs, busy, onSave, onRevoke }: {
+export function GrantEditor({ detail, grant, servers, channels, users, plans, envServerIDs, busy, onSave, onRevoke }: {
   detail: InstallationDetail
   grant?: GrantView
   servers: ServerOption[]
   channels: NotificationChannelOption[]
+  users: UserOption[]
+  plans: PlanOption[]
   envServerIDs: string[]
   busy?: boolean
   onSave: (grant: Grant) => void
@@ -36,6 +38,8 @@ export function GrantEditor({ detail, grant, servers, channels, envServerIDs, bu
     if (!on) delete next[line.capability]
     else if (line.resource === 'server') next[line.capability] = { servers: envServerIDs.map(Number).filter(Boolean) }
     else if (line.resource === 'http_host') next[line.capability] = { hosts: [...hosts] }
+    else if (line.resource === 'user') next[line.capability] = { users: [] }
+    else if (line.resource === 'plan') next[line.capability] = { plans: [] }
     else next[line.capability] = {}
     setDraft({ capabilities: next })
   }
@@ -47,6 +51,8 @@ export function GrantEditor({ detail, grant, servers, channels, envServerIDs, bu
     if (line.resource === 'server') return !scope.servers?.length
     if (line.resource === 'http_host') return !scope.hosts?.length
     if (line.resource === 'notification_channel') return !scope.channels?.length
+    if (line.resource === 'user') return !scope.users?.length
+    if (line.resource === 'plan') return !scope.plans?.length
     return false
   })
   const outsideGrant = envServerIDs.filter(id => !Object.values(draft.capabilities).some(scope => scope.servers?.includes(Number(id))))
@@ -86,6 +92,16 @@ export function GrantEditor({ detail, grant, servers, channels, envServerIDs, bu
                 </label>
               })}
             </div>
+          </div>}
+          {scope && line.resource === 'user' && <div className="plugin-scope">
+            <span>允许的用户</span>
+            <SearchableMultiSelect ariaLabel={`${line.label}的用户范围`} placeholder="选择用户" searchPlaceholder="搜索用户" options={users.map(user => ({ value: user.id, label: user.nickname ? `${user.username}（${user.nickname}）` : user.username }))}
+              value={(scope.users || []).map(String)} onChange={next => setScope(line.capability, { users: next.map(Number) })} />
+          </div>}
+          {scope && line.resource === 'plan' && <div className="plugin-scope">
+            <span>允许的套餐</span>
+            <SearchableMultiSelect ariaLabel={`${line.label}的套餐范围`} placeholder="选择套餐" searchPlaceholder="搜索套餐" options={plans.map(plan => ({ value: plan.id, label: plan.enabled ? plan.name : `${plan.name}（已停用）` }))}
+              value={(scope.plans || []).map(String)} onChange={next => setScope(line.capability, { plans: next.map(Number) })} />
           </div>}
           {scope && line.resource === 'notification_channel' && <div className="plugin-scope">
             <span>允许的通知渠道</span>
