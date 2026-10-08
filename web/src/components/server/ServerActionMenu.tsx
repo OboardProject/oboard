@@ -60,8 +60,8 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
     const button = buttonRef.current
     if (!button) return
     const rect = button.getBoundingClientRect()
-    const width = 224
-    const estimatedHeight = Math.min(totalVisibleItems * 36 + visibleGroups.length * 32 + 16, window.innerHeight - 16)
+    const width = 176
+    const estimatedHeight = Math.min(totalVisibleItems * 32 + visibleGroups.length * 24 + 12, window.innerHeight - 16)
     const height = menuRef.current?.offsetHeight || estimatedHeight
     const roomBelow = window.innerHeight - rect.bottom - 8 - 6
     const roomAbove = rect.top - 8 - 6
@@ -166,7 +166,7 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
             position: 'fixed',
             top: menuPosition.top,
             left: menuPosition.left,
-            width: 224,
+            width: 176,
             maxHeight: 'calc(100dvh - 16px)',
             overflowY: 'auto',
           }}
@@ -186,7 +186,6 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
                       role="menuitem"
                       disabled={disabled}
                       title={disabled ? enrolled ? 'Agent 当前离线' : '请先安装并连接 Agent' : item.label}
-                      style={{ minHeight: 44 }}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (disabled) return
