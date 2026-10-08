@@ -29,7 +29,8 @@
 | `capabilities` | 只能取自能力目录（见 [安全模型](security.md)）。 |
 | `http` | 使用 `http.request` 时必填：`hosts`（精确主机名或单个前导 `*.`，最多 32 个，不接受 IP）与 `methods`。 |
 | `resources.servers` | 服务器数量需求与理由，展示给管理员审核。 |
-| `triggers` | `schedule` 允许 interval/cron；`events` 取 `server.online`、`server.offline`，需要 `events.server_status`。 |
+| `pages` | 使用 `ui.page` 时必填，最多 8 页。每页有 `id`、`title`，以及可选 `actions`（最多 8 个）。新增页面或操作算权限扩大。 |
+| `triggers` | `schedule` 允许 interval/cron；`events` 取 `server.online`、`server.offline`，需要 `events.server_status`。界面刷新与按钮不在这里声明。 |
 | `limits` | 只能**降低**主机上限：`timeout`（1s–2m）、`memory_mib`（16–128）、`sdk_calls`（≤1000）、`http_requests`（≤100）、`agent_operations`（≤20）、`log_bytes`（≤256 KiB）。 |
 
 ## 环境变量

@@ -36,5 +36,21 @@ function main(run) {
     oboard.state.set(key, joined)
   }
   if (changes.length) oboard.notifications.send({ title: `${env.TARGET} 路由监控`, body: changes.join('\n') })
+  const rows = results.map(result => [
+    String(result.server || ''),
+    result.skipped ? String(result.skipped) : `${result.loss}%`,
+    result.path ? result.path.join(' > ') : '',
+  ])
+  oboard.ui.publish({
+    page: 'status',
+    document: {
+      title: env.TARGET,
+      body: [
+        { type: 'table', columns: [{ label: '服务器' }, { label: '丢包' }, { label: '路径' }], rows: rows.length ? rows : [['—', '—', '—']] },
+        changes.length ? { type: 'text', text: changes.join('\n') } : { type: 'empty', text: '路径没有变化' },
+        { type: 'button', action: 'recheck', label: '立即复测' },
+      ],
+    },
+  })
   return { target: env.TARGET, results, changes }
 }

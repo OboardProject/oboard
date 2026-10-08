@@ -23,6 +23,8 @@ const (
 	maxHTTPHosts       = 32
 	maxEnvFields       = 64
 	maxCustomEnvFields = 32
+	maxPages           = 8
+	maxPageActions     = 8
 )
 
 const (
@@ -34,6 +36,8 @@ var (
 	pluginIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$`)
 	versionPattern  = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 	envNamePattern  = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
+	pageIDPattern   = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
+	actionIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
 	httpMethods     = map[string]bool{"GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 	supportedEvents = map[string]bool{EventServerOnline: true, EventServerOffline: true}
 )
@@ -52,8 +56,17 @@ type Manifest struct {
 	HTTP         *HTTPScope            `json:"http,omitempty"`
 	Resources    *ResourceRequirements `json:"resources,omitempty"`
 	Environment  []EnvField            `json:"environment,omitempty"`
+	Pages        []PageDeclaration     `json:"pages,omitempty"`
 	Triggers     Triggers              `json:"triggers"`
 	Limits       DeclaredLimits        `json:"limits"`
+}
+
+// PageDeclaration is one operator-facing view hosted on the plugin instance.
+// The plugin fills it by publishing a view document; it does not ship HTML or script.
+type PageDeclaration struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Actions []string `json:"actions,omitempty"`
 }
 
 // HTTPScope declares the hosts and methods http.request may ever reach.
@@ -157,6 +170,9 @@ func ValidateManifest(m *Manifest) error {
 		return err
 	}
 	if err := validateResources(m); err != nil {
+		return err
+	}
+	if err := validatePages(m); err != nil {
 		return err
 	}
 	if err := validateTriggers(m); err != nil {
@@ -306,6 +322,70 @@ func validateResources(m *Manifest) error {
 		return FailField(CodeInvalidManifest, "resources.servers.reason", "reason is at most 256 bytes")
 	}
 	return nil
+}
+
+func validatePages(m *Manifest) error {
+	if len(m.Pages) == 0 {
+		if m.HasCapability(CapUIPage) {
+			return FailField(CodeInvalidManifest, "pages", "ui.page requires at least one page")
+		}
+		m.Pages = nil
+		return nil
+	}
+	if !m.HasCapability(CapUIPage) {
+		return FailField(CodeInvalidManifest, "pages", "pages require the ui.page capability")
+	}
+	if len(m.Pages) > maxPages {
+		return FailField(CodeInvalidManifest, "pages", "declare at most 8 pages")
+	}
+	seen := map[string]bool{}
+	for i := range m.Pages {
+		page := &m.Pages[i]
+		if len(page.ID) > 32 || !pageIDPattern.MatchString(page.ID) {
+			return FailField(CodeInvalidManifest, "pages", "page id must be a short lowercase identifier such as overview")
+		}
+		if seen[page.ID] {
+			return FailField(CodeInvalidManifest, "pages", "duplicate page "+page.ID)
+		}
+		seen[page.ID] = true
+		title := strings.TrimSpace(page.Title)
+		if title == "" || len(title) > 80 || hasControl(title, false) {
+			return FailField(CodeInvalidManifest, "pages", "page title is required and at most 80 bytes")
+		}
+		page.Title = title
+		if len(page.Actions) > maxPageActions {
+			return FailField(CodeInvalidManifest, "pages", "a page declares at most 8 actions")
+		}
+		actions := map[string]bool{}
+		for _, action := range page.Actions {
+			if len(action) > 32 || !actionIDPattern.MatchString(action) || actions[action] {
+				return FailField(CodeInvalidManifest, "pages", "unsupported or duplicate action "+action)
+			}
+			actions[action] = true
+		}
+		if len(page.Actions) == 0 {
+			page.Actions = nil
+		}
+	}
+	return nil
+}
+
+func (m Manifest) Page(id string) (PageDeclaration, bool) {
+	for _, page := range m.Pages {
+		if page.ID == id {
+			return page, true
+		}
+	}
+	return PageDeclaration{}, false
+}
+
+func (p PageDeclaration) HasAction(id string) bool {
+	for _, action := range p.Actions {
+		if action == id {
+			return true
+		}
+	}
+	return false
 }
 
 func validateTriggers(m *Manifest) error {

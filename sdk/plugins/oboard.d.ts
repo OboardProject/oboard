@@ -46,8 +46,10 @@ declare global {
     readonly plugin_id: string
     readonly plugin_version: string
     readonly instance_id: string
-    readonly trigger: 'manual' | 'interval' | 'cron' | 'event'
+    readonly trigger: 'manual' | 'interval' | 'cron' | 'event' | 'ui' | 'action'
     readonly scheduled_at?: string
+    readonly page?: string
+    readonly action?: string
     readonly event?: { type: 'server.online' | 'server.offline'; server_id: ServerID; occurred_at: string }
   }
 
@@ -134,6 +136,20 @@ declare global {
     error_class?: string
   }
 
+  type ViewTone = 'neutral' | 'success' | 'warning' | 'danger'
+  type ViewNode =
+    | { type: 'stack'; children: ViewNode[] }
+    | { type: 'heading'; text: string }
+    | { type: 'text'; text: string }
+    | { type: 'metric'; label: string; value: string; tone?: ViewTone }
+    | { type: 'badge'; text: string; tone?: ViewTone }
+    | { type: 'table'; columns: Array<{ label: string }>; rows: string[][] }
+    | { type: 'binding'; source: 'servers.get' | 'servers.health' | 'servers.metrics'; server: { $env: string } }
+    | { type: 'button'; action: string; label: string }
+    | { type: 'empty'; text: string }
+
+  interface ViewDocument { title?: string; body: ViewNode[] }
+
   type HeaderValue = string | SecretRef
 
   interface HTTPRequestOptions {
@@ -199,6 +215,8 @@ declare global {
     }
     /** notifications.send: granted channels only. */
     readonly notifications: { send(options: { title: string; body?: string; channel_ids?: string[] }): { sent: string[] } }
+    /** ui.page: publish a closed view document for one declared page. */
+    readonly ui: { publish(options: { page: string; document: ViewDocument }): { page: string; published_at: string } }
     /** Pure computation. HMAC with a SecretRef key requires secrets.use. */
     readonly crypto: {
       sha256(data: string, options?: DigestOptions): string

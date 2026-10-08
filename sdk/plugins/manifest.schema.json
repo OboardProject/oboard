@@ -63,7 +63,8 @@
           "state.write",
           "secrets.use",
           "notifications.send",
-          "events.server_status"
+          "events.server_status",
+          "ui.page"
         ]
       }
     },
@@ -277,6 +278,26 @@
               },
               "equals": {}
             }
+          }
+        }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Required with ui.page. Each page is a closed view rendered on the plugin instance page.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title"],
+        "properties": {
+          "id": { "type": "string", "maxLength": 32, "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "actions": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": { "type": "string", "maxLength": 32, "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$" }
           }
         }
       }

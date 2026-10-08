@@ -59,6 +59,8 @@ type RunContext struct {
 	InstanceID    string          `json:"instance_id"`
 	Trigger       string          `json:"trigger"`
 	ScheduledAt   string          `json:"scheduled_at,omitempty"`
+	Page          string          `json:"page,omitempty"`
+	Action        string          `json:"action,omitempty"`
 	Event         json.RawMessage `json:"event,omitempty"`
 }
 

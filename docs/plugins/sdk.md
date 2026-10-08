@@ -13,7 +13,7 @@ async function main(run) {
 
 ## `run`
 
-`run_id`、`plugin_id`、`plugin_version`、`instance_id`、`trigger`（`manual` / `interval` / `cron` / `event`）、`scheduled_at`，事件触发时还有 `event: { type, server_id, occurred_at }`。
+`run_id`、`plugin_id`、`plugin_version`、`instance_id`、`trigger`（`manual` / `interval` / `cron` / `event` / `ui` / `action`）、`scheduled_at`。界面刷新带 `page`，按钮再带 `action`。事件触发时还有 `event: { type, server_id, occurred_at }`。
 
 ## `env`
 
@@ -44,6 +44,7 @@ async function main(run) {
 | `state.get/list` | `state.read` | 实例私有键值 |
 | `state.set/delete/compareAndSwap` | `state.write` | `compareAndSwap(key, expectedVersion, value)`，`0` 表示键不存在；冲突返回 `STATE_CONFLICT` |
 | `notifications.send({title, body, channel_ids?})` | `notifications.send` | 只发往授权的通知渠道 |
+| `ui.publish({page, document})` | `ui.page` | 发布一份封闭视图文档，覆盖该实例该页的最新快照 |
 | `crypto.*` | 无（带 `SecretRef` 的 HMAC 需要 `secrets.use`） | `sha256`、`sha1`、`hmacSha256`、`hmacSha1`、`base64Encode/Decode`、`hexEncode/Decode`、`randomBytes`、`uuid` |
 
 网络诊断由目标服务器上的 Agent 以原生 Go 套接字执行，目标必须是公网域名或公网 IP；服务器离线时立即返回 `SERVER_OFFLINE`，正在执行其他任务时返回 `SERVER_BUSY`。Windows Agent 只支持 `tcpProbe`、`dnsLookup`、`httpProbe`。
@@ -62,6 +63,30 @@ const response = oboard.http.request({
 ```
 
 只允许清单 `http.hosts` 中且被授权的主机与方法，只接受 HTTPS。每次连接都在拨号时解析并校验公网地址（防 DNS 重绑定），拒绝私网、回环、链路本地、云元数据、NAT64 前缀，以及主控自身与已登记节点的地址。重定向默认关闭，开启后最多 3 次且逐跳重新校验；请求带密钥时重定向强制关闭。请求体、响应体、耗时与每分钟次数均有上限。
+
+## 界面
+
+页面只出现在插件实例对话框的「界面」标签。清单用 `pages` 声明 `id`、`title` 和可选 `actions`，并声明能力 `ui.page`。插件不能提供 HTML、CSS 或脚本。
+
+`oboard.ui.publish({ page, document })` 在任意一次执行里覆盖该页快照。文档是纯文本块：`stack`、`heading`、`text`、`metric`、`badge`、`table`、`binding`、`button`、`empty`。单文档 ≤64 KiB。校验失败返回 `INVALID_ARGUMENT`，不覆盖上一份成功快照。密钥明文会被遮盖。
+
+`binding` 只读当前数据，不启动 Runner：`source` 为 `servers.get`、`servers.health` 或 `servers.metrics`，`server` 只能写成 `{ "$env": "变量名" }`，且该变量必须是单个服务器。面板读取时按清单、实例授权和当前操作员的资源范围解析。网络探测、外部 HTTPS 和通知的结果要写进快照，不能在打开页面时现场发出。
+
+打开页面不会运行插件。操作员点「刷新」才排队 `trigger: "ui"` 的执行，`run.page` 是页面 id。`button` 的 `action` 必须写在该页的 `actions` 里；点击只排队 `trigger: "action"`，并带上 `run.action`。按钮没有自由输入。
+
+```js
+oboard.ui.publish({
+  page: 'overview',
+  document: {
+    title: '巡检',
+    body: [
+      { type: 'metric', label: '丢包', value: '12%', tone: 'warning' },
+      { type: 'binding', source: 'servers.metrics', server: { $env: 'TARGET_SERVER' } },
+      { type: 'button', action: 'recheck', label: '立即复测' },
+    ],
+  },
+})
+```
 
 ## 日志
 

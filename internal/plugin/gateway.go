@@ -126,7 +126,7 @@ func (s *Service) authorizeCall(ctx context.Context, request pluginrpc.CallReque
 	if parseErr != nil || !grant.Allows(spec.Name) {
 		return call, Fail(CodeCapabilityDenied, spec.Name+" is not granted")
 	}
-	if run.Trigger == model.PluginTriggerManual {
+	if operatorTriggered(run.Trigger) {
 		if failure := s.checkCaller(ctx, run); failure != nil {
 			return call, failure
 		}
@@ -159,7 +159,7 @@ func (s *Service) checkCaller(ctx context.Context, run model.PluginRun) *Error {
 }
 
 func (s *Service) callerAllowsServer(ctx context.Context, run model.PluginRun, serverID int64) bool {
-	if run.Trigger != model.PluginTriggerManual {
+	if !operatorTriggered(run.Trigger) {
 		return true
 	}
 	var detail TriggerDetail
@@ -211,6 +211,8 @@ func (s *Service) dispatch(ctx context.Context, call callContext, raw json.RawMe
 		return s.handleHMAC(ctx, call, raw)
 	case CapNotificationsSend:
 		return s.handleNotify(ctx, call, raw)
+	case CapUIPage:
+		return s.handlePublish(ctx, call, raw)
 	default:
 		return nil, "", nil, Fail(CodeUnsupportedCapability, "unsupported capability")
 	}

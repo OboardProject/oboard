@@ -40,7 +40,7 @@ export const runTone = (status: string): 'success' | 'warning' | 'destructive' |
 }
 
 export const triggerLabels: Record<string, string> = {
-  manual: '手动', interval: '间隔', cron: 'Cron', event: '事件',
+  manual: '手动', interval: '间隔', cron: 'Cron', event: '事件', ui: '界面刷新', action: '界面操作',
 }
 
 export const eventLabels: Record<string, string> = {
@@ -52,7 +52,7 @@ export const riskLabels: Record<Risk, string> = { low: '低风险', medium: '中
 
 export const groupLabels: Record<string, string> = {
   servers: '服务器', network: '网络诊断', http: '外部 HTTP', state: '插件状态',
-  secrets: '密钥', notifications: '通知', events: '事件',
+  secrets: '密钥', notifications: '通知', events: '事件', ui: '界面',
 }
 
 export const envTypeLabels: Record<string, string> = {

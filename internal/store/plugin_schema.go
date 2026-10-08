@@ -33,6 +33,35 @@ var retiredPluginTables = []string{
 	"plugins",
 }
 
+const pluginRunsTableSQL = `create table if not exists plugin_runs (
+		id integer primary key autoincrement,
+		uuid text not null unique,
+		installation_id integer not null,
+		instance_id integer not null,
+		package_id integer not null,
+		plugin_key text not null,
+		plugin_version text not null,
+		trigger text not null check(trigger in ('manual','interval','cron','event','ui','action')),
+		trigger_json text not null default '{}',
+		caller_principal text not null default '',
+		idempotency_key text not null unique,
+		status text not null check(status in ('queued','running','succeeded','failed','timeout','cancelled','permission_denied','resource_limit')),
+		error_code text not null default '',
+		error_message text not null default '',
+		cancel_requested integer not null default 0,
+		queued_at text not null,
+		started_at text,
+		finished_at text,
+		capability_call_count integer not null default 0,
+		http_call_count integer not null default 0,
+		agent_operation_count integer not null default 0,
+		result_json text not null default '',
+		lease_owner text not null default '',
+		lease_generation integer not null default 0,
+		lease_until text,
+		recovery_generation integer not null default 1
+	)`
+
 var pluginSchemaStatements = []string{
 	`create table if not exists plugin_installations (
 		id integer primary key autoincrement,
@@ -129,37 +158,18 @@ var pluginSchemaStatements = []string{
 	)`,
 	`create index if not exists idx_plugin_schedules_due on plugin_schedules(enabled, next_due_at)`,
 	`create index if not exists idx_plugin_schedules_instance on plugin_schedules(instance_id)`,
-	`create table if not exists plugin_runs (
-		id integer primary key autoincrement,
-		uuid text not null unique,
-		installation_id integer not null,
-		instance_id integer not null,
-		package_id integer not null,
-		plugin_key text not null,
-		plugin_version text not null,
-		trigger text not null check(trigger in ('manual','interval','cron','event')),
-		trigger_json text not null default '{}',
-		caller_principal text not null default '',
-		idempotency_key text not null unique,
-		status text not null check(status in ('queued','running','succeeded','failed','timeout','cancelled','permission_denied','resource_limit')),
-		error_code text not null default '',
-		error_message text not null default '',
-		cancel_requested integer not null default 0,
-		queued_at text not null,
-		started_at text,
-		finished_at text,
-		capability_call_count integer not null default 0,
-		http_call_count integer not null default 0,
-		agent_operation_count integer not null default 0,
-		result_json text not null default '',
-		lease_owner text not null default '',
-		lease_generation integer not null default 0,
-		lease_until text,
-		recovery_generation integer not null default 1
-	)`,
+	pluginRunsTableSQL,
 	`create index if not exists idx_plugin_runs_queue on plugin_runs(status, queued_at, id)`,
 	`create index if not exists idx_plugin_runs_instance on plugin_runs(instance_id, queued_at desc)`,
 	`create index if not exists idx_plugin_runs_installation on plugin_runs(installation_id, queued_at desc)`,
+	`create table if not exists plugin_page_snapshots (
+		instance_id integer not null references plugin_instances(id) on delete cascade,
+		page_id text not null,
+		document_json text not null,
+		run_uuid text not null default '',
+		published_at text not null,
+		primary key(instance_id, page_id)
+	)`,
 	`create table if not exists plugin_run_logs (
 		run_id integer not null references plugin_runs(id) on delete cascade,
 		seq integer not null,
@@ -202,6 +212,9 @@ var pluginSettingDefaults = map[string]string{
 // model. Data of the retired plugin runtime (code, grants, secrets, triggers,
 // state, runs and webhooks) is dropped; it can never execute again.
 func (s *Store) migratePluginSchema(ctx context.Context) error {
+	if err := s.widenPluginRunTriggers(ctx); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -231,6 +244,55 @@ func (s *Store) migratePluginSchema(ctx context.Context) error {
 	if marker != model.PluginModelCurrent {
 		if _, err := tx.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at`, model.PluginSettingModel, model.PluginModelCurrent, ts); err != nil {
 			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// widenPluginRunTriggers rebuilds capability-model plugin_runs whose check
+// predates the ui and action triggers. Retired-runtime tables are left for
+// dropRetiredPluginRuntime. The rebuild keeps every existing run row.
+func (s *Store) widenPluginRunTriggers(ctx context.Context) error {
+	var ddl string
+	err := s.db.QueryRowContext(ctx, `select sql from sqlite_master where type='table' and name='plugin_runs'`).Scan(&ddl)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("plugin schema: %w", err)
+	}
+	if !strings.Contains(ddl, "plugin_version") || !strings.Contains(ddl, "idempotency_key") || strings.Contains(ddl, "'ui'") {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `pragma foreign_keys=off`); err != nil {
+		return fmt.Errorf("plugin schema: %w", err)
+	}
+	defer func() { _, _ = s.db.ExecContext(ctx, `pragma foreign_keys=on`) }()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	create := strings.Replace(pluginRunsTableSQL, "create table if not exists plugin_runs", "create table plugin_runs__next", 1)
+	if _, err := tx.ExecContext(ctx, create); err != nil {
+		return fmt.Errorf("plugin schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `insert into plugin_runs__next(`+pluginRunColumns+`) select `+pluginRunColumns+` from plugin_runs`); err != nil {
+		return fmt.Errorf("plugin schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `drop table plugin_runs`); err != nil {
+		return fmt.Errorf("plugin schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `alter table plugin_runs__next rename to plugin_runs`); err != nil {
+		return fmt.Errorf("plugin schema: %w", err)
+	}
+	for _, index := range []string{
+		`create index idx_plugin_runs_queue on plugin_runs(status, queued_at, id)`,
+		`create index idx_plugin_runs_instance on plugin_runs(instance_id, queued_at desc)`,
+		`create index idx_plugin_runs_installation on plugin_runs(installation_id, queued_at desc)`,
+	} {
+		if _, err := tx.ExecContext(ctx, index); err != nil {
+			return fmt.Errorf("plugin schema: %w", err)
 		}
 	}
 	return tx.Commit()

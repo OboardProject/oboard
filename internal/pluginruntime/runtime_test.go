@@ -227,3 +227,10 @@ func TestRuntimeSecretHMACIsComputedByTheGateway(t *testing.T) {
 		t.Fatalf("secret HMAC must be delegated, got %v", calls)
 	}
 }
+
+func TestRuntimePublishesViewThroughSDK(t *testing.T) {
+	outcome, calls, _ := execute(t, `function main() { return oboard.ui.publish({ page: 'overview', document: { body: [{ type: 'text', text: 'ok' }] } }) }`, nil, nil)
+	if outcome.Code != "" || len(calls) != 1 || calls[0].method != "ui.publish" || !strings.Contains(calls[0].arguments, `"page":"overview"`) {
+		t.Fatalf("publish was not delegated: %+v %v", outcome, calls)
+	}
+}

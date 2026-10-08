@@ -41,8 +41,39 @@ export interface Manifest {
   http?: { hosts: string[]; methods: string[] }
   resources?: { servers?: { min: number; max?: number; reason?: string } }
   environment?: EnvField[]
+  pages?: PluginPageDeclaration[]
   triggers: { schedule: boolean; events?: string[] }
   limits: Record<string, unknown>
+}
+
+export interface PluginPageDeclaration {
+  id: string
+  title: string
+  actions?: string[]
+}
+
+export type ViewTone = 'neutral' | 'success' | 'warning' | 'danger'
+
+export type ViewNode =
+  | { type: 'stack'; children: ViewNode[] }
+  | { type: 'heading'; text: string }
+  | { type: 'text'; text: string }
+  | { type: 'metric'; label: string; value: string; tone?: ViewTone }
+  | { type: 'badge'; text: string; tone?: ViewTone }
+  | { type: 'table'; columns: Array<{ label: string }>; rows: string[][] }
+  | { type: 'binding'; source: string; server: { $env: string }; data?: Record<string, unknown>; error?: { code: string; message: string } }
+  | { type: 'button'; action: string; label: string }
+  | { type: 'empty'; text: string }
+
+export interface ViewDocument { title?: string; body: ViewNode[] }
+
+export interface InstancePage {
+  id: string
+  title: string
+  actions: string[]
+  published_at?: string
+  run_id?: string
+  document?: ViewDocument
 }
 
 export interface PermissionLine {
@@ -174,6 +205,8 @@ export interface PermissionDiff {
   removed_environment: string[]
   changed_environment: string[]
   new_required: string[]
+  added_pages: string[]
+  added_actions: string[]
   resources_expanded: boolean
   expanded: boolean
 }

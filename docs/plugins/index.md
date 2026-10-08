@@ -12,7 +12,7 @@
 ## 文档
 
 1. [清单与环境变量](manifest.md)：`manifest.json`、13 种环境变量类型、条件字段、自定义变量与三阶段校验。
-2. [SDK 参考](sdk.md)：`main(run)`、`oboard.*`、`env`、`SecretRef`、加密工具与错误码。
+2. [SDK 参考](sdk.md)：`main(run)`、`oboard.*`、`env`、`SecretRef`、界面快照、加密工具与错误码。
 3. [安全模型](security.md)：隔离 Runner、能力目录、授权与资源范围、HTTP 网关、Agent 诊断、密钥与审计。
 4. [打包、签名与安装](packaging.md)：`.obplugin` 格式、发布者签名、`oboard-plugin-tool`、GitHub 安装、更新与权限差异。
 5. [运维](operations.md)：安装运行环境、实例、计划与事件、执行记录、自动暂停、备份恢复。

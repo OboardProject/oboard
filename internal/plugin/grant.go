@@ -249,6 +249,8 @@ type PermissionDiff struct {
 	RemovedEnvironment  []string `json:"removed_environment"`
 	ChangedEnvironment  []string `json:"changed_environment"`
 	NewRequired         []string `json:"new_required"`
+	AddedPages          []string `json:"added_pages"`
+	AddedActions        []string `json:"added_actions"`
 	ResourcesExpanded   bool     `json:"resources_expanded"`
 	Expanded            bool     `json:"expanded"`
 }
@@ -258,6 +260,7 @@ func DiffPermissions(previous *Manifest, next Manifest) PermissionDiff {
 		AddedCapabilities: []string{}, RemovedCapabilities: []string{}, AddedHosts: []string{}, RemovedHosts: []string{},
 		AddedMethods: []string{}, AddedEvents: []string{}, AddedSecrets: []string{}, AddedEnvironment: []string{},
 		RemovedEnvironment: []string{}, ChangedEnvironment: []string{}, NewRequired: []string{},
+		AddedPages: []string{}, AddedActions: []string{},
 	}
 	var prev Manifest
 	if previous != nil {
@@ -310,12 +313,33 @@ func DiffPermissions(previous *Manifest, next Manifest) PermissionDiff {
 		}
 	}
 	sort.Strings(diff.RemovedEnvironment)
+	prevPages := map[string]map[string]bool{}
+	for _, page := range prev.Pages {
+		actions := map[string]bool{}
+		for _, action := range page.Actions {
+			actions[action] = true
+		}
+		prevPages[page.ID] = actions
+	}
+	for _, page := range next.Pages {
+		old, existed := prevPages[page.ID]
+		if !existed {
+			diff.AddedPages = append(diff.AddedPages, page.ID)
+		}
+		for _, action := range page.Actions {
+			if !existed || !old[action] {
+				diff.AddedActions = append(diff.AddedActions, page.ID+"/"+action)
+			}
+		}
+	}
+	sort.Strings(diff.AddedPages)
+	sort.Strings(diff.AddedActions)
 	prevReq, nextReq := manifestServerRequirement(prev), manifestServerRequirement(next)
 	if nextReq != nil && (prevReq == nil || nextReq.Min > prevReq.Min || nextReq.Max > prevReq.Max && prevReq.Max != 0 || nextReq.Max == 0 && prevReq.Max != 0) {
 		diff.ResourcesExpanded = previous != nil
 	}
 	diff.Expanded = len(diff.AddedCapabilities) > 0 || len(diff.AddedHosts) > 0 || len(diff.AddedMethods) > 0 ||
-		len(diff.AddedEvents) > 0 || len(diff.AddedSecrets) > 0 || diff.ResourcesExpanded
+		len(diff.AddedEvents) > 0 || len(diff.AddedSecrets) > 0 || len(diff.AddedPages) > 0 || len(diff.AddedActions) > 0 || diff.ResourcesExpanded
 	return diff
 }
 

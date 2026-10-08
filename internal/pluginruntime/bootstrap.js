@@ -140,6 +140,7 @@
       compareAndSwap: function (key, expectedVersion, value) { return call('state.compareAndSwap', { key: String(key), expected_version: expectedVersion, value: value === undefined ? null : value }); }
     }),
     notifications: freeze({ send: function (opts) { return call('notifications.send', options(opts)); } }),
+    ui: freeze({ publish: function (opts) { return call('ui.publish', options(opts)); } }),
     crypto: crypto
   });
 

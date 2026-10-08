@@ -487,6 +487,26 @@ func (s *Server) apiV1PluginInstance(w http.ResponseWriter, r *http.Request) {
 		respond(s.plugins.SetGrant(ctx, principal, id, input.ExpectedRevision, input.Grant))
 	case parts[1] == "grant" && r.Method == http.MethodDelete:
 		respond(map[string]any{"revoked": true}, s.plugins.RevokeGrant(ctx, principal, id))
+	case parts[1] == "pages" && len(parts) == 2 && r.Method == http.MethodGet:
+		respond(s.plugins.ListInstancePages(ctx, principal, id))
+	case parts[1] == "pages" && len(parts) == 4 && parts[3] == "refresh" && r.Method == http.MethodPost:
+		var input struct {
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		run, err := s.plugins.RefreshInstancePage(ctx, principal, id, parts[2], input.IdempotencyKey)
+		respond(map[string]any{"run": run}, err)
+	case parts[1] == "pages" && len(parts) == 5 && parts[3] == "actions" && r.Method == http.MethodPost:
+		var input struct {
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		run, err := s.plugins.RunInstancePageAction(ctx, principal, id, parts[2], parts[4], input.IdempotencyKey)
+		respond(map[string]any{"run": run}, err)
 	case parts[1] == "runs" && r.Method == http.MethodPost:
 		var input struct {
 			IdempotencyKey string `json:"idempotency_key"`

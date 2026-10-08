@@ -1,6 +1,6 @@
 import type {
   AuditEvent, Catalog, CustomVar, EditorDiagnostics, Grant, Installation, InstallationDetail, InstanceDetail,
-  PackagePreview, PackageSource, RequestFn, Run, RunLog, RuntimeStatus, Schedule, ServerOption, StateEntry,
+  InstancePage, PackagePreview, PackageSource, RequestFn, Run, RunLog, RuntimeStatus, Schedule, ServerOption, StateEntry,
 } from './types'
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
@@ -51,6 +51,11 @@ export const createSchedule = (request: RequestFn, id: number, input: Partial<Sc
 export const updateSchedule = (request: RequestFn, id: number, input: Partial<Schedule>) =>
   request<Schedule>(`/plugin-schedules/${id}`, { method: 'PATCH', ...json(input) })
 export const deleteSchedule = (request: RequestFn, id: number) => request(`/plugin-schedules/${id}`, { method: 'DELETE' })
+export const listPages = (request: RequestFn, id: number) => request<{ pages: InstancePage[] }>(`/plugin-instances/${id}/pages`)
+export const refreshPage = (request: RequestFn, id: number, page: string, idempotencyKey: string) =>
+  request<{ run: Run }>(`/plugin-instances/${id}/pages/${encodeURIComponent(page)}/refresh`, { method: 'POST', ...json({ idempotency_key: idempotencyKey }) })
+export const runPageAction = (request: RequestFn, id: number, page: string, action: string, idempotencyKey: string) =>
+  request<{ run: Run }>(`/plugin-instances/${id}/pages/${encodeURIComponent(page)}/actions/${encodeURIComponent(action)}`, { method: 'POST', ...json({ idempotency_key: idempotencyKey }) })
 export const listState = (request: RequestFn, id: number) =>
   request<{ entries: StateEntry[]; usage: InstanceDetail['state'] }>(`/plugin-instances/${id}/state`)
 export const clearState = (request: RequestFn, id: number, key = '') =>

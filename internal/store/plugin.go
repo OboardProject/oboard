@@ -1038,6 +1038,37 @@ func (s *Store) ListPluginRunLogs(ctx context.Context, runID, afterSeq int64, li
 
 // --- audit ---
 
+func (s *Store) UpsertPluginPageSnapshot(ctx context.Context, item model.PluginPageSnapshot) error {
+	published := item.PublishedAt.UTC().Format(time.RFC3339Nano)
+	if item.PublishedAt.IsZero() {
+		published = now()
+	}
+	_, err := s.db.ExecContext(ctx, `insert into plugin_page_snapshots(instance_id,page_id,document_json,run_uuid,published_at) values(?,?,?,?,?)
+		on conflict(instance_id,page_id) do update set document_json=excluded.document_json,run_uuid=excluded.run_uuid,published_at=excluded.published_at`,
+		item.InstanceID, item.PageID, string(item.DocumentJSON), item.RunUUID, published)
+	return err
+}
+
+func (s *Store) ListPluginPageSnapshots(ctx context.Context, instanceID int64) ([]model.PluginPageSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `select instance_id,page_id,document_json,run_uuid,published_at from plugin_page_snapshots where instance_id=? order by page_id`, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.PluginPageSnapshot{}
+	for rows.Next() {
+		var item model.PluginPageSnapshot
+		var document, published string
+		if err := rows.Scan(&item.InstanceID, &item.PageID, &document, &item.RunUUID, &published); err != nil {
+			return nil, err
+		}
+		item.DocumentJSON = json.RawMessage(document)
+		item.PublishedAt = parseTime(published)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) InsertPluginAuditEvent(ctx context.Context, item model.PluginAuditEvent) error {
 	_, err := s.db.ExecContext(ctx, `insert into plugin_audit_events(created_at,installation_id,instance_id,plugin_key,plugin_version,run_uuid,capability,resource,result,error_code,duration_ms,detail_json) values(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now(), item.InstallationID, item.InstanceID, item.PluginKey, item.PluginVersion, item.RunUUID, item.Capability, item.Resource, item.Result, item.ErrorCode, item.DurationMS, string(orJSONObject(item.DetailJSON)))

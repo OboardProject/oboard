@@ -8,16 +8,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import * as api from './api'
 import { EnvironmentForm } from './EnvironmentForm'
 import { GrantEditor } from './GrantEditor'
+import { PageView } from './PageView'
 import { ScheduleEditor } from './ScheduleEditor'
 import {
   describeError, errorIssues, errorMessage, formatBytes, formatTime, instanceStatusLabels, instanceStatusTone,
   issuesByField, newIdempotencyKey, runStatusLabels, runTone, triggerLabels,
 } from './domain'
 import type {
-  AuditEvent, CustomVar, EnvType, Grant, InstallationDetail, InstanceDetail, NotificationChannelOption, RequestFn, Run, ServerOption, StateEntry, ToastTone,
+  AuditEvent, CustomVar, EnvType, Grant, InstallationDetail, InstanceDetail, InstancePage, NotificationChannelOption, RequestFn, Run, ServerOption, StateEntry, ToastTone,
 } from './types'
 
-type View = 'config' | 'grant' | 'schedules' | 'runs' | 'state' | 'activity'
+type View = 'config' | 'grant' | 'schedules' | 'runs' | 'state' | 'activity' | 'pages'
 
 export interface InstanceDialogProps {
   instanceID: number
@@ -56,6 +57,8 @@ export function InstanceDialog(props: InstanceDialogProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [runs, setRuns] = useState<Run[]>([])
+  const [pages, setPages] = useState<InstancePage[]>([])
+  const [pageID, setPageID] = useState('')
   const [state, setState] = useState<StateEntry[]>([])
   const [audit, setAudit] = useState<AuditEvent[]>([])
   const [secretName, setSecretName] = useState('')
@@ -77,9 +80,44 @@ export function InstanceDialog(props: InstanceDialogProps) {
   useEffect(() => { void load() }, [load])
   useEffect(() => {
     if (view === 'runs') void api.listInstanceRuns(request, instanceID).then(page => setRuns(page.runs || []), e => setError(errorMessage(e, '读取执行记录失败')))
+    if (view === 'pages') void api.listPages(request, instanceID).then(page => {
+      const items = page.pages || []
+      setPages(items)
+      setPageID(current => items.some(item => item.id === current) ? current : (items[0]?.id || ''))
+      setError('')
+    }, e => setError(errorMessage(e, '读取界面失败')))
     if (view === 'state') void api.listState(request, instanceID).then(page => setState(page.entries || []), e => setError(errorMessage(e, '读取状态失败')))
     if (view === 'activity') void api.listAudit(request, instanceID).then(page => setAudit(page.events || []), e => setError(errorMessage(e, '读取活动失败')))
   }, [view, instanceID, request])
+
+  const reloadPages = async () => {
+    const listed = await api.listPages(request, instanceID)
+    const items = listed.pages || []
+    setPages(items)
+    setPageID(current => items.some(item => item.id === current) ? current : (items[0]?.id || ''))
+  }
+
+  const submitPageRun = async (queue: () => Promise<{ run: Run }>, success: string) => {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await queue()
+      notify(success, 'success')
+      onOpenRun(result.run.id)
+      setBusy(false)
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
+        const current = await api.getRun(request, result.run.id)
+        if (current.run.status !== 'queued' && current.run.status !== 'running') {
+          await reloadPages()
+          return
+        }
+      }
+    } catch (e) {
+      setError(errorMessage(e, '操作失败'))
+      setBusy(false)
+    }
+  }
 
   const act = async (action: () => Promise<void>, success?: string) => {
     setBusy(true)
@@ -124,6 +162,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
           <TabsTrigger value="grant">权限</TabsTrigger>
           <TabsTrigger value="schedules">计划</TabsTrigger>
           <TabsTrigger value="runs">执行</TabsTrigger>
+          {!!manifest?.pages?.length && <TabsTrigger value="pages">界面</TabsTrigger>}
           <TabsTrigger value="state">存储</TabsTrigger>
           <TabsTrigger value="activity">活动</TabsTrigger>
         </TabsList>
@@ -163,6 +202,12 @@ export function InstanceDialog(props: InstanceDialogProps) {
               <Badge variant={runTone(run.status)}>{runStatusLabels[run.status] || run.status}</Badge>
             </button></li>)}
           </ul>}
+        </TabsContent>
+        <TabsContent value="pages">
+          {pages.length > 0 ? <PageView pages={pages} pageID={pageID} onSelect={setPageID} canExecute={canExecute && runnable} busy={busy}
+            onRefresh={page => void submitPageRun(() => api.refreshPage(request, instance.id, page.id, newIdempotencyKey('ui')), '已提交刷新')}
+            onAction={(page, action) => void submitPageRun(() => api.runPageAction(request, instance.id, page.id, action, newIdempotencyKey('action')), '已提交操作')} />
+            : !error && <p className="text-sm text-muted-foreground">还没有可展示的界面。</p>}
         </TabsContent>
         <TabsContent value="state">
           <p className="plugin-env-help">已用 {instance.state.keys}/{instance.state.max_keys} 个键 · {formatBytes(instance.state.bytes)}/{formatBytes(instance.state.max_bytes)}</p>

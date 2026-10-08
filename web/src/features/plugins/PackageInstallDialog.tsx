@@ -32,6 +32,7 @@ function DiffList({ diff }: { diff: PermissionDiff }) {
     ['移除 HTTP 主机', diff.removed_hosts], ['新增 HTTP 方法', diff.added_methods], ['新增事件', diff.added_events],
     ['新增密钥', diff.added_secrets], ['新增变量', diff.added_environment], ['移除变量', diff.removed_environment],
     ['变量类型变化', diff.changed_environment], ['新增必填项', diff.new_required],
+    ['新增页面', diff.added_pages], ['新增操作', diff.added_actions],
   ]
   const shown = rows.filter(([, items]) => items?.length)
   if (!shown.length && !diff.resources_expanded) return <p className="text-sm text-muted-foreground">权限与配置项没有变化。</p>

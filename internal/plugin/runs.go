@@ -27,7 +27,18 @@ type TriggerDetail struct {
 	ScheduledAt string         `json:"scheduled_at,omitempty"`
 	Event       *EventDetail   `json:"event,omitempty"`
 	Caller      *CallerRef     `json:"caller,omitempty"`
+	Page        string         `json:"page,omitempty"`
+	Action      string         `json:"action,omitempty"`
 	Extra       map[string]any `json:"-"`
+}
+
+func operatorTriggered(trigger string) bool {
+	switch trigger {
+	case model.PluginTriggerManual, model.PluginTriggerUI, model.PluginTriggerAction:
+		return true
+	default:
+		return false
+	}
 }
 
 type EventDetail struct {
@@ -231,7 +242,7 @@ func (s *Service) buildLease(ctx context.Context, run model.PluginRun, settings 
 	}
 	var detail TriggerDetail
 	_ = json.Unmarshal(run.TriggerJSON, &detail)
-	runContext := pluginrpc.RunContext{RunID: run.UUID, PluginID: run.PluginKey, PluginVersion: run.PluginVersion, InstanceID: strconv.FormatInt(instance.ID, 10), Trigger: run.Trigger, ScheduledAt: detail.ScheduledAt}
+	runContext := pluginrpc.RunContext{RunID: run.UUID, PluginID: run.PluginKey, PluginVersion: run.PluginVersion, InstanceID: strconv.FormatInt(instance.ID, 10), Trigger: run.Trigger, ScheduledAt: detail.ScheduledAt, Page: detail.Page, Action: detail.Action}
 	if detail.Event != nil {
 		runContext.Event = mustMarshal(detail.Event)
 	}

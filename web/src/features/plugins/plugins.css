@@ -133,6 +133,29 @@
 .plugin-issue-list { display: grid; gap: 6px; margin-top: var(--space-2); font-size: 12px; color: var(--color-danger); }
 .plugin-issue-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); overflow-wrap: anywhere; }
 
+.plugin-view { display: grid; gap: var(--space-3); min-width: 0; }
+.plugin-page-switch { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.plugin-page-switch button { padding: 6px 12px; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--text-secondary); cursor: pointer; transition: background var(--duration-menu) var(--ease-standard), transform var(--duration-menu) cubic-bezier(0.175, 0.885, 0.32, 1.5); }
+.plugin-page-switch button.active { background: var(--bg-control); color: var(--text-primary); }
+.plugin-page-switch button:active { transform: scale(0.97) translateY(1px); }
+.plugin-page-switch button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.plugin-view-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.plugin-view-body { display: grid; gap: var(--space-3); min-width: 0; }
+.plugin-view-title { font-size: 16px; font-weight: 650; color: var(--text-primary); }
+.plugin-view-stack { display: grid; gap: var(--space-3); min-width: 0; }
+.plugin-view-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); font-size: var(--text-data-size); }
+.plugin-metric { display: grid; gap: 2px; min-width: 0; padding: var(--space-3); border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); }
+.plugin-metric span { font-size: 12px; color: var(--text-muted); }
+.plugin-metric strong { overflow-wrap: anywhere; color: var(--text-primary); }
+.plugin-metric[data-tone="success"] strong { color: var(--color-success); }
+.plugin-metric[data-tone="warning"] strong { color: var(--color-warning); }
+.plugin-metric[data-tone="danger"] strong { color: var(--color-danger); }
+.plugin-view-table-wrap { overflow-x: auto; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.plugin-view-table { width: 100%; border-collapse: collapse; font-size: var(--text-data-size); }
+.plugin-view-table th, .plugin-view-table td { padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.plugin-view-table th { color: var(--text-muted); font-weight: 600; background: var(--bg-control); }
+.plugin-view-table td { color: var(--text-primary); border-top: 1px solid var(--border-color); }
+
 @media (max-width: 640px) {
   .plugin-custom-row-head { grid-template-columns: minmax(0, 1fr) auto; }
   .plugin-custom-row-head > :nth-child(2) { grid-column: 1 / -1; grid-row: 2; }

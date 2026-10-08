@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -152,6 +153,59 @@ func TestRetiredPluginRuntimeUpgradesToCapabilityModel(t *testing.T) {
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
+		}
+	}
+}
+
+func TestPluginPageSchemaUpgradesPreviousRuns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `pragma foreign_keys=off`); err != nil {
+		t.Fatal(err)
+	}
+	oldRuns := strings.Replace(pluginRunsTableSQL, "create table if not exists plugin_runs", "create table plugin_runs", 1)
+	oldRuns = strings.Replace(oldRuns, `,'ui','action'`, "", 1)
+	for _, stmt := range []string{
+		`drop table plugin_runs`,
+		oldRuns,
+		`insert into plugin_runs(uuid,installation_id,instance_id,package_id,plugin_key,plugin_version,trigger,idempotency_key,status,queued_at,recovery_generation) values('kept-run',1,1,1,'acme.demo','1.0.0','manual','key-1','queued','2026-10-01T00:00:00Z',1)`,
+		`drop table plugin_page_snapshots`,
+		`pragma foreign_keys=on`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 2; pass++ {
+		s, err = Open(path)
+		if err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		var ddl, uuid string
+		if err := s.db.QueryRowContext(ctx, `select sql from sqlite_master where type='table' and name='plugin_runs'`).Scan(&ddl); err != nil || !strings.Contains(ddl, "'ui'") {
+			t.Fatalf("pass %d: trigger check was not widened: %s %v", pass, ddl, err)
+		}
+		if err := s.db.QueryRowContext(ctx, `select uuid from plugin_runs where trigger='manual'`).Scan(&uuid); err != nil || uuid != "kept-run" {
+			t.Fatalf("pass %d: previous run was not preserved: %s %v", pass, uuid, err)
+		}
+		var snapshots int
+		if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name='plugin_page_snapshots'`).Scan(&snapshots); err != nil || snapshots != 1 {
+			t.Fatalf("pass %d: snapshot table missing (%d, %v)", pass, snapshots, err)
+		}
+		if pass == 0 {
+			if _, err := s.db.ExecContext(ctx, `insert into plugin_runs(uuid,installation_id,instance_id,package_id,plugin_key,plugin_version,trigger,idempotency_key,status,queued_at,recovery_generation) values('ui-run',1,1,1,'acme.demo','1.0.0','ui','key-2','queued','2026-10-01T00:00:01Z',1)`); err != nil {
+				t.Fatalf("ui trigger insert: %v", err)
+			}
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

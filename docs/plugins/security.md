@@ -37,6 +37,7 @@
 | `secrets.use` | 本实例密钥 | 高 | ✓ |
 | `notifications.send` | 通知渠道 | 中 | ✓ |
 | `events.server_status` | 服务器 | 低 | |
+| `ui.page` | 无 | 低 | |
 
 每项能力有固定参数 Schema、超时、每分钟调用上限和每次执行的配额（SDK 调用、HTTP 请求、Agent 操作）。
 

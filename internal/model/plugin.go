@@ -36,6 +36,8 @@ const (
 	PluginTriggerInterval = "interval"
 	PluginTriggerCron     = "cron"
 	PluginTriggerEvent    = "event"
+	PluginTriggerUI       = "ui"
+	PluginTriggerAction   = "action"
 
 	PluginSourceUpload = "upload"
 	PluginSourceGitHub = "github"
@@ -180,6 +182,16 @@ type PluginRunLog struct {
 	Level     string    `json:"level"`
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// PluginPageSnapshot is the latest view document for one instance page.
+// Bindings stay unresolved until an operator reads the page.
+type PluginPageSnapshot struct {
+	InstanceID   int64
+	PageID       string
+	DocumentJSON json.RawMessage
+	RunUUID      string
+	PublishedAt  time.Time
 }
 
 type PluginStateEntry struct {
