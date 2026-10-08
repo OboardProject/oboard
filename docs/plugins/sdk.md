@@ -95,7 +95,7 @@ oboard.ui.publish({
 
 ## 通知
 
-`notifications.send` 只发给管理员已经授权的通知渠道。`users.notify` 和 `plans.notify` 发给用户：已绑定 Telegram 的用户进入发送队列，没有绑定的计入 `unbound`，不会假装已经送达。返回 `{ recipients, queued, unbound }`。手动或界面触发时，还要落在当前操作员自己的用户或套餐范围内。标题最多 120 个字符，正文最多 3000 个字符。用户视图不含密码、订阅地址或代理凭证。
+`notifications.send` 只发给管理员已经授权的通知渠道，Telegram 和 Bark 都可以。`users.notify` 和 `plans.notify` 发给用户自己启用、并订阅了「管理员通知」的渠道，Telegram 和 Bark 同样会计入 `queued`。没有任何这类渠道的用户计入 `unbound`，不会假装已经送达。返回 `{ recipients, queued, unbound }`。手动或界面触发时，还要落在当前操作员自己的用户或套餐范围内。标题最多 120 个字符，正文最多 3000 个字符。用户视图不含密码、订阅地址或代理凭证。
 
 ## 日志
 

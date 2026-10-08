@@ -17,7 +17,6 @@ import (
 	"github.com/OboardProject/oboard/internal/plugin"
 	"github.com/OboardProject/oboard/internal/pluginsandbox"
 	"github.com/OboardProject/oboard/internal/security"
-	"github.com/OboardProject/oboard/internal/store"
 )
 
 // pluginWorkerState is the last heartbeat of the plugin worker.
@@ -227,9 +226,6 @@ func (h *pluginHost) UsersOnPlan(ctx context.Context, planID int64) ([]plugin.Us
 }
 
 func (h *pluginHost) NotifyUsers(ctx context.Context, request plugin.UserNotifyRequest) (plugin.UserNotifyResult, error) {
-	if _, err := h.server.globalTelegramBot(ctx); err != nil {
-		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "还没有可用的 Telegram 机器人，无法向用户推送")
-	}
 	if request.ActorUserID <= 0 {
 		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "缺少授权管理员，无法向用户推送")
 	}
@@ -241,32 +237,31 @@ func (h *pluginHost) NotifyUsers(ctx context.Context, request plugin.UserNotifyR
 	if actorName == "" {
 		actorName = actor.Username
 	}
-	recipients := make([]store.BroadcastRecipient, 0, len(request.UserIDs))
-	result := plugin.UserNotifyResult{}
+	filter, _ := json.Marshal(map[string]any{"source": "plugin", "user_ids": request.UserIDs})
+	receipt := model.NotificationBroadcast{ActorUserID: actor.ID, ActorName: actorName, Title: request.Title, Body: request.Body, FilterJSON: string(filter), IdempotencyKey: request.IdempotencyKey}
+	result := plugin.UserNotifyResult{Recipients: len(request.UserIDs)}
 	for _, userID := range request.UserIDs {
-		bindings, err := h.server.store.ListTelegramBindingsForUser(ctx, userID)
-		if err != nil {
-			return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "读取用户通知绑定失败")
-		}
-		recipients = append(recipients, store.BroadcastRecipient{UserID: userID, Bindings: bindings})
-		result.Recipients++
-		result.Queued += len(bindings)
-		if len(bindings) == 0 {
+		queued := h.server.enqueueNotificationEvent(ctx, notificationEvent{
+			Name:         notificationAdminAnnouncement,
+			Key:          "plugin-notify:" + request.IdempotencyKey + ":user:" + strconv.FormatInt(userID, 10),
+			TargetUserID: userID,
+			Data:         map[string]string{"Title": request.Title, "Message": request.Body, "Sender": actorName, "Time": h.server.notificationNow(ctx)},
+		})
+		result.Queued += queued
+		if queued == 0 {
 			result.Unbound++
 		}
 	}
-	filter, _ := json.Marshal(map[string]any{"source": "plugin", "user_ids": request.UserIDs})
-	broadcast := model.NotificationBroadcast{ActorUserID: actor.ID, ActorName: actorName, Title: request.Title, Body: request.Body, FilterJSON: string(filter), IdempotencyKey: request.IdempotencyKey}
-	created, err := h.server.store.CreateNotificationBroadcast(ctx, &broadcast, recipients)
+	created, err := h.server.store.SavePluginUserNotificationReceipt(ctx, &receipt, result.Recipients, result.Queued, result.Unbound)
 	if err != nil {
 		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "用户通知没有进入发送队列")
 	}
-	if created {
-		announcement := model.NotificationAnnouncement{ActorUserID: actor.ID, ActorName: actorName, Title: request.Title, Body: request.Body, UserIDs: append([]int64(nil), request.UserIDs...), QueuedCount: result.Queued}
-		if err := h.server.store.CreateNotificationAnnouncement(ctx, &announcement); err != nil {
-			return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "用户通知没有进入发送队列")
-		}
-		h.server.wakeNotificationDelivery(ctx)
+	if !created {
+		return plugin.UserNotifyResult{Recipients: receipt.RecipientCount, Queued: receipt.SuccessCount, Unbound: receipt.FailureCount}, nil
+	}
+	announcement := model.NotificationAnnouncement{ActorUserID: actor.ID, ActorName: actorName, Title: request.Title, Body: request.Body, UserIDs: append([]int64(nil), request.UserIDs...), QueuedCount: result.Queued}
+	if err := h.server.store.CreateNotificationAnnouncement(ctx, &announcement); err != nil {
+		return plugin.UserNotifyResult{}, plugin.Fail(plugin.CodeOperationFailed, "用户通知没有进入发送队列")
 	}
 	return result, nil
 }

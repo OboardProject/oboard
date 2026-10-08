@@ -7236,6 +7236,24 @@ func (s *Store) QueueNotificationDelivery(ctx context.Context, v *model.Notifica
 	return true, nil
 }
 
+func (s *Store) CountNotificationDeliveriesByChannelType(ctx context.Context, event string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `select c.type, count(*) from notification_deliveries d join notification_channels c on c.id=d.channel_id where d.event=? group by c.type`, event)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return nil, err
+		}
+		out[kind] = count
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListPendingNotificationDeliveries(ctx context.Context, at time.Time, limit int) ([]model.NotificationDelivery, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50

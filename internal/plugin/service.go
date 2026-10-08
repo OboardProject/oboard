@@ -70,7 +70,8 @@ type PlanInfo struct {
 	Enabled bool
 }
 
-// UserNotifyRequest queues one user notification through the existing Telegram broadcast path.
+// UserNotifyRequest queues one user notification through each target user's
+// enabled Telegram or Bark channel that accepts administrator announcements.
 type UserNotifyRequest struct {
 	ActorUserID    int64
 	Title          string

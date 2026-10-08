@@ -90,6 +90,46 @@ func (s *Store) GetNotificationBroadcast(ctx context.Context, id int64) (*model.
 	return getNotificationBroadcastQuery(ctx, s.db, id)
 }
 
+// SavePluginUserNotificationReceipt records one plugin user notification so a
+// repeated call with the same idempotency key does not queue it again.
+// SuccessCount stores queued channel deliveries and FailureCount stores users
+// with no Telegram or Bark channel. It does not create Telegram-only targets.
+func (s *Store) SavePluginUserNotificationReceipt(ctx context.Context, item *model.NotificationBroadcast, recipients, queued, unbound int) (bool, error) {
+	if item == nil || item.ActorUserID <= 0 || item.IdempotencyKey == "" {
+		return false, errors.New("invalid plugin user notification")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var existingID int64
+	if err := tx.QueryRowContext(ctx, `select id from notification_broadcasts where idempotency_key=?`, item.IdempotencyKey).Scan(&existingID); err == nil {
+		stored, getErr := getNotificationBroadcastQuery(ctx, tx, existingID)
+		if getErr != nil {
+			return false, getErr
+		}
+		*item = *stored
+		return false, tx.Commit()
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	ts := now()
+	item.Status = "completed"
+	item.RecipientCount = recipients
+	item.SuccessCount = queued
+	item.FailureCount = unbound
+	item.CreatedAt = parseTime(ts)
+	completed := parseTime(ts)
+	item.CompletedAt = &completed
+	res, err := tx.ExecContext(ctx, `insert into notification_broadcasts(actor_user_id,actor_name,title,body,filter_json,idempotency_key,status,recipient_count,success_count,failure_count,created_at,completed_at) values(?,?,?,?,?,?,'completed',?,?,?,?,?)`, item.ActorUserID, item.ActorName, item.Title, item.Body, item.FilterJSON, item.IdempotencyKey, recipients, queued, unbound, ts, ts)
+	if err != nil {
+		return false, err
+	}
+	item.ID, _ = res.LastInsertId()
+	return true, tx.Commit()
+}
+
 func (s *Store) ListNotificationBroadcasts(ctx context.Context, limit int) ([]model.NotificationBroadcast, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
