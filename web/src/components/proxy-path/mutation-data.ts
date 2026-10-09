@@ -14,8 +14,14 @@ const topologyCollections = [
 
 function upsertEntities(current: Entity[] | undefined, incoming: Entity[]) {
   const merged = new Map((current || []).map(item => [item.id, item]))
-  incoming.forEach(item => merged.set(item.id, { ...merged.get(item.id), ...item }))
-  return Array.from(merged.values())
+  let changed = false
+  incoming.forEach(item => {
+    const previous = merged.get(item.id)
+    if (previous && Object.entries(item).every(([key, value]) => Object.is((previous as Record<string, unknown>)[key], value))) return
+    changed = true
+    merged.set(item.id, { ...previous, ...item })
+  })
+  return changed ? Array.from(merged.values()) : current || []
 }
 
 // Topology mutation endpoints return only the rows they changed. Merge those
@@ -27,7 +33,8 @@ export function mergeTopologyMutation<T extends Record<string, any>>(current: T,
     const many = Array.isArray(payload[collection]) ? payload[collection] : []
     const one = payload[singular]?.id ? [payload[singular]] : []
     if (!many.length && !one.length) return
-    next = { ...next, [collection]: upsertEntities(next[collection], [...many, ...one]) }
+    const rows = upsertEntities(next[collection], [...many, ...one])
+    if (rows !== next[collection]) next = { ...next, [collection]: rows }
   })
   return next as T
 }
@@ -37,7 +44,8 @@ export function removeTopologyRows<T extends Record<string, any>>(current: T, re
   Object.entries(removals).forEach(([collection, ids]) => {
     if (!ids?.length || !Array.isArray(next[collection])) return
     const removed = new Set(ids)
-    next = { ...next, [collection]: next[collection].filter((item: Entity) => !removed.has(item.id)) }
+    const rows = next[collection].filter((item: Entity) => !removed.has(item.id))
+    if (rows.length !== next[collection].length) next = { ...next, [collection]: rows }
   })
   return next as T
 }

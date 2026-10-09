@@ -22,4 +22,14 @@ describe('topology mutation data', () => {
       proxy_path_steps: [{ id: 20 }],
     })
   })
+  it('preserves unchanged rows and collections so graph memoization can skip rebuilding', () => {
+    const row = { id: 1, name: 'same' }
+    const current = { proxy_paths: [row], inbounds: [{ id: 2 }] }
+    expect(mergeTopologyMutation(current, { proxy_path: { id: 1, name: 'same' } })).toBe(current)
+    expect(removeTopologyRows(current, { proxy_paths: [99] })).toBe(current)
+    const next = mergeTopologyMutation(current, { proxy_path: { id: 3, name: 'new' } })
+    expect(next.inbounds).toBe(current.inbounds)
+    expect(next.proxy_paths[0]).toBe(row)
+  })
+
 })

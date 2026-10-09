@@ -15,14 +15,18 @@ export type PromptDialogOptions = DialogBase & {
   inputType?: string
   choices?: DialogChoice[]
 }
+export type ConfirmDialogOptions = DialogBase & {
+  onConfirm?: () => Promise<void>
+  pendingText?: string
+}
 export type DialogState =
   | ({ id: number; kind: 'alert'; resolve: () => void } & DialogBase)
-  | ({ id: number; kind: 'confirm'; resolve: (value: boolean) => void } & DialogBase)
+  | ({ id: number; kind: 'confirm'; resolve: (value: boolean) => void } & ConfirmDialogOptions)
   | ({ id: number; kind: 'prompt'; resolve: (value: string | null) => void } & PromptDialogOptions)
 
 export type DialogApi = {
   alert: (options: DialogBase) => Promise<void>
-  confirm: (options: DialogBase) => Promise<boolean>
+  confirm: (options: ConfirmDialogOptions) => Promise<boolean>
   prompt: (options: PromptDialogOptions) => Promise<string | null>
 }
 

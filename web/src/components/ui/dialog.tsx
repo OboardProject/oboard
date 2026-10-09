@@ -15,6 +15,7 @@ export interface DialogProps {
   surfaceMotion?: SurfaceMotion
   placement?: ModalPlacement
   drawerSize?: DrawerSize
+  busy?: boolean
 }
 
 export function Dialog({
@@ -28,6 +29,7 @@ export function Dialog({
   surfaceMotion,
   placement,
   drawerSize,
+  busy = false,
 }: DialogProps) {
   const titleID = React.useId()
   const sizeClasses = {
@@ -43,7 +45,7 @@ export function Dialog({
       {isOpen && (
         <ModalSurface
           key="dialog-surface"
-          onClose={onClose}
+          onClose={() => { if (!busy) onClose() }}
           rootClassName="dialog-root p-4"
           panelClassName={`dialog relative w-full bg-popover text-foreground border border-border shadow-lg flex flex-col max-h-[90vh] ${isCompact ? "p-4 gap-3" : "p-6"} ${sizeClasses[size]} ${className}`}
           ariaLabelledBy={title ? titleID : undefined}
@@ -60,6 +62,7 @@ export function Dialog({
               </h3>
               <button
                 onClick={onClose}
+                disabled={busy}
                 className="ghost icon-button dialog-close"
                 aria-label="关闭"
                 type="button"

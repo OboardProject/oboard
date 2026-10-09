@@ -1653,19 +1653,43 @@ function useDialogController() {
 
 export function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: () => void }) {
   const [value, setValue] = useState('')
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState('')
+  const workingRef = useRef(false)
   const lastDialogRef = useRef<DialogState | null>(null)
   if (dialog) lastDialogRef.current = dialog
   const renderedDialog = dialog || lastDialogRef.current
   useEffect(() => {
+    setError('')
     if (dialog?.kind === 'prompt') setValue(dialog.defaultValue || '')
   }, [dialog?.id])
   if (!renderedDialog) return null
   const close = (result?: string | boolean | null) => {
-    if (!dialog) return
+    if (!dialog || workingRef.current) return
     if (dialog.kind === 'alert') dialog.resolve()
     if (dialog.kind === 'confirm') dialog.resolve(Boolean(result))
     if (dialog.kind === 'prompt') dialog.resolve(typeof result === 'string' ? result : null)
     onClose()
+  }
+  const confirm = async () => {
+    if (!dialog || workingRef.current) return
+    if (dialog.kind !== 'confirm' || !dialog.onConfirm) {
+      close(dialog.kind === 'prompt' ? value : true)
+      return
+    }
+    workingRef.current = true
+    setWorking(true)
+    setError('')
+    try {
+      await dialog.onConfirm()
+      workingRef.current = false
+      close(true)
+    } catch (error: any) {
+      setError(localizeErrorMessage(error?.message || error))
+    } finally {
+      workingRef.current = false
+      setWorking(false)
+    }
   }
   const confirmText = renderedDialog.confirmText || (renderedDialog.kind === 'alert' ? '知道了' : '确认')
   const isPrompt = renderedDialog.kind === 'prompt'
@@ -1677,6 +1701,7 @@ export function DialogHost({ dialog, onClose }: { dialog: DialogState | null; on
       onClose={() => close(renderedDialog.kind === 'confirm' ? false : null)}
       title={renderedDialog.title}
       size="sm"
+      busy={working}
       className={[
         'dialog-host',
         'dialog-host-compact',
@@ -1686,20 +1711,24 @@ export function DialogHost({ dialog, onClose }: { dialog: DialogState | null; on
       footer={(
         <div className="dialog-actions dialog-host-actions">
           {renderedDialog.kind !== 'alert' && (
-            <button type="button" className="ghost" onClick={() => close(renderedDialog.kind === 'confirm' ? false : null)}>
+            <button type="button" className="ghost" disabled={working} onClick={() => close(renderedDialog.kind === 'confirm' ? false : null)}>
               {renderedDialog.cancelText || '取消'}
             </button>
           )}
           <button
             type="button"
             className={renderedDialog.tone === 'danger' ? 'danger-button' : ''}
-            onClick={() => close(renderedDialog.kind === 'prompt' ? value : true)}
+            onClick={() => void confirm()}
+            disabled={working}
+            aria-busy={working}
           >
-            {confirmText}
+            {working && <Loader2 size={14} className="spin" aria-hidden="true" />}
+            {working ? (renderedDialog.kind === 'confirm' && renderedDialog.pendingText || '处理中…') : confirmText}
           </button>
         </div>
       )}
     >
+      {error && <div role="alert" className="error">{error}</div>}
       {(hasMessage || isPrompt) && (
         <div className="dialog-host-body">
           {hasMessage && (
@@ -11726,26 +11755,19 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    throw new Error(localizeErrorMessage(error?.message || error))
 	  }
 	}
-	const deleteTrafficForward = async (forward: PortForward) => {
-	  const confirmed = await dialogs.confirm({
-	    title: '删除流量转发',
-	    message: `确认删除「${forward.name}」？相关监听会从入口服务器移除，历史检查结果也会一并删除。`,
-	    tone: 'danger',
-	    confirmText: '删除转发',
-	  })
-	  if (!confirmed) return false
-	  try {
-	    await client.request(`/port-forwards/${forward.id}`, { method: 'DELETE' })
-	    const probeIDs = ((data.port_forward_probes || []) as PortForwardProbeResult[])
-	      .filter(probe => probe.port_forward_id === forward.id)
-	      .map(probe => probe.id)
-	    removeMutationRows({ port_forwards: [forward.id], port_forward_probes: probeIDs })
-	    reconcileTopology()
-	    return true
-	  } catch (error: any) {
-	    throw new Error(localizeErrorMessage(error?.message || error))
-	  }
-	}
+  const deleteTrafficForward = async (forward: PortForward) => dialogs.confirm({
+    title: '删除流量转发',
+    message: '确认删除「' + forward.name + '」？相关监听会从入口服务器移除，历史检查结果也会一并删除。',
+    tone: 'danger',
+    confirmText: '删除转发',
+    pendingText: '删除中…',
+    onConfirm: async () => {
+      await client.request('/port-forwards/' + forward.id, { method: 'DELETE' })
+      const probeIDs = ((data.port_forward_probes || []) as PortForwardProbeResult[])
+        .filter(probe => probe.port_forward_id === forward.id).map(probe => probe.id)
+      removeMutationRows({ port_forwards: [forward.id], port_forward_probes: probeIDs })
+    },
+  })
 	const probeTrafficForward = async (forward: PortForward) => {
 	  try {
 	    await client.request(`/port-forwards/${forward.id}/probe`, { method: 'POST', body: '{}' })
@@ -11764,144 +11786,144 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    await dialogs.alert({ title: '创建服务器隧道失败', message: localizeErrorMessage(error?.message || error) })
 	  }
 	}
-	  const deleteGraphEntity = async (entity: GraphEntity) => {
-		  if (entity.type === 'detached-step' && entity.node_id) {
-		    const detached = detachedChainStepFromNodeID(entity.node_id)
-		    if (detached) setCanvasDetachedChains(chains => chains.filter(chain => chain.instance_id !== detached.chainID))
-		    return
-		  }
-			  if (entity.node_id?.startsWith('routing-canvas-')) {
-			    removeCanvasRoutingTarget(entity.node_id)
-			    return
-			  }
-			  if (entity.type === 'routing' && entity.path_id) {
-			    const ruleIDs = new Set(entity.rule_ids || [])
-			    const stageRules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => ruleIDs.has(rule.id) || (
-			      rule.scope === 'path_stage'
-			      && rule.proxy_path_id === entity.path_id
-			      && Number(rule.stage_step_id || 0) === Number(entity.stage_step_id || 0)
-			    ))
-			    if (!stageRules.length) return
-			    const ok = await dialogs.confirm({
-			      title: '删除分流区块',
-			      message: `确认删除这个区块内的 ${stageRules.length} 条规则？代理路径和后续节点会保留。`,
-			      tone: 'danger',
-			      confirmText: '删除规则',
-			    })
-			    if (!ok) return
-			    const ids = stageRules.map(rule => rule.id)
-			    await client.request('/routing-rules/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
-			    removeMutationRows({ routing_rules: ids })
-			    reconcileTopology()
-			    return
-			  }
-		  if (entity.node_id?.startsWith('warp-canvas-')) {
-		    const instanceID = entity.node_id.slice('warp-canvas-'.length)
-		    setCanvasWARPInstances(items => items.filter(item => item.instance_id !== instanceID))
-		    setPositions(current => {
-		      const next = { ...current }
-		      delete next[entity.node_id!]
-		      saveGraphPositions(next)
-		      return next
-		    })
-		    return
-		  }
-		  if (entity.node_id?.startsWith('direct-exit-canvas-')) {
-		    const instanceID = entity.node_id.slice('direct-exit-canvas-'.length)
-		    setCanvasDirectExitInstances(items => {
-		      const next = items.filter(item => item.instance_id !== instanceID)
-		      saveGraphDirectExitInstances(next)
-		      return next
-		    })
-		    setPositions(current => {
-		      const next = { ...current }
-		      delete next[entity.node_id!]
-		      saveGraphPositions(next)
-		      return next
-		    })
-		    return
-		  }
-		  if (entity.node_id?.startsWith('canvas-server-')) {
-	    setCanvasServerInstances(items => items.filter(item => canvasServerNodeID(item) !== entity.node_id))
-	    setPositions(current => {
-	      const next = { ...current }
-	      delete next[entity.node_id!]
-	      saveGraphPositions(next)
-	      return next
-	    })
-	    return
-	  }
-	  const meta: Record<GraphEntity['type'], { name: string; path: string }> = {
-	    server: { name: '服务器', path: `/servers/${entity.id}` },
-	    entry: { name: '入口节点', path: `/inbounds/${entity.id}` },
-	    imported: { name: '导入节点', path: `/external-outbounds/${entity.id}` },
-	    warp: { name: 'WARP 出口', path: '' },
-	    routing: { name: '分流出口', path: '' },
-		    direct: { name: '直接出口', path: `/proxy-paths/${entity.path_id || entity.id}` },
-	    'port-forward': { name: '端口转发', path: `/port-forwards/${entity.id}` },
-	    tunnel: { name: '隧道', path: `/tunnels/${entity.id}` },
-	    'proxy-path': { name: '代理路径', path: `/proxy-paths/${entity.id}` },
-	    'proxy-path-step': { name: '路径步骤', path: `/proxy-path-steps/${entity.id}` },
-	    'detached-step': { name: '未连接链段', path: '' },
-	  }
-	    const item = meta[entity.type]
+  const deleteGraphEntity = async (entity: GraphEntity) => {
+    if (entity.type === 'detached-step' && entity.node_id) {
+      const detached = detachedChainStepFromNodeID(entity.node_id)
+      if (detached) setCanvasDetachedChains(chains => chains.filter(chain => chain.instance_id !== detached.chainID))
+      return
+    }
+    if (entity.node_id?.startsWith('routing-canvas-')) {
+      removeCanvasRoutingTarget(entity.node_id)
+      return
+    }
+    if (entity.type === 'routing' && entity.path_id) {
+      const ruleIDs = new Set(entity.rule_ids || [])
+      const stageRules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => ruleIDs.has(rule.id) || (
+        rule.scope === 'path_stage'
+        && rule.proxy_path_id === entity.path_id
+        && Number(rule.stage_step_id || 0) === Number(entity.stage_step_id || 0)
+      ))
+      if (!stageRules.length) return
+      await dialogs.confirm({
+        title: '删除分流区块',
+        message: `确认删除这个区块内的 ${stageRules.length} 条规则？代理路径和后续节点会保留。`,
+        tone: 'danger',
+        confirmText: '删除规则',
+        pendingText: '删除中…',
+        onConfirm: () => withGraphPending(graphEntityNodeIDs(entity), async () => {
+          const ids = stageRules.map(rule => rule.id)
+          await client.request('/routing-rules/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+          removeMutationRows({ routing_rules: ids })
+
+        }),
+      })
+      return
+    }
+    if (entity.node_id?.startsWith('warp-canvas-')) {
+      const instanceID = entity.node_id.slice('warp-canvas-'.length)
+      setCanvasWARPInstances(items => items.filter(item => item.instance_id !== instanceID))
+      setPositions(current => {
+        const next = { ...current }
+        delete next[entity.node_id!]
+        saveGraphPositions(next)
+        return next
+      })
+      return
+    }
+    if (entity.node_id?.startsWith('direct-exit-canvas-')) {
+      const instanceID = entity.node_id.slice('direct-exit-canvas-'.length)
+      setCanvasDirectExitInstances(items => {
+        const next = items.filter(item => item.instance_id !== instanceID)
+        saveGraphDirectExitInstances(next)
+        return next
+      })
+      setPositions(current => {
+        const next = { ...current }
+        delete next[entity.node_id!]
+        saveGraphPositions(next)
+        return next
+      })
+      return
+    }
+    if (entity.node_id?.startsWith('canvas-server-')) {
+      setCanvasServerInstances(items => items.filter(item => canvasServerNodeID(item) !== entity.node_id))
+      setPositions(current => {
+        const next = { ...current }
+        delete next[entity.node_id!]
+        saveGraphPositions(next)
+        return next
+      })
+      return
+    }
+    const meta: Record<GraphEntity['type'], { name: string; path: string }> = {
+      server: { name: '服务器', path: `/servers/${entity.id}` },
+      entry: { name: '入口节点', path: `/inbounds/${entity.id}` },
+      imported: { name: '导入节点', path: `/external-outbounds/${entity.id}` },
+      warp: { name: 'WARP 出口', path: '' },
+      routing: { name: '分流出口', path: '' },
+      direct: { name: '直接出口', path: `/proxy-paths/${entity.path_id || entity.id}` },
+      'port-forward': { name: '端口转发', path: `/port-forwards/${entity.id}` },
+      tunnel: { name: '隧道', path: `/tunnels/${entity.id}` },
+      'proxy-path': { name: '代理路径', path: `/proxy-paths/${entity.id}` },
+      'proxy-path-step': { name: '路径步骤', path: `/proxy-path-steps/${entity.id}` },
+      'detached-step': { name: '未连接链段', path: '' },
+    }
+    const item = meta[entity.type]
     const cascading = entity.type === 'proxy-path-step'
     // Deleting a server or an entry cuts every path that traverses it, including
     // branches rooted at another entry server that this canvas does not draw.
     const affected = entity.type === 'server' || entity.type === 'entry'
       ? proxyPathsTouchingEntity(data, entity)
       : []
-    const ok = await dialogs.confirm({
+    await dialogs.confirm({
       title: cascading ? '取消后续链路' : `删除${item.name}`,
       message: cascading
         ? <div className="dialog-detail">
-            <p>确认从 {entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。</p>
-            <p className="muted">如果这会删除整条链路，相关节点也会从所有订阅套餐自动移除。</p>
-          </div>
+          <p>确认从 {entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。</p>
+          <p className="muted">如果这会删除整条链路，相关节点也会从所有订阅套餐自动移除。</p>
+        </div>
         : <div className="dialog-detail">
-            <p>确认删除 {entity.label}？</p>
-            <p className="muted">如果该节点已加入订阅套餐，删除时会从所有套餐自动移除；相关链路会同步清理。</p>
-            {affected.length > 0 && <>
-              <p>以下 {affected.length} 条链路经过它，会被同步截断或删除：</p>
-              <ul>{affected.map((name, index) => <li key={index}>{name}</li>)}</ul>
-            </>}
-          </div>,
+          <p>确认删除 {entity.label}？</p>
+          <p className="muted">如果该节点已加入订阅套餐，删除时会从所有套餐自动移除；相关链路会同步清理。</p>
+          {affected.length > 0 && <>
+            <p>以下 {affected.length} 条链路经过它，会被同步截断或删除：</p>
+            <ul>{affected.map((name, index) => <li key={index}>{name}</li>)}</ul>
+          </>}
+        </div>,
       tone: 'danger',
       confirmText: cascading ? '取消后续节点' : '删除',
+      pendingText: '删除中…',
+      onConfirm: () => withGraphPending(graphEntityNodeIDs(entity), async () => {
+        const result = await client.request(item.path, { method: 'DELETE' }) as Record<string, any>
+
+        const removals: Partial<Record<string, readonly number[]>> = {}
+        if (entity.type === 'server') removals.servers = [entity.id]
+        if (entity.type === 'entry') removals.inbounds = [entity.id]
+        if (entity.type === 'imported') removals.external_outbounds = [entity.id]
+        if (entity.type === 'port-forward') removals.port_forwards = [entity.id]
+        if (entity.type === 'tunnel') removals.tunnels = [entity.id]
+        if (entity.type === 'proxy-path' || entity.type === 'direct') {
+          const pathID = entity.path_id || entity.id
+          removals.proxy_paths = [pathID]
+          removals.proxy_path_steps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).map(step => step.id)
+        }
+        if (entity.type === 'proxy-path-step') {
+          const selectedStep = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === entity.id)
+          if (selectedStep) {
+            Object.assign(removals, proxyPathStepDeleteRemovals(
+              selectedStep.path_id,
+              selectedStep.id,
+              (data.proxy_path_steps || []) as ProxyPathStep[],
+              result.path_deleted === true,
+            ))
+          }
+        }
+        patchPageData?.((current: any) => removeTopologyRows(mergeTopologyMutation(current, result), removals))
+
+      }),
     })
-	    if (!ok) return
-	    try {
-	      const result = await client.request(item.path, { method: 'DELETE' }) as Record<string, any>
-	      applyMutationResult(result)
-	      const removals: Partial<Record<string, readonly number[]>> = {}
-	      if (entity.type === 'server') removals.servers = [entity.id]
-	      if (entity.type === 'entry') removals.inbounds = [entity.id]
-	      if (entity.type === 'imported') removals.external_outbounds = [entity.id]
-	      if (entity.type === 'port-forward') removals.port_forwards = [entity.id]
-	      if (entity.type === 'tunnel') removals.tunnels = [entity.id]
-	      if (entity.type === 'proxy-path' || entity.type === 'direct') {
-	        const pathID = entity.path_id || entity.id
-	        removals.proxy_paths = [pathID]
-	        removals.proxy_path_steps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).map(step => step.id)
-	      }
-	      if (entity.type === 'proxy-path-step') {
-	        const selectedStep = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === entity.id)
-	        if (selectedStep) {
-	          Object.assign(removals, proxyPathStepDeleteRemovals(
-	            selectedStep.path_id,
-	            selectedStep.id,
-	            (data.proxy_path_steps || []) as ProxyPathStep[],
-	            result.path_deleted === true,
-	          ))
-	        }
-	      }
-	      removeMutationRows(removals)
-	      reconcileTopology()
-	    } catch (e: any) {
-	      await dialogs.alert({ title: '删除失败', message: localizeErrorMessage(e.message || e) })
-	    }
-	  }
-		  const copyDirectExit = (entity: GraphEntity | null | undefined) => {
+  }
+  const copyDirectExit = (entity: GraphEntity | null | undefined) => {
 	    if (!entity || entity.type !== 'direct' || !selected?.id) return
 	    const instance = newCanvasDirectExitInstance(selected.id, canvasDirectExitSequence.current++)
 	    const id = canvasDirectExitNodeID(instance)
@@ -11923,88 +11945,87 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 		    setGraphMenu(null)
 		    copyDirectExit(entity)
 		  }
-		  const disconnectGraphEdge = async (entity: GraphEntity, pathIDs: readonly number[]) => {
-		    if (entity.type !== 'proxy-path-step') return
-		    const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
-		    const candidates = disconnectPathCandidates(entity.id, pathIDs, allSteps)
-		    if (!candidates.length) {
-		      await dialogs.alert({ title: '无法断开连接', message: '没有找到这条连线对应的路径步骤，请刷新后重试。' })
-		      return
-		    }
-		    let selectedCandidate = candidates.find(candidate => candidate.pathID === focusedPathID)
-		    if (!selectedCandidate && candidates.length === 1) selectedCandidate = candidates[0]
-		    if (!selectedCandidate) {
-		      const selectedPathID = await dialogs.prompt({
-		        title: '选择要断开的路径',
-		        message: '这条连线由多条路径共享。只会断开所选路径，其他路径保持不变。',
-		        defaultValue: String(candidates[0].pathID),
-		        choices: candidates.map(candidate => {
-		          const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === candidate.pathID)
-		          return { value: String(candidate.pathID), label: path?.name || `路径 ${candidate.pathID}` }
-		        }),
-		      })
-		      selectedCandidate = candidates.find(candidate => candidate.pathID === Number(selectedPathID))
-		    }
-		    if (!selectedCandidate) return
+  const disconnectGraphEdge = async (entity: GraphEntity, pathIDs: readonly number[]) => {
+    if (entity.type !== 'proxy-path-step') return
+    const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
+    const candidates = disconnectPathCandidates(entity.id, pathIDs, allSteps)
+    if (!candidates.length) {
+      await dialogs.alert({ title: '无法断开连接', message: '没有找到这条连线对应的路径步骤，请刷新后重试。' })
+      return
+    }
+    let selectedCandidate = candidates.find(candidate => candidate.pathID === focusedPathID)
+    if (!selectedCandidate && candidates.length === 1) selectedCandidate = candidates[0]
+    if (!selectedCandidate) {
+      const selectedPathID = await dialogs.prompt({
+        title: '选择要断开的路径',
+        message: '这条连线由多条路径共享。只会断开所选路径，其他路径保持不变。',
+        defaultValue: String(candidates[0].pathID),
+        choices: candidates.map(candidate => {
+          const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === candidate.pathID)
+          return { value: String(candidate.pathID), label: path?.name || `路径 ${candidate.pathID}` }
+        }),
+      })
+      selectedCandidate = candidates.find(candidate => candidate.pathID === Number(selectedPathID))
+    }
+    if (!selectedCandidate) return
 
-		    const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === selectedCandidate!.pathID)
-		    const rootEntry = path ? entries.find(entry => entry.id === path.inbound_id) : undefined
-		    const suffix = detachedPathSuffix(selectedCandidate.pathID, selectedCandidate.step.id, allSteps)
-		    if (!path || !rootEntry || !suffix.length) {
-		      await dialogs.alert({ title: '无法断开连接', message: '路径数据已经变化，请刷新后重试。' })
-		      return
-		    }
-		    const suffixIDs = new Set(suffix.map(step => step.id))
-		    const affectedRuleCount = ((data.routing_rules || []) as Array<{ stage_step_id?: number }>).filter(rule => rule.stage_step_id && suffixIDs.has(rule.stage_step_id)).length
-		    const ok = await dialogs.confirm({
-		      title: '断开连接',
-		      message: <div className="dialog-detail">
-		        <p>确认断开 {path.name || `路径 ${path.id}`} 的这条连线？后续 {suffix.length} 个节点会保留在当前画布，可重新连到入口或其他路径。</p>
-		        <p className="muted">未连接链段只保留到当前页面关闭或刷新。{affectedRuleCount ? `依赖后续位置的 ${affectedRuleCount} 条分流规则会被移除。` : '依赖后续位置的分流规则会随原步骤移除。'}</p>
-		      </div>,
-		      tone: 'danger',
-		      confirmText: '断开并保留节点',
-		    })
-		    if (!ok) return
+    const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === selectedCandidate!.pathID)
+    const rootEntry = path ? entries.find(entry => entry.id === path.inbound_id) : undefined
+    const suffix = detachedPathSuffix(selectedCandidate.pathID, selectedCandidate.step.id, allSteps)
+    if (!path || !rootEntry || !suffix.length) {
+      await dialogs.alert({ title: '无法断开连接', message: '路径数据已经变化，请刷新后重试。' })
+      return
+    }
+    const suffixIDs = new Set(suffix.map(step => step.id))
+    const affectedRuleCount = ((data.routing_rules || []) as Array<{ stage_step_id?: number }>).filter(rule => rule.stage_step_id && suffixIDs.has(rule.stage_step_id)).length
+    await dialogs.confirm({
+      title: '断开连接',
+      message: <div className="dialog-detail">
+        <p>确认断开 {path.name || `路径 ${path.id}`} 的这条连线？后续 {suffix.length} 个节点会保留在当前画布，可重新连到入口或其他路径。</p>
+        <p className="muted">未连接链段只保留到当前页面关闭或刷新。{affectedRuleCount ? `依赖后续位置的 ${affectedRuleCount} 条分流规则会被移除。` : '依赖后续位置的分流规则会随原步骤移除。'}</p>
+      </div>,
+      tone: 'danger',
+      confirmText: '断开并保留节点',
+      pendingText: '断开中…',
+      onConfirm: () => withGraphPending(graphEntityNodeIDs(entity), async () => {
+        const instanceID = `${path.id}-${Date.now().toString(36)}-${selectedCandidate!.step.id}`
+        let fallback = nodes.find(node => node.id === proxyPathStepNodeID(selectedCandidate!.step))?.position || { x: 320, y: 320 }
+        const chainSteps = suffix.map((step, index) => {
+          const graphNode = nodes.find(node => {
+            const nodeEntity = node.data?.entity as GraphEntity | undefined
+            if (nodeEntity?.type !== 'proxy-path-step') return false
+            const canonical = allSteps.find(item => item.id === nodeEntity.id)
+            return canonical?.position === step.position && graphPathIDs(node).includes(path.id)
+          })
+          const position = graphNode?.position || (index ? { x: fallback.x + 280, y: fallback.y } : fallback)
+          fallback = position
+          return { step: { ...step }, position: { ...position } }
+        })
 
-		    const instanceID = `${path.id}-${Date.now().toString(36)}-${selectedCandidate.step.id}`
-		    let fallback = nodes.find(node => node.id === proxyPathStepNodeID(selectedCandidate!.step))?.position || { x: 320, y: 320 }
-		    const chainSteps = suffix.map((step, index) => {
-		      const graphNode = nodes.find(node => {
-		        const nodeEntity = node.data?.entity as GraphEntity | undefined
-		        if (nodeEntity?.type !== 'proxy-path-step') return false
-		        const canonical = allSteps.find(item => item.id === nodeEntity.id)
-		        return canonical?.position === step.position && graphPathIDs(node).includes(path.id)
-		      })
-		      const position = graphNode?.position || (index ? { x: fallback.x + 280, y: fallback.y } : fallback)
-		      fallback = position
-		      return { step: { ...step }, position: { ...position } }
-		    })
 
-		    try {
-		      const result = await client.request(`/proxy-path-steps/${selectedCandidate.step.id}`, { method: 'DELETE' }) as Record<string, any>
-		      applyMutationResult(result)
-		      removeMutationRows(proxyPathStepDeleteRemovals(path.id, selectedCandidate.step.id, allSteps, result.path_deleted === true))
-		      setCanvasDetachedChains(chains => [...chains, {
-		        instance_id: instanceID,
-		        root_server_id: rootEntry.server_id,
-		        source_path_id: path.id,
-		        source_path_name: path.name || `路径 ${path.id}`,
-		        steps: chainSteps,
-		      }])
-		      setPositions(current => {
-		        const next = { ...current }
-		        suffix.forEach(step => { delete next[proxyPathStepNodeID(step)] })
-		        saveGraphPositions(next)
-		        return next
-		      })
-		      setFocusedPathID(path.id)
-		      reconcileTopology()
-		    } catch (error: any) {
-		      await dialogs.alert({ title: '断开失败', message: localizeErrorMessage(error?.message || error) })
-		    }
-		  }
-		const editProxyPathTransportForEntity = async (entity: GraphEntity | null | undefined) => {
+        const result = await client.request(`/proxy-path-steps/${selectedCandidate!.step.id}`, { method: 'DELETE' }) as Record<string, any>
+
+        patchPageData?.((current: any) => removeTopologyRows(mergeTopologyMutation(current, result), proxyPathStepDeleteRemovals(path.id, selectedCandidate!.step.id, allSteps, result.path_deleted === true)))
+        setCanvasDetachedChains(chains => [...chains, {
+          instance_id: instanceID,
+          root_server_id: rootEntry.server_id,
+          source_path_id: path.id,
+          source_path_name: path.name || `路径 ${path.id}`,
+          steps: chainSteps,
+        }])
+        setPositions(current => {
+          const next = { ...current }
+          suffix.forEach(step => { delete next[proxyPathStepNodeID(step)] })
+          saveGraphPositions(next)
+          return next
+        })
+        setFocusedPathID(path.id)
+        reconcileTopology()
+
+      }),
+    })
+  }
+    const editProxyPathTransportForEntity = async (entity: GraphEntity | null | undefined) => {
 	  if (!entity || entity.type !== 'proxy-path-step') return
 	  const step = (data.proxy_path_steps || []).find((x: ProxyPathStep) => x.id === entity.id)
 	  if (!step) return
@@ -12295,14 +12316,14 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     if (pendingGraphNodeIDs.length) return
     const entity = graphMenu?.entity
     setGraphMenu(null)
-    if (entity) await withGraphPending(graphEntityNodeIDs(entity), () => deleteGraphEntity(entity))
+    if (entity) await deleteGraphEntity(entity)
   }
 	const disconnectGraphMenuEdge = async () => {
     if (pendingGraphNodeIDs.length) return
 	  const entity = graphMenu?.entity
 	  const pathIDs = graphMenu?.pathIDs || []
 	  setGraphMenu(null)
-	  if (entity) await withGraphPending(graphEntityNodeIDs(entity), () => disconnectGraphEdge(entity, pathIDs))
+	  if (entity) await disconnectGraphEdge(entity, pathIDs)
 	}
   const graphMenuStep = graphMenu?.entity.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id) : undefined
   const graphMenuPrimaryLabel = graphMenu ? graphEntityPrimaryActionLabel(graphMenu.entity, graphMenuStep) : ''
