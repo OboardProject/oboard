@@ -172,7 +172,7 @@ type Server struct {
 	connectionAuditCacheValid     bool
 	connectionAuditComputing      bool
 	notificationWG                sync.WaitGroup
-	serverDeletionMu              sync.Mutex
+	serverDeletionLocks           sync.Map
 	serverDeletionWG              sync.WaitGroup
 	notificationSender            func(context.Context, model.NotificationChannel, string, string) error
 	telegramAPI                   func(context.Context, string, string, url.Values) ([]byte, error)
@@ -4659,7 +4659,14 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 		// The record itself is still there, so this is a real failure.
 		return http.StatusInternalServerError, err
 	}
-	s.releaseServerDeletionInBackground(deletion)
+	var cleanup serverDeletionPayload
+	if json.Unmarshal([]byte(deletion.Payload), &cleanup) == nil && len(cleanup.DNSRecords) == 0 {
+		if err := s.completeServerDeletion(ctx, deletion); err != nil {
+			s.releaseServerDeletionInBackground(deletion)
+		}
+	} else {
+		s.releaseServerDeletionInBackground(deletion)
+	}
 	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
 	return 0, nil
 }
@@ -15097,7 +15104,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		s.unregisterAgentConn(server.ID, conn)
 		s.unregisterAgentLive(server.ID, controlCh)
-		s.trackAgentConnection(context.Background(), server.ID, false, time.Now().UTC())
+		s.trackAgentDisconnection(server)
 		log.Printf("agent disconnected server=%d(%s) connected_for=%s", server.ID, safeLogField(server.Name), time.Since(connectedAt).Round(time.Second))
 	}()
 	mode, _ := serverMonitoringPolicy(server)
@@ -15215,7 +15222,7 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 	claimTask := func() {
 		for inFlightTaskID == 0 {
 			latest, loadErr := s.store.GetServer(ctx, server.ID)
-			if loadErr != nil || latest.AgentID != connectedAgentID {
+			if loadErr != nil || latest.AgentID != connectedAgentID || !latest.CreatedAt.Equal(server.CreatedAt) {
 				return
 			}
 			server = latest
@@ -15272,6 +15279,10 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 			if received.err != nil {
 				return
 			}
+			latest, err := s.store.GetServer(ctx, server.ID)
+			if err != nil || latest.AgentID != connectedAgentID || !latest.CreatedAt.Equal(server.CreatedAt) {
+				return
+			}
 			var envelope struct {
 				Type   string `json:"type"`
 				TaskID int64  `json:"task_id"`
@@ -15320,6 +15331,10 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 		case <-notifyCh:
 			claimTask()
 		case payload := <-controlCh:
+			latest, err := s.store.GetServer(ctx, server.ID)
+			if err != nil || latest.AgentID != connectedAgentID || !latest.CreatedAt.Equal(server.CreatedAt) {
+				return
+			}
 			if err := writeAgentJSON(payload); err != nil {
 				return
 			}
@@ -15333,9 +15348,11 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 			}
 			pingTimer.Reset(pingInterval)
 		case <-heartbeatTimer.C:
-			if latest, loadErr := s.store.GetServer(ctx, server.ID); loadErr == nil {
-				server = latest
+			latest, loadErr := s.store.GetServer(ctx, server.ID)
+			if loadErr != nil || latest.AgentID != connectedAgentID || !latest.CreatedAt.Equal(server.CreatedAt) {
+				return
 			}
+			server = latest
 			mode, heartbeatInterval = serverMonitoringPolicy(server)
 			auditEnabled = s.effectiveConnectionAuditEnabled(ctx, server)
 			s.syncConnectionAuditPresence(ctx, server, auditEnabled)

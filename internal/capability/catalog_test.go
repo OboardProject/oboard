@@ -195,6 +195,9 @@ func TestDefaultCatalogExposesServerLifecycle(t *testing.T) {
 	if !ok || !onboard.Executable || !strings.Contains(onboard.Description, "servers.enrollment.issue") {
 		t.Fatalf("servers.onboard=%#v ok=%v", onboard, ok)
 	}
+	if !strings.Contains(onboard.Description, "最小空闲 Server ID") || !strings.Contains(string(onboard.OutputSchema), "不是永久身份标识") {
+		t.Fatal("server ID recycling contract is missing from MCP")
+	}
 	issue, ok := catalog.Get("servers.enrollment.issue")
 	if !ok || !issue.Executable || issue.ReadOnly || issue.Destructive || !slices.Contains(issue.SensitiveOutput, "enrollment_token") {
 		t.Fatalf("servers.enrollment.issue=%#v ok=%v", issue, ok)

@@ -380,7 +380,7 @@ func TestPlanNodeSavesCoalesceBeforePreparingConfiguration(t *testing.T) {
 // reporting "plan version is still applying" forever.
 func TestDeleteServerSupersedesFailedPlanVersion(t *testing.T) {
 	h, srv, token := setupPlansAPITestServer(t)
-	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "broken", "entry_ip_mode": "custom", "entry_address": "203.0.113.9", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"auto_renew_enabled": false, "name": "broken", "entry_ip_mode": "custom", "entry_address": "203.0.113.9", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(server["id"].(float64))
 	first := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
 	second := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless2", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 8443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)

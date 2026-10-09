@@ -23,6 +23,74 @@ type fakeCloudflareRecord struct {
 	ID, Type, Name, Content, Comment string
 }
 
+func TestServerDeletionReusesIDAndIgnoresStaleWorker(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	first := &model.Server{Name: "old"}
+	if err := db.CreateServer(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	oldDeletion, _, err := db.BeginServerDeletion(ctx, first.ID, first.Name, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.deleteServerRecord(ctx, first.ID, nil, "test"); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &model.Server{Name: "new"}
+	if err := db.CreateServer(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ID != first.ID {
+		t.Fatalf("ID=%d, want %d", replacement.ID, first.ID)
+	}
+	if err := srv.finishServerDeletion(ctx, oldDeletion); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := db.GetServer(ctx, replacement.ID); err != nil || current.Name != "new" {
+		t.Fatalf("stale worker removed replacement: %v %v", current, err)
+	}
+	newDeletion, _, err := db.BeginServerDeletion(ctx, replacement.ID, replacement.Name, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.finishServerDeletion(ctx, oldDeletion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.GetServer(ctx, replacement.ID); err != nil {
+		t.Fatalf("old worker joined a new deletion: %v", err)
+	}
+	if err := srv.finishServerDeletion(ctx, newDeletion); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServerDeletionAPIReusesIDImmediately(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	create := func(name string) map[string]any {
+		return request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": name, "auto_renew_enabled": false}, http.StatusCreated)["server"].(map[string]any)
+	}
+	first := create("old")
+	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/servers/%d", int64(first["id"].(float64))), token, nil, http.StatusOK)
+	replacement := create("replacement")
+	if replacement["id"] != first["id"] {
+		t.Fatalf("replacement ID=%v want %v", replacement["id"], first["id"])
+	}
+}
+
 // newFakeCloudflare serves the small slice of the Cloudflare API the DNS
 // integration uses. `down` makes every record call fail so an unreachable
 // provider can be exercised.
@@ -99,7 +167,7 @@ func TestServerDeleteSurvivesUnreachableDNSProvider(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"auto_renew_enabled": false, "name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(created["id"].(float64))
 	credential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)["dns_credential"].(map[string]any)
 	credentialID := int64(credential["id"].(float64))
@@ -162,7 +230,7 @@ func TestServerDeleteResumesAfterRestart(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "interrupted", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"auto_renew_enabled": false, "name": "interrupted", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(created["id"].(float64))
 
 	// The process died right after claiming the deletion.
@@ -261,7 +329,7 @@ func TestDeletionClaimBlocksNewWorkOnTheServer(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "doomed", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"auto_renew_enabled": false, "name": "doomed", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(created["id"].(float64))
 
 	// A deletion was claimed and the process died before it finished.
@@ -312,7 +380,7 @@ func TestServerDeleteDoesNotWaitForDNSProvider(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"auto_renew_enabled": false, "name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(created["id"].(float64))
 	credential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)["dns_credential"].(map[string]any)
 	credentialID := int64(credential["id"].(float64))

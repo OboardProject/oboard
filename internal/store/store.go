@@ -2785,7 +2785,24 @@ func (s *Store) createServer(ctx context.Context, v *model.Server, used *int64, 
 	result := v
 	created := *v
 	v = &created
-	res, err := tx.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,interface_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,listen_mode,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,stealth_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,connection_audit_enabled,port_policy_revision,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.StealthEnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), v.PortPolicyRevision, nilTime(v.LastSeenAt), ts, ts)
+	var recycled bool
+	if err := tx.QueryRowContext(ctx, `with occupied(id) as (
+		select id from servers union select server_id from server_deletions
+		union select cast(json_extract(j.value,'$.server_id') as integer)
+		from app_settings s,json_each(case when json_valid(s.value) then s.value else '[]' end) j
+		where s.key='controller_base_path_migration_targets' and json_extract(j.value,'$.server_id')>0
+	), candidates(id) as (
+		select 1 union select id+1 from occupied where id<9223372036854775807
+	) select min(id),min(id)<=coalesce((select seq from sqlite_sequence where name='servers'),0)
+	from candidates where id not in (select id from occupied)`).Scan(&v.ID, &recycled); err != nil {
+		return err
+	}
+	if recycled {
+		if err := releaseServerReferencesTx(ctx, tx, v.ID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `insert into servers(id,name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,interface_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,listen_mode,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,stealth_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,connection_audit_enabled,port_policy_revision,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.StealthEnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), v.PortPolicyRevision, nilTime(v.LastSeenAt), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2887,6 +2904,15 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 		}
 		if claimed {
 			return ErrServerDeleting
+		}
+	}
+	if !v.CreatedAt.IsZero() {
+		var createdAt string
+		if err := tx.QueryRowContext(ctx, `select created_at from servers where id=?`, v.ID).Scan(&createdAt); err != nil {
+			return err
+		}
+		if !parseTime(createdAt).Equal(v.CreatedAt) {
+			return ErrServerRevisionConflict
 		}
 	}
 	if options.ExpectedUpdatedAt != nil {

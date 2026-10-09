@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -216,6 +217,11 @@ func (s *Server) releaseServerDeletionZone(ctx context.Context, credentialID, zo
 // external state is still to be released, and the worker keeps retrying it.
 var errServerExternalCleanupPending = errors.New("服务器已删除，外部资源清理将自动重试")
 
+func (s *Server) serverDeletionLock(serverID int64) *sync.Mutex {
+	lock, _ := s.serverDeletionLocks.LoadOrStore(serverID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 // finishServerDeletion drives one deletion from wherever it currently is to
 // completion. It is safe to call repeatedly and from the resume worker.
 func (s *Server) finishServerDeletion(ctx context.Context, deletion store.ServerDeletion) error {
@@ -229,6 +235,18 @@ func (s *Server) finishServerDeletion(ctx context.Context, deletion store.Server
 // removeDeletedServerRecord runs the local stage: history purge and the row
 // delete. It only touches SQLite, so it stays on the request path.
 func (s *Server) removeDeletedServerRecord(ctx context.Context, deletion store.ServerDeletion) (store.ServerDeletion, error) {
+	lock := s.serverDeletionLock(deletion.ServerID)
+	lock.Lock()
+	defer lock.Unlock()
+	current, err := s.store.GetServerDeletion(ctx, deletion.ServerID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !current.RequestedAt.Equal(deletion.RequestedAt)) {
+		deletion.Stage = ""
+		return deletion, nil
+	}
+	if err != nil {
+		return deletion, err
+	}
+	deletion = current
 	if deletion.Stage != store.ServerDeletionPurging {
 		return deletion, nil
 	}
@@ -239,6 +257,7 @@ func (s *Server) removeDeletedServerRecord(ctx context.Context, deletion store.S
 		return deletion, err
 	}
 	s.forgetServerRuntimeState(deletion.ServerID)
+	s.evictAgentSessions(deletion.ServerID)
 	if err := s.store.SetServerDeletionStage(ctx, deletion.ServerID, store.ServerDeletionExternal); err != nil {
 		return deletion, err
 	}
@@ -264,14 +283,18 @@ func (s *Server) releaseServerDeletionInBackground(deletion store.ServerDeletion
 // background release and the retry worker share it, so it is serialized to
 // keep one provider cleanup per deletion in flight.
 func (s *Server) completeServerDeletion(ctx context.Context, deletion store.ServerDeletion) error {
-	s.serverDeletionMu.Lock()
-	defer s.serverDeletionMu.Unlock()
+	lock := s.serverDeletionLock(deletion.ServerID)
+	lock.Lock()
+	defer lock.Unlock()
 	current, err := s.store.GetServerDeletion(ctx, deletion.ServerID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if !current.RequestedAt.Equal(deletion.RequestedAt) {
+		return nil
 	}
 	deletion = current
 	if deletion.Stage != store.ServerDeletionExternal {
@@ -289,6 +312,12 @@ func (s *Server) completeServerDeletion(ctx context.Context, deletion store.Serv
 // forgetServerRuntimeState drops every per-server cache entry and lock object
 // that the deleted server owned.
 func (s *Server) forgetServerRuntimeState(serverID int64) {
+	s.agentLiveMu.Lock()
+	delete(s.agentLive, serverID)
+	s.agentLiveMu.Unlock()
+	s.agentConnectionMu.Lock()
+	delete(s.agentConnectionCount, serverID)
+	s.agentConnectionMu.Unlock()
 	s.forgetLatencyProbePlan(serverID)
 	s.forgetRemoteAccessStatus(serverID)
 	s.forgetPresenceAuditState(serverID)

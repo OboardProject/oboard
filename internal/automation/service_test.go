@@ -366,6 +366,42 @@ func openAutomationTestStore(t *testing.T) *store.Store {
 	return db
 }
 
+func TestChangesetRejectsReusedServerIDBeforeValidation(t *testing.T) {
+	ctx := context.Background()
+	db := openAutomationTestStore(t)
+	first := &model.Server{Name: "old"}
+	if err := db.CreateServer(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	catalog := capability.NewCatalog()
+	service := NewService(db, catalog)
+	principal := application.HumanPrincipal(model.User{ID: 1, Role: model.RoleAdmin}, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	descriptor, ok := catalog.Authorize(principal, "servers.delete")
+	if !ok {
+		t.Fatal("delete capability missing")
+	}
+	service.RegisterValidator("servers.delete", func(context.Context, application.Principal, json.RawMessage) (any, error) { return nil, nil })
+	service.Register("servers.delete", func(context.Context, application.Principal, json.RawMessage) (any, error) {
+		t.Fatal("stale delete executed")
+		return nil, nil
+	})
+	input, _ := json.Marshal(map[string]any{"server_id": first.ID, "confirm": true})
+	item := &model.AutomationChangeset{CreatedAt: first.CreatedAt, Operations: []model.AutomationOperation{{Capability: "servers.delete", RiskClass: descriptor.RiskClass, Input: input}}}
+	if err := db.DeleteServer(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &model.Server{Name: "new"}
+	if err := db.CreateServer(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ID != first.ID {
+		t.Fatalf("ID=%d want %d", replacement.ID, first.ID)
+	}
+	if _, _, err := service.inspectOperations(ctx, principal, item); err == nil || !strings.Contains(err.Error(), "was replaced") {
+		t.Fatalf("stale changeset accepted: %v", err)
+	}
+}
+
 func TestApproveAppliesChangeset(t *testing.T) {
 	db := openAutomationTestStore(t)
 	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}

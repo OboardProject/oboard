@@ -209,7 +209,7 @@ func bindConfigurationOperations(ctx context.Context, tx *sql.Tx, serverID int64
 		}
 	}
 	hashes := configurationFieldHashes(&v)
-	rows, err := tx.QueryContext(ctx, `select t.operation_id,t.desired_revision,f.field,f.value_hash from task_operation_targets t join configuration_operation_fields f on f.operation_id=t.operation_id where t.target_type='server' and t.target_id=? and t.desired_revision<=? and t.state in ('pending','failed','queued','evidence_insufficient')
+	rows, err := tx.QueryContext(ctx, `select t.operation_id,t.desired_revision,f.field,f.value_hash from task_operation_targets t join configuration_operation_fields f on f.operation_id=t.operation_id where t.target_type='server' and t.target_id=? and t.desired_revision<=? and t.cause_code!='server_deleted' and t.state in ('pending','failed','queued','evidence_insufficient')
  and (? or exists(select 1 from configuration_operation_attempts a join task_operation_links l
  on l.operation_id=a.operation_id and l.target_type=a.target_type and l.target_id=a.target_id and l.attempt=a.attempt
  where a.operation_id=t.operation_id and a.target_type=t.target_type and a.target_id=t.target_id

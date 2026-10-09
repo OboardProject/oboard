@@ -247,7 +247,7 @@ func (s *Server) runStealthSession(session *agentlink.Session, server *model.Ser
 	s.wakeRuntimeUsersSync()
 	defer func() {
 		s.unregisterAgentLive(server.ID, controlCh)
-		s.trackAgentConnection(context.Background(), server.ID, false, time.Now().UTC())
+		s.trackAgentDisconnection(server)
 		log.Printf("agent disconnected (stealth transport) server=%d(%s) connected_for=%s", server.ID, safeLogField(server.Name), time.Since(connectedAt).Round(time.Second))
 	}()
 	mode, _ := serverMonitoringPolicy(server)

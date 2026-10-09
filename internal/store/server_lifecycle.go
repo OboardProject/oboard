@@ -63,6 +63,9 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 			return err
 		}
 	}
+	if err := releaseServerReferencesTx(ctx, tx, serverID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}

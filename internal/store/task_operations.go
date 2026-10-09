@@ -191,7 +191,7 @@ func (s *Store) RetryTaskOperationTarget(ctx context.Context, operationID string
 	}
 	defer tx.Rollback()
 	var state string
-	err = tx.QueryRowContext(ctx, `select state from task_operation_targets where operation_id=? and target_type=? and target_id=? and operation_id not in (select id from task_operations where kind='servers.update')`, operationID, item.Target.Type, item.Target.ID).Scan(&state)
+	err = tx.QueryRowContext(ctx, `select state from task_operation_targets where operation_id=? and target_type=? and target_id=? and cause_code!='server_deleted' and operation_id not in (select id from task_operations where kind='servers.update')`, operationID, item.Target.Type, item.Target.ID).Scan(&state)
 	if err != nil {
 		return 0, err
 	}
@@ -272,7 +272,7 @@ func operationScope(allowedServerIDs []int64) (string, error) {
 	return string(b), err
 }
 
-const operationVisibleSQL = `not exists (select 1 from task_operation_targets t where t.operation_id=o.id and (t.target_type!='server' or t.target_id not in (select value from json_each(?))))`
+const operationVisibleSQL = `not exists (select 1 from task_operation_targets t where t.operation_id=o.id and (t.target_type!='server' or t.cause_code='server_deleted' or t.target_id not in (select value from json_each(?))))`
 
 // GetTaskOperation returns the full persisted target set, never a page-derived
 // aggregate. An empty allowlist denies access. Unknown and forbidden IDs both return sql.ErrNoRows.

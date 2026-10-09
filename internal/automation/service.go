@@ -538,8 +538,25 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 	}
 	now := s.now().UTC()
 	if item.Kind != "access_change" && (item.Status == model.WorkflowExternalActionRequired || item.Status == model.WorkflowWaitingForAgent) {
+		changeset, err := s.store.GetAutomationChangeset(ctx, item.ChangesetID)
+		if err != nil {
+			return nil, err
+		}
+		createdBefore := item.CreatedAt
+		if changeset.CompletedAt != nil {
+			createdBefore = *changeset.CompletedAt
+		}
 		serverID := workflowExternalServerID(item.NextAction)
 		server, err := s.store.GetServer(ctx, serverID)
+		if err == nil && server.CreatedAt.After(createdBefore) {
+			step := &item.Steps[0]
+			step.Status, step.Retryable, step.FinishedAt = "failed", false, &now
+			step.ErrorCode = "server_replaced"
+			item.Status, item.ErrorCode, item.CompletedAt = model.WorkflowFailed, "server_replaced", &now
+			item.ErrorMessage = "original server was deleted"
+			item.NextAction, step.NextAction = json.RawMessage(`{}`), json.RawMessage(`{}`)
+			return item, s.store.UpdateAutomationWorkflowAndStep(ctx, item, step)
+		}
 		if err != nil || server.Status != model.ServerOnline {
 			return item, nil
 		}
@@ -1007,6 +1024,28 @@ func (s *Service) inspectOperations(ctx context.Context, principal application.P
 		descriptor, ok := s.catalog.Authorize(principal, operation.Capability)
 		if !ok || descriptor.ReadOnly || !descriptor.Executable || descriptor.RiskClass != operation.RiskClass {
 			return nil, nil, fmt.Errorf("operation capability %q is no longer authorized", operation.Capability)
+		}
+		if !item.CreatedAt.IsZero() && descriptor.ResolveResourceRefs != nil {
+			refs, err := descriptor.ResolveResourceRefs(ctx, operation.Input)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, ref := range refs {
+				if ref.Type != "server" {
+					continue
+				}
+				id, err := strconv.ParseInt(ref.ID, 10, 64)
+				if err != nil {
+					return nil, nil, err
+				}
+				server, err := s.store.GetServer(ctx, id)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return nil, nil, err
+				}
+				if err == nil && server.CreatedAt.After(item.CreatedAt) {
+					return nil, nil, fmt.Errorf("server %d was replaced after this changeset was created", id)
+				}
+			}
 		}
 		validator := s.validator(operation.Capability)
 		if validator == nil || s.handler(operation.Capability) == nil {

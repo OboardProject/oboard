@@ -1,8 +1,20 @@
 package controller
 
 import (
+	"context"
+	"time"
+
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/gorilla/websocket"
 )
+
+func (s *Server) trackAgentDisconnection(server *model.Server) {
+	ctx := context.Background()
+	current, err := s.store.GetServer(ctx, server.ID)
+	if err == nil && current.CreatedAt.Equal(server.CreatedAt) && current.AgentID == server.AgentID {
+		s.trackAgentConnection(ctx, server.ID, false, time.Now().UTC())
+	}
+}
 
 type agentConnSession struct {
 	agentID string

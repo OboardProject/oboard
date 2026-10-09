@@ -419,7 +419,7 @@ func defaultDescriptors() []Descriptor {
 		input, output, evaluator := executableSchemas(domain.name)
 		description := "创建受验证和审批保护的管理变更"
 		if domain.name == "servers.onboard" {
-			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue。省略的字段使用与面板添加服务器相同的默认值；未提到的开关不要传 false。提交前可用 oboard_validate_form 核对 applied_defaults"
+			description = "创建服务器记录并可选签发一次性接入令牌；自动分配最小空闲 Server ID，删除清理完成后可复用；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue。省略的字段使用与面板添加服务器相同的默认值；未提到的开关不要传 false。提交前可用 oboard_validate_form 核对 applied_defaults"
 		} else if domain.name == "inbounds.create" {
 			description = "创建入口。AnyTLS / HY2 / VLESS WebSocket 必须提交证书覆盖的 SNI（certificate_domain，或由 dns_domain 继承），certificate_mode 默认 auto。dns_sync_enabled 默认 false：SNI 不必解析到本机，关闭时订阅 Host 用服务器公网 IP。只有显式同步解析（dns_sync_enabled=true 或提交 dns_domain）时 dns_credential_id 才必填（唯一凭据或 bootstrap default 可自动填充，否则 missing_dns_credential 带 available_credentials）。不要只为凑托管证书去开启解析同步。certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请。修改 dns_domain 会删除旧解析、写入新解析；已有覆盖证书则立刻绑定，否则下次部署申请"
 		} else if domain.name == "servers.reset_traffic" {
@@ -468,7 +468,7 @@ func defaultDescriptors() []Descriptor {
 	})
 	deleteInput, deleteOutput, _ := executableSchemas("servers.delete")
 	descriptors = append(descriptors, Descriptor{
-		Name: "servers.delete", Description: "删除服务器记录及其关联入口、路径与遥测；未接入 Agent 的重复或僵尸记录可直接清理",
+		Name: "servers.delete", Description: "删除服务器记录及其关联入口、路径与遥测；清理完成后释放 Server ID 供新服务器复用，旧服务器的指定授权不会继承；未接入 Agent 的重复或僵尸记录可直接清理",
 		InputSchema: deleteInput, OutputSchema: deleteOutput, RequiredScopes: []string{"servers:write"},
 		ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 3, ApprovalPolicy: "required",
 		Idempotent: true, DataClassification: DataInternal, Destructive: true, MCPEnabled: true, Executable: true,
@@ -738,7 +738,13 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		}, "name", "auto_renew_enabled")
 		serverInput["if"] = map[string]any{"properties": map[string]any{"auto_renew_enabled": map[string]any{"const": true}}}
 		serverInput["then"] = map[string]any{"required": []string{"renewal_cycle"}}
-		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
+		serverOutputProperties := map[string]any{}
+		for key, value := range serverInput["properties"].(map[string]any) {
+			serverOutputProperties[key] = value
+		}
+		serverOutputProperties["id"] = map[string]any{"type": "integer", "minimum": 1, "description": "自动分配最小空闲 Server ID；删除清理完成后可复用，不是永久身份标识"}
+		serverOutput := map[string]any{"type": "object", "properties": serverOutputProperties, "required": []string{"id", "name"}}
+		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverOutput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
 		changes := closedObject(map[string]any{
