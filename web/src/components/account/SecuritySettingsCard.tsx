@@ -109,7 +109,6 @@ export function SecuritySettingsCard({
           <h3>
             <ShieldCheck size={16} />登录与安全
           </h3>
-          <p className="muted">管理密码、两步验证和通行密钥。</p>
         </div>
       </div>
 
