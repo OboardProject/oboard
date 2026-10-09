@@ -651,7 +651,14 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 			record.Comment, record.ServerID, record.InboundID = local.Comment, local.ServerID, local.InboundID
 		}
 		if normalizeDomainName(record.Name) == domain {
-			existing[strings.ToUpper(record.Type)] = record
+			recordType := strings.ToUpper(record.Type)
+			if recordType != "A" && recordType != "AAAA" && recordType != "CNAME" {
+				continue
+			}
+			if _, duplicate := existing[recordType]; duplicate {
+				return "", fmt.Errorf("DDNS 域名 %s 存在多条 %s 记录，请在 DNS 服务商处确认并保留唯一记录后重试", domain, recordType)
+			}
+			existing[recordType] = record
 		}
 	}
 	desired := map[string]bool{}

@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -119,9 +120,11 @@ func (b dnsProviderBase) record(id, recordType, name, content string, ttl int, p
 
 type cloudflareDNSProvider struct {
 	dnsProviderBase
-	token     string
-	accountID string
-	apiBase   string
+	token        string
+	accountID    string
+	apiBase      string
+	zoneMu       sync.Mutex
+	resolvedZone cloudflareZone
 }
 
 func (p *cloudflareDNSProvider) client() *cloudflareClient {
@@ -131,20 +134,28 @@ func (p *cloudflareDNSProvider) client() *cloudflareClient {
 }
 
 func (p *cloudflareDNSProvider) zone(ctx context.Context) (cloudflareZone, error) {
-	client := p.client()
 	if strings.TrimSpace(p.credential.ZoneID) != "" {
-		var zone cloudflareZone
-		if err := client.do(ctx, http.MethodGet, "/zones/"+url.PathEscape(p.credential.ZoneID), nil, nil, &zone); err != nil {
-			return cloudflareZone{}, err
-		}
-		return zone, nil
+		return cloudflareZone{ID: p.credential.ZoneID, Name: p.credential.ZoneName}, nil
 	}
-	return client.findZone(ctx, p.credential.ZoneName)
+	p.zoneMu.Lock()
+	defer p.zoneMu.Unlock()
+	if p.resolvedZone.ID != "" {
+		return p.resolvedZone, nil
+	}
+	zone, err := p.client().findZone(ctx, p.credential.ZoneName)
+	if err == nil {
+		p.resolvedZone = zone
+	}
+	return zone, err
 }
 
 func (p *cloudflareDNSProvider) Verify(ctx context.Context) error {
 	if _, err := p.client().verifyToken(ctx); err != nil {
 		return err
+	}
+	if strings.TrimSpace(p.credential.ZoneID) != "" {
+		var zone cloudflareZone
+		return p.client().do(ctx, http.MethodGet, "/zones/"+url.PathEscape(p.credential.ZoneID), nil, nil, &zone)
 	}
 	_, err := p.zone(ctx)
 	return err

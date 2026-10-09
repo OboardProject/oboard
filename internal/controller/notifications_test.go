@@ -662,7 +662,7 @@ func TestOperationalNotificationEventsUseAdminScope(t *testing.T) {
 	sentMu.Lock()
 	defer sentMu.Unlock()
 	joined := strings.Join(sent, "\n")
-	for _, expected := range []string{"证书到期提醒", "自动备份失败", "主控自动更新失败", "域名自动更新失败"} {
+	for _, expected := range []string{"证书到期提醒", "自动备份失败", "主控自动更新失败", "DDNS 更新失败"} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("missing %s in notifications: %s", expected, joined)
 		}

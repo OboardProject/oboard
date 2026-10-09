@@ -1442,7 +1442,7 @@ const fieldLabels: Record<string, string> = {
   id: 'ID', server_id: '服务器', source_server_id: '源服务器', target_server_id: '目标服务器', next_server_id: '下一跳服务器', user_id: '用户', group_id: '用户组', subject_id: '授权对象', profile_id: '订阅配置', inbound_id: '入口', inbound_users: '入口用户', outbound_id: '出口', external_outbound_id: '导入节点', external_outbound_access_grants: '导入节点授权',
   name: '名称', region: '地区', region_code: '地区代码', region_mode: '地区来源', username: '用户名', nickname: '昵称', password: '密码', role: '角色', status: '状态', enabled: '启用', expose_to_users: '显示到订阅', protocol: '协议', type: '类型', scope: '作用域', action: '动作', priority: '优先级',
   entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', interface_ipv6: '网卡 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_mode: '监听模式', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
-  dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: '自动更新地址', ddns_interval_seconds: '更新间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
+  dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: 'DDNS', ddns_interval_seconds: 'DDNS 检查间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
   ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', stealth_enabled: '安全进程',
   os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
@@ -14832,12 +14832,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 </FormField>}
                 {entryMode !== 'custom' && <div className="switch-setting-row">
                   <span className="switch-setting-label">
-                    公网 IP 变化时定时更新
-                    <FieldHelp label="公网 IP 变化时定时更新" hint="服务器公网地址变化后，按间隔把解析记录更新到新地址。" />
+                    DDNS
+                    <FieldHelp label="DDNS" hint="动态域名解析：按检查间隔，将解析记录同步到 Agent 上报的服务器公网 IP。" />
                   </span>
-                  <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} ariaLabel="公网 IP 变化时定时更新" />
+                  <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} ariaLabel="DDNS" />
                 </div>}
-                {draft.ddns_enabled && <FormField label="检查间隔" hint="定时检查公网地址并同步解析的间隔。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
+                {draft.ddns_enabled && <FormField label="DDNS 检查间隔" hint="同步成功或失败后，等待此间隔再检查。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
               </> : null
   const entryAddressDisplay = (() => {
     const formatted = entryAddress ? formatHostPort(entryAddress, displayPort) : ''
@@ -20004,7 +20004,7 @@ const fallbackNotificationEventOptions: NotificationEventDefinition[] = [
   { value: 'server_expiring', label: '服务器到期', description: '服务器到期前提醒；默认剩余 7 天提醒一次，进入剩余 3 天后每天提醒到到期当天', variables: ['ServerName', 'ServerID', 'ExpiresAt', 'RemainingDays', 'Status', 'Time'] },
   { value: 'backup_failed', label: '自动备份失败', description: '本地自动备份或第三方上传未完成时提醒', variables: ['Stage', 'Error', 'Time'] },
   { value: 'controller_update_failed', label: '主控自动更新失败', description: '自动检查、备份或安装主控更新失败时提醒', variables: ['Stage', 'CurrentVersion', 'TargetVersion', 'Error', 'Time'] },
-  { value: 'dns_sync_failed', label: '域名自动更新失败', description: '入口域名记录自动更新失败时提醒', variables: ['InboundName', 'Domain', 'ServerName', 'Error', 'Time'] },
+  { value: 'dns_sync_failed', label: 'DDNS 更新失败', description: 'DDNS 或入口 DNS 记录同步失败时提醒', variables: ['InboundName', 'Domain', 'ServerName', 'Error', 'Time'] },
   { value: 'admin_announcement', label: '管理员通知', description: '管理员向你发送消息时提醒', variables: ['Title', 'Message', 'Sender', 'Time'] },
 ]
 
@@ -20022,7 +20022,7 @@ const fallbackNotificationTemplates: Record<string, NotificationTemplate> = {
   server_expiring: { title: '服务器到期提醒 · {{.ServerName}}', body: '{{.ServerName}}\n状态：{{.Status}}\n剩余：{{.RemainingDays}} 天\n到期：{{.ExpiresAt}}\n时间：{{.Time}}' },
   backup_failed: { title: '自动备份失败 · {{.Stage}}', body: '{{.Stage}}未完成\n原因：{{.Error}}\n时间：{{.Time}}' },
   controller_update_failed: { title: '主控自动更新失败 · {{.Stage}}', body: '当前版本：{{.CurrentVersion}}\n目标版本：{{.TargetVersion}}\n阶段：{{.Stage}}\n原因：{{.Error}}\n时间：{{.Time}}' },
-  dns_sync_failed: { title: '域名自动更新失败 · {{.Domain}}', body: '服务器：{{.ServerName}}\n入口：{{.InboundName}}\n域名：{{.Domain}}\n原因：{{.Error}}\n时间：{{.Time}}' },
+  dns_sync_failed: { title: 'DDNS 更新失败 · {{.Domain}}', body: '服务器：{{.ServerName}}\n入口：{{.InboundName}}\n域名：{{.Domain}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   admin_announcement: { title: '{{.Title}}', body: '{{.Message}}\n\n来自：{{.Sender}}' },
 }
 

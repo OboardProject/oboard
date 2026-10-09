@@ -137,7 +137,7 @@ func (c *cloudflareClient) do(ctx context.Context, method, path string, query ur
 		err := c.doOnce(ctx, method, path, query, body, out)
 		var network net.Error
 		var temporary cloudflareTemporaryError
-		retryable := errors.As(err, &network) || errors.As(err, &temporary)
+		retryable := errors.As(err, &network) || errors.As(err, &temporary) || errors.Is(err, io.ErrUnexpectedEOF)
 		if err == nil || method != http.MethodGet || !retryable || attempt >= 2 || ctx.Err() != nil {
 			return err
 		}
@@ -193,7 +193,10 @@ func (c *cloudflareClient) doOnce(ctx context.Context, method, path string, quer
 	}
 	var envelope cloudflareEnvelope
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&envelope); err != nil {
-		return fmt.Errorf("cloudflare API returned HTTP %d", resp.StatusCode)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("cloudflare API returned HTTP %d", resp.StatusCode)
+		}
+		return fmt.Errorf("decode cloudflare API response (HTTP %d): %w", resp.StatusCode, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !envelope.Success {
 		return fmt.Errorf("cloudflare API request failed: %s", cloudflareErrorText(envelope.Errors, resp.StatusCode))

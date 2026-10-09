@@ -85,7 +85,7 @@ var notificationEventDefinitions = []notificationEventDefinition{
 	{notificationServerExpiry, "服务器到期", "服务器到期前提醒；默认剩余 7 天提醒一次，进入剩余 3 天后每天提醒到到期当天", []string{"ServerName", "ServerID", "ExpiresAt", "RemainingDays", "Status", "Time"}},
 	{notificationBackupFailed, "自动备份失败", "本地自动备份或第三方上传未完成时提醒", []string{"Stage", "Error", "Time"}},
 	{notificationUpdateFailed, "主控自动更新失败", "自动检查、备份或安装主控更新失败时提醒", []string{"Stage", "CurrentVersion", "TargetVersion", "Error", "Time"}},
-	{notificationDNSSyncFailed, "域名自动更新失败", "入口域名记录自动更新失败时提醒", []string{"InboundName", "Domain", "ServerName", "Error", "Time"}},
+	{notificationDNSSyncFailed, "DDNS 更新失败", "DDNS 或入口 DNS 记录同步失败时提醒", []string{"InboundName", "Domain", "ServerName", "Error", "Time"}},
 	{notificationAdminAnnouncement, "管理员通知", "管理员向你发送消息时提醒", []string{"Title", "Message", "Sender", "Time"}},
 }
 
@@ -143,7 +143,7 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 		Body:  "当前版本：{{.CurrentVersion}}\n目标版本：{{.TargetVersion}}\n阶段：{{.Stage}}\n原因：{{.Error}}\n时间：{{.Time}}",
 	},
 	notificationDNSSyncFailed: {
-		Title: "域名自动更新失败 · {{.Domain}}",
+		Title: "DDNS 更新失败 · {{.Domain}}",
 		Body:  "服务器：{{.ServerName}}\n入口：{{.InboundName}}\n域名：{{.Domain}}\n原因：{{.Error}}\n时间：{{.Time}}",
 	},
 	notificationAdminAnnouncement: {
