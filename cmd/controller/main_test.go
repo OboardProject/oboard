@@ -2,9 +2,115 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestServeControllerDrainsActiveRequests(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		_, _ = io.WriteString(w, "drained")
+	})}
+	defer srv.Close()
+	done := make(chan error, 1)
+	go func() { done <- serveController(ctx, srv, listener, 3*time.Second) }()
+	client := &http.Client{Timeout: 5 * time.Second}
+	defer client.CloseIdleConnections()
+	response := make(chan error, 1)
+	go func() {
+		r, err := client.Get("http://" + listener.Addr().String())
+		if err == nil {
+			defer r.Body.Close()
+			var body []byte
+			body, err = io.ReadAll(r.Body)
+			if err == nil && string(body) != "drained" {
+				err = errors.New("active response was not drained")
+			}
+		}
+		response <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("server returned before active request finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release <- struct{}{}
+	if err := <-response; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServeControllerClosesRequestsAfterShutdownDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	started, finished := make(chan struct{}), make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(finished)
+	})}
+	defer srv.Close()
+	done := make(chan error, 1)
+	go func() { done <- serveController(ctx, srv, listener, 20*time.Millisecond) }()
+	client := &http.Client{Timeout: 5 * time.Second}
+	defer client.CloseIdleConnections()
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		if r, err := client.Get("http://" + listener.Addr().String()); err == nil {
+			r.Body.Close()
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not start")
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown error = %v", err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("active request was not canceled after shutdown deadline")
+	}
+	<-clientDone
+}
 
 func TestDefaultListenAddress(t *testing.T) {
 	if defaultListenAddress != ":2787" {

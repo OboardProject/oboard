@@ -77,3 +77,28 @@ func TestRoutingSnapshotContinuousChangesAreBounded(t *testing.T) {
 		t.Fatalf("entry=%v err=%v loads=%d", entry, err, loads)
 	}
 }
+
+func TestRoutingSnapshotWaiterSurvivesBuilderCancellation(t *testing.T) {
+	for _, buildErr := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(buildErr.Error(), func(t *testing.T) {
+			db, err := store.Open(filepath.Join(t.TempDir(), "routing.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			srv := newTestServer(db, "snapshot-secret", "")
+			done := make(chan struct{})
+			close(done)
+			srv.routingSnapshotInflight = &routingSnapshotBuild{done: done, err: buildErr}
+			entry, err := srv.routingSnapshot(context.Background())
+			if err != nil || entry == nil {
+				t.Fatalf("live waiter inherited another request's cancellation: entry=%v err=%v", entry, err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if _, err := srv.routingSnapshot(ctx); !errors.Is(err, context.Canceled) {
+				t.Fatalf("waiter's own cancellation was ignored: %v", err)
+			}
+		})
+	}
+}

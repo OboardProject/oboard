@@ -158,7 +158,11 @@ func (s *Server) routingSnapshotOnce(ctx context.Context) (*routingSnapshot, err
 		s.routingSnapshotMu.Unlock()
 		select {
 		case <-build.done:
-			if build.err == nil && (build.entry == nil || build.entry.revision < revision) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			canceled := errors.Is(build.err, context.Canceled) || errors.Is(build.err, context.DeadlineExceeded)
+			if canceled || (build.err == nil && (build.entry == nil || build.entry.revision < revision)) {
 				// The builder clears this before waking waiters; drop a
 				// finished build defensively so the retry cannot rejoin it.
 				s.routingSnapshotMu.Lock()
@@ -199,8 +203,8 @@ var (
 	// bounded attempt, so no snapshot can be certified against one revision.
 	errRoutingSnapshotChanged = errors.New("routing configuration changed during snapshot construction; retry")
 	// errRoutingSnapshotStaleJoin is internal: a coalesced waiter found the
-	// build it joined older than the revision it needs and must rebuild.
-	errRoutingSnapshotStaleJoin = errors.New("joined routing snapshot build is older than the required revision")
+	// build it joined obsolete or canceled by its initiating request.
+	errRoutingSnapshotStaleJoin = errors.New("joined routing snapshot build is obsolete or canceled")
 )
 
 func (s *Server) buildRoutingSnapshotLocked(ctx context.Context, revision uint64) (*routingSnapshot, error) {

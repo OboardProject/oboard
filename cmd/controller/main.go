@@ -177,18 +177,34 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
+	log.Printf("OBoard controller listening on %s%s", *addr, app.BasePath())
+	if err := serveController(ctx, srv, listener, 10*time.Second); err != nil {
+		log.Printf("controller stopped: %v", err)
+	}
+}
+
+func serveController(ctx context.Context, srv *http.Server, listener net.Listener, timeout time.Duration) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	shutdownDone := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("controller shutdown: %v", err)
+		err := srv.Shutdown(shutdownCtx)
+		if err != nil {
+			_ = srv.Close()
 		}
+		shutdownDone <- err
 	}()
-	log.Printf("OBoard controller listening on %s%s", *addr, app.BasePath())
-	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+	err := srv.Serve(listener)
+	cancel()
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
 	}
+	// Serve returns as soon as Shutdown closes the listener, before active
+	// requests finish using the application and database.
+	return errors.Join(err, <-shutdownDone)
 }
 
 func parseLogOutput(value string) (string, error) {
