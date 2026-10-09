@@ -2950,10 +2950,6 @@ type ConnectionAuditReport struct {
 	SourceISP            string    `json:"source_isp,omitempty"`
 	GeoDatabaseRevision  string    `json:"geo_database_revision,omitempty"`
 	Network              string    `json:"network"`
-	Destination          string    `json:"destination,omitempty"`
-	DestinationPort      int       `json:"destination_port,omitempty"`
-	OutboundTag          string    `json:"outbound_tag,omitempty"`
-	OutboundType         string    `json:"outbound_type,omitempty"`
 	ConnectionCount      int64     `json:"connection_count"`
 	ClosedCount          int64     `json:"closed_count"`
 	DurationTotalMS      int64     `json:"duration_total_ms"`
@@ -3138,8 +3134,6 @@ type ConnectionAuditOverview struct {
 type ConnectionAuditUserDetail struct {
 	Summary       ConnectionAuditUserSummary `json:"summary"`
 	Sources       []ConnectionAuditDimension `json:"sources"`
-	Destinations  []ConnectionAuditDimension `json:"destinations"`
-	Outbounds     []ConnectionAuditDimension `json:"outbounds"`
 	Servers       []ConnectionAuditDimension `json:"servers"`
 	Recent        []ConnectionAuditReport    `json:"recent"`
 	RiskEvents    []ConnectionAuditRiskEvent `json:"risk_events"`

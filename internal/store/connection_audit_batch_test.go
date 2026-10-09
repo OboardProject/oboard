@@ -53,8 +53,12 @@ func connectionAuditParityFixture(t *testing.T, s *Store, server *model.Server) 
 	dropped.DroppedBucketCount = 3
 	dropped.ProbeState = "confirmed"
 	reports = append(reports, dropped)
-	reports = append(reports, probeParityReports(server.ID, users[2].ID, "parity-c-probe", 4, 4, at.Add(-30*time.Second), "confirmed")...)
-	reports = append(reports, probeParityReports(server.ID, users[2].ID, "parity-c-candidate", 4, 4, at.Add(-5*time.Second), "candidate")...)
+	inboundIDs := make([]int64, 4)
+	for i := range inboundIDs {
+		inboundIDs[i] = *newAuditTestInbound(t, s, server.ID, i)
+	}
+	reports = append(reports, probeParityReports(inboundIDs, server.ID, users[2].ID, "parity-c-probe", 4, 4, at.Add(-30*time.Second), "confirmed")...)
+	reports = append(reports, probeParityReports(inboundIDs, server.ID, users[2].ID, "parity-c-candidate", 4, 4, at.Add(-5*time.Second), "candidate")...)
 	// User D: shared route with user A, multiple source IPs, plus an internal
 	// probe that must never count as a device.
 	sharedLeft := meaningfulConnectionReport("parity-d-left", server.ID, users[3].ID, "parity-d-device", "203.0.113.7", "JP", "ISP-J", at, at.Add(30*time.Second))

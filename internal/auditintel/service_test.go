@@ -2,6 +2,7 @@ package auditintel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,13 +13,38 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-func TestEvaluateUserCreatesDeterministicIncidentWithoutQueuingAI(t *testing.T) {
+func TestExtractAuditFeaturesOnlyUsesConnectionSources(t *testing.T) {
+	at := time.Now().UTC()
+	var report model.ConnectionAuditReport
+	if err := json.Unmarshal([]byte("{\"source_ip\":\"8.8.8.8\",\"destination\":\"private.example\",\"destination_port\":443,\"outbound_tag\":\"private-exit\",\"connection_count\":3,\"active_peak\":2}"), &report); err != nil {
+		t.Fatal(err)
+	}
+	report.EndedAt = at
+	features, evidence := extractFeatures([]model.ConnectionAuditReport{report}, at.Add(-time.Minute), true)
+	if features.SourceIPCount != 1 || features.ConnectionCount != 3 || features.ActivePeak != 2 || deterministicScore(0, features) != 0 {
+		t.Fatalf("source statistics changed: %#v", features)
+	}
+	body, err := json.Marshal([]any{features, evidence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"destination", "outbound", "private.example", "private-exit"} {
+		if strings.Contains(string(body), key) {
+			t.Fatalf("retired exit evidence %q retained: %s", key, body)
+		}
+	}
+}
+
+func TestEvaluateSourceAuditDoesNotInferDestinationRiskOrQueueAI(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	ctx := context.Background()
+	if _, err := db.SetAuditCollection(ctx, model.AuditCollectionConfig{Mode: "standard"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	user := &model.User{Username: "audit-user", PasswordHash: "x", Role: model.RoleViewer, Status: "active", ProxyUUID: "00000000-0000-4000-8000-000000000001", ProxyPassword: "password", SubscriptionToken: "subscription-token"}
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
@@ -33,7 +59,7 @@ func TestEvaluateUserCreatesDeterministicIncidentWithoutQueuingAI(t *testing.T) 
 	now := time.Now().UTC()
 	reports := make([]model.ConnectionAuditReport, 0, 100)
 	for index := 0; index < 100; index++ {
-		reports = append(reports, model.ConnectionAuditReport{ReportID: fmt.Sprintf("report-%03d", index), ServerID: server.ID, UserID: user.ID, SourceIP: "203.0.113.10", SourceCountryCode: "US", Network: "tcp", Destination: fmt.Sprintf("target-%03d.example.com", index), DestinationPort: 1000 + index, ConnectionCount: 10, ActivePeak: 60, StartedAt: now.Add(-2 * time.Second), EndedAt: now})
+		reports = append(reports, model.ConnectionAuditReport{ReportID: fmt.Sprintf("report-%03d", index), ServerID: server.ID, UserID: user.ID, SourceIP: "203.0.113.10", SourceCountryCode: "US", Network: "tcp", ConnectionCount: 10, ActivePeak: 60, StartedAt: now.Add(-2 * time.Second), EndedAt: now})
 	}
 	if _, err := db.AddConnectionAuditReports(ctx, reports); err != nil {
 		t.Fatal(err)
@@ -43,18 +69,18 @@ func TestEvaluateUserCreatesDeterministicIncidentWithoutQueuingAI(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if incident == nil || incident.RuleScore < 50 || incident.Status != "open" {
+	if incident != nil {
 		t.Fatalf("unexpected incident: %#v", incident)
 	}
 	second, err := service.EvaluateUser(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second == nil || second.ID != incident.ID {
-		t.Fatalf("fingerprint did not deduplicate incident: first=%#v second=%#v", incident, second)
+	if second != nil {
+		t.Fatalf("source-only reevaluation inferred a destination risk: %#v", second)
 	}
 	items, err := db.ListAuditIncidents(ctx, 10)
-	if err != nil || len(items) != 1 {
+	if err != nil || len(items) != 0 {
 		t.Fatalf("incidents=%#v err=%v", items, err)
 	}
 	reviews, err := db.ListAuditReviews(ctx, 10)

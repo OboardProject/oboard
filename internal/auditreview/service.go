@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/publicsuffix"
-
 	"github.com/OboardProject/oboard/internal/aiprovider"
 	"github.com/OboardProject/oboard/internal/auditcontract"
 	"github.com/OboardProject/oboard/internal/auditintel"
@@ -224,7 +222,7 @@ func (s *Service) userEvidencePayload(ref string, user model.User, data model.Au
 	payload := map[string]any{
 		"subject_ref": ref, "status": user.Status, "role": user.Role, "subscription_suspended": user.SubscriptionSuspended,
 		"subscription": map[string]any{"pulls": data.SubscriptionPulls, "successful": data.SubscriptionSuccessful, "denied": data.SubscriptionDenied, "source_ip_count": data.SubscriptionSourceIPs, "region_count": data.SubscriptionRegions, "client_count": data.SubscriptionClients, "format_count": data.SubscriptionFormats, "last_seen_at": data.SubscriptionLastSeenAt},
-		"connection":   map[string]any{"connections": data.ConnectionCount, "closed": data.ConnectionClosed, "active_peak": data.ConnectionActivePeak, "active_at_end": data.ConnectionActiveAtEnd, "source_ip_count": data.ConnectionSourceIPs, "server_count": data.ConnectionServers, "destination_count": data.ConnectionDestinations, "dropped_bucket_count": data.ConnectionDropped, "last_seen_at": data.ConnectionLastSeenAt},
+		"connection":   map[string]any{"connections": data.ConnectionCount, "closed": data.ConnectionClosed, "active_peak": data.ConnectionActivePeak, "active_at_end": data.ConnectionActiveAtEnd, "source_ip_count": data.ConnectionSourceIPs, "server_count": data.ConnectionServers, "dropped_bucket_count": data.ConnectionDropped, "last_seen_at": data.ConnectionLastSeenAt},
 	}
 	if raw {
 		payload["user_id"], payload["username"], payload["nickname"] = user.ID, user.Username, user.Nickname
@@ -246,23 +244,13 @@ func (s *Service) userEvidencePayload(ref string, user model.User, data model.Au
 	payload["recent_subscriptions"] = subscriptions
 	connections := make([]map[string]any, 0, len(data.RecentConnections))
 	for _, item := range data.RecentConnections {
-		destination := reducedDestination(item.Destination)
 		source := maskIP(item.SourceIP)
 		if raw {
-			destination, source = item.Destination, item.SourceIP
+			source = item.SourceIP
 		}
-		connections = append(connections, map[string]any{"server_ref": s.subjectRef("server", item.ServerID, raw), "source_ip": source, "region": firstNonEmpty(item.SourceProvince, item.SourceCountry), "network": item.Network, "destination": destination, "destination_port": item.DestinationPort, "connection_count": item.ConnectionCount, "closed_count": item.ClosedCount, "duration_max_ms": item.DurationMaxMS, "active_peak": item.ActivePeak, "active_at_end": item.ActiveAtEnd, "ended_at": item.EndedAt})
+		connections = append(connections, map[string]any{"server_ref": s.subjectRef("server", item.ServerID, raw), "source_ip": source, "region": firstNonEmpty(item.SourceProvince, item.SourceCountry), "network": item.Network, "connection_count": item.ConnectionCount, "closed_count": item.ClosedCount, "duration_max_ms": item.DurationMaxMS, "active_peak": item.ActivePeak, "active_at_end": item.ActiveAtEnd, "ended_at": item.EndedAt})
 	}
 	payload["recent_connections"] = connections
-	destinations := make([]map[string]any, 0, len(data.Destinations))
-	for _, item := range data.Destinations {
-		destination := reducedDestination(item.Destination)
-		if raw {
-			destination = item.Destination
-		}
-		destinations = append(destinations, map[string]any{"destination": destination, "port": item.Port, "network": item.Network, "connection_count": item.ConnectionCount, "server_count": item.ServerCount, "last_seen_at": item.LastSeenAt})
-	}
-	payload["destinations"] = destinations
 	return payload
 }
 
@@ -645,7 +633,7 @@ func normalizeEvidenceTypes(values []string) ([]string, map[string]bool, error) 
 	set := map[string]bool{}
 	for _, value := range values {
 		value = strings.TrimSpace(value)
-		if !oneOf(value, model.AuditReviewEvidenceSubscription, model.AuditReviewEvidenceConnection, model.AuditReviewEvidenceDestination) {
+		if !oneOf(value, model.AuditReviewEvidenceSubscription, model.AuditReviewEvidenceConnection) {
 			return nil, nil, errors.New("审查项无效")
 		}
 		set[value] = true
@@ -654,7 +642,7 @@ func normalizeEvidenceTypes(values []string) ([]string, map[string]bool, error) 
 		return nil, nil, errors.New("至少选择一个审查项")
 	}
 	ordered := []string{}
-	for _, value := range []string{model.AuditReviewEvidenceSubscription, model.AuditReviewEvidenceConnection, model.AuditReviewEvidenceDestination} {
+	for _, value := range []string{model.AuditReviewEvidenceSubscription, model.AuditReviewEvidenceConnection} {
 		if set[value] {
 			ordered = append(ordered, value)
 		}
@@ -682,20 +670,6 @@ func maskIP(raw string) string {
 		bits = 24
 	}
 	return netip.PrefixFrom(addr, bits).Masked().String()
-}
-
-func reducedDestination(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	if _, err := netip.ParseAddr(raw); err == nil {
-		return maskIP(raw)
-	}
-	if value, err := publicsuffix.EffectiveTLDPlusOne(strings.TrimSuffix(strings.ToLower(raw), ".")); err == nil {
-		return value
-	}
-	return "unknown-domain"
 }
 
 func oneOf(value string, allowed ...string) bool {

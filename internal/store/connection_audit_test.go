@@ -17,6 +17,15 @@ func enableHistoricalAuditDetails(t *testing.T, s *Store) {
 	}
 }
 
+func newAuditTestInbound(t *testing.T, s *Store, serverID int64, index int) *int64 {
+	t.Helper()
+	inbound := &model.Inbound{ServerID: serverID, Name: fmt.Sprintf("audit-entry-%d", index), Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 12000 + index, ConfigJSON: "{}", Enabled: true}
+	if err := s.CreateInbound(context.Background(), inbound); err != nil {
+		t.Fatal(err)
+	}
+	return &inbound.ID
+}
+
 func TestConnectionAuditDefaultsToDisabledForNewServer(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
@@ -138,8 +147,7 @@ func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 	for index := 0; index < 15; index++ {
 		reports = append(reports, model.ConnectionAuditReport{
 			ReportID: fmt.Sprintf("audit-%d", index), ServerID: server.ID, UserID: user.ID,
-			SourceIP: fmt.Sprintf("203.%d.0.1", index), Network: "tcp", Destination: "example.com", DestinationPort: 443,
-			OutboundTag: "direct", OutboundType: "direct", ConnectionCount: 100, ActivePeak: 20,
+			SourceIP: fmt.Sprintf("203.%d.0.1", index), Network: "tcp", ConnectionCount: 100, ActivePeak: 20,
 			StartedAt: nowTime.Add(-time.Minute), EndedAt: nowTime,
 		})
 	}
@@ -178,12 +186,10 @@ func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(detail.Sources) != 15 || len(detail.Recent) != 15 || len(detail.Destinations) != 1 || len(detail.Outbounds) != 1 {
-		t.Fatalf("unexpected detail dimensions: sources=%d recent=%d destinations=%d outbounds=%d", len(detail.Sources), len(detail.Recent), len(detail.Destinations), len(detail.Outbounds))
+	if len(detail.Sources) != 15 || len(detail.Recent) != 15 {
+		t.Fatalf("unexpected detail dimensions: sources=%d recent=%d", len(detail.Sources), len(detail.Recent))
 	}
-	if detail.Outbounds[0].Label != "direct" || detail.Outbounds[0].ConnectionCount != 1500 {
-		t.Fatalf("unexpected outbound aggregate: %#v", detail.Outbounds[0])
-	}
+
 	newReport := reports[0]
 	newReport.ReportID = "audit-new"
 	inserted, err := s.AddConnectionAuditReportsResult(ctx, []model.ConnectionAuditReport{newReport})
@@ -306,8 +312,7 @@ func TestConnectionAuditDetectsSharedSourceIPsAcrossUsers(t *testing.T) {
 		for ipIndex, sourceIP := range []string{"198.51.100.20", "198.51.100.21"} {
 			reports = append(reports, model.ConnectionAuditReport{
 				ReportID: fmt.Sprintf("shared-ip-%d-%d", userIndex, ipIndex), ServerID: server.ID, UserID: user.ID,
-				SourceIP: sourceIP, Network: "tcp", Destination: "example.com", DestinationPort: 443,
-				ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-time.Minute), EndedAt: nowTime,
+				SourceIP: sourceIP, Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-time.Minute), EndedAt: nowTime,
 			})
 		}
 		if _, err := s.AddConnectionAuditReports(ctx, reports); err != nil {
@@ -355,7 +360,7 @@ func TestConnectionAuditProbeEpisodeExcludesAllNodeFanout(t *testing.T) {
 	for index := 0; index < 50; index++ {
 		started := base.Add(time.Duration(index) * 100 * time.Millisecond)
 		report := meaningfulConnectionReport(fmt.Sprintf("probe-%d", index), server.ID, user.ID, "device-probe", "1.1.1.1", "CN", "ISP-A", started, started.Add(2*time.Second))
-		report.OutboundTag = fmt.Sprintf("node-%d", index)
+		report.InboundID = newAuditTestInbound(t, s, server.ID, index)
 		reports = append(reports, report)
 	}
 	if _, err := s.AddConnectionAuditReports(ctx, reports); err != nil {
@@ -394,7 +399,7 @@ func TestConnectionAuditProbeBudgetOverflowBackfillsFanout(t *testing.T) {
 	for index := 0; index < 20; index++ {
 		started := base.Add(time.Duration(index) * 100 * time.Millisecond)
 		report := meaningfulConnectionReport(fmt.Sprintf("probe-abuse-%d", index), server.ID, user.ID, "device-abuse", "8.8.8.8", "US", "ISP-B", started, started.Add(2*time.Second))
-		report.OutboundTag = fmt.Sprintf("node-%d", index)
+		report.InboundID = newAuditTestInbound(t, s, server.ID, index)
 		report.DownloadBytes = 512 * 1024
 		reports = append(reports, report)
 	}
@@ -479,8 +484,7 @@ func meaningfulConnectionReport(id string, serverID, userID int64, deviceID, sou
 	report := model.ConnectionAuditReport{
 		ReportID: id, ServerID: serverID, UserID: userID, DeviceIDHash: deviceID, CredentialEpoch: 1,
 		SourceIP: sourceIP, RouteID: "route-" + sourceIP, SourceCountryCode: country, SourceCountry: country, SourceISP: isp, GeoDatabaseRevision: "test",
-		Network: "tcp", Destination: "example.com", DestinationPort: 443, OutboundTag: "direct", OutboundType: "direct",
-		ConnectionCount: 1, ClosedCount: 1, DurationTotalMS: duration.Milliseconds(), DurationMaxMS: duration.Milliseconds(),
+		Network: "tcp", ConnectionCount: 1, ClosedCount: 1, DurationTotalMS: duration.Milliseconds(), DurationMaxMS: duration.Milliseconds(),
 		UploadBytes: 512, DownloadBytes: 512, PayloadFirstAt: payloadStart, PayloadLastAt: payloadEnd,
 		PresenceSequence: 1, ActivePeak: 1, BucketCapacity: 4096,
 		CollectionStartedAt: payloadStart, CollectionEndedAt: payloadEnd, StartedAt: payloadStart, EndedAt: payloadEnd,

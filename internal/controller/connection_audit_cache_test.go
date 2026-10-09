@@ -28,7 +28,7 @@ func seedAuditReportingServer(t *testing.T, db *store.Store) (int64, int64) {
 	nowTime := time.Now().UTC()
 	report := model.ConnectionAuditReport{
 		ReportID: "dashboard-audit-cache-report", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.9", Network: "tcp",
-		Destination: "example.com", DestinationPort: 443, ConnectionCount: 2, ClosedCount: 2, DurationTotalMS: 250, DurationMaxMS: 250,
+		ConnectionCount: 2, ClosedCount: 2, DurationTotalMS: 250, DurationMaxMS: 250,
 		DurationLE1SCount: 2, ActivePeak: 1, PresenceSequence: 1, BucketCapacity: 4096,
 		CollectionStartedAt: nowTime.Add(-time.Minute), CollectionEndedAt: nowTime,
 		StartedAt: nowTime.Add(-time.Second), EndedAt: nowTime,

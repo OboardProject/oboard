@@ -124,10 +124,14 @@ func TestConnectionAuditProbeRefreshNarrowQueryParity(t *testing.T) {
 	s, server, user := newMaintenanceTestStore(t)
 	enableHistoricalAuditDetails(t, s)
 	at := time.Now().UTC().Truncate(time.Second)
+	inboundIDs := make([]int64, 20)
+	for i := range inboundIDs {
+		inboundIDs[i] = *newAuditTestInbound(t, s, server.ID, i)
+	}
 	reports := []model.ConnectionAuditReport{}
-	reports = append(reports, probeParityReports(server.ID, user.ID, "confirmed-device", 20, 5, at.Add(-30*time.Second), "confirmed")...)
-	reports = append(reports, probeParityReports(server.ID, user.ID, "candidate-device", 16, 4, at.Add(-5*time.Second), "candidate")...)
-	reports = append(reports, probeParityReports(server.ID, user.ID, "normal-device", 16, 4, at.Add(-30*time.Second), "normal_traffic")...)
+	reports = append(reports, probeParityReports(inboundIDs, server.ID, user.ID, "confirmed-device", 20, 5, at.Add(-30*time.Second), "confirmed")...)
+	reports = append(reports, probeParityReports(inboundIDs, server.ID, user.ID, "candidate-device", 16, 4, at.Add(-5*time.Second), "candidate")...)
+	reports = append(reports, probeParityReports(inboundIDs, server.ID, user.ID, "normal-device", 16, 4, at.Add(-30*time.Second), "normal_traffic")...)
 
 	expected := legacyProbeEpisodes(reports, user.ID, at)
 	if len(expected) != 3 {
@@ -161,13 +165,13 @@ func TestConnectionAuditProbeRefreshNarrowQueryParity(t *testing.T) {
 	}
 }
 
-func probeParityReports(serverID, userID int64, deviceID string, assigned, recent int, recentStart time.Time, wantedState string) []model.ConnectionAuditReport {
+func probeParityReports(inboundIDs []int64, serverID, userID int64, deviceID string, assigned, recent int, recentStart time.Time, wantedState string) []model.ConnectionAuditReport {
 	reports := make([]model.ConnectionAuditReport, 0, assigned+recent)
 	for index := 0; index < assigned; index++ {
 		startedAt := recentStart.Add(-2 * time.Hour)
 		reports = append(reports, model.ConnectionAuditReport{
 			ReportID: fmt.Sprintf("%s-assigned-%d", deviceID, index), ServerID: serverID, UserID: userID,
-			DeviceIDHash: deviceID, SourceIP: "203.0.113.1", Network: "tcp", OutboundTag: fmt.Sprintf("node-%d", index), ConnectionCount: 1,
+			InboundID: &inboundIDs[index], DeviceIDHash: deviceID, SourceIP: "203.0.113.1", Network: "tcp", ConnectionCount: 1,
 			CollectionStartedAt: startedAt, CollectionEndedAt: startedAt.Add(time.Second), StartedAt: startedAt, EndedAt: startedAt.Add(time.Second),
 		})
 	}
@@ -183,7 +187,7 @@ func probeParityReports(serverID, userID int64, deviceID string, assigned, recen
 		}
 		reports = append(reports, model.ConnectionAuditReport{
 			ReportID: fmt.Sprintf("%s-recent-%d", deviceID, index), ServerID: serverID, UserID: userID,
-			DeviceIDHash: deviceID, SourceIP: "203.0.113.1", Network: "tcp", OutboundTag: fmt.Sprintf("node-%d", index), ConnectionCount: 1,
+			InboundID: &inboundIDs[index], DeviceIDHash: deviceID, SourceIP: "203.0.113.1", Network: "tcp", ConnectionCount: 1,
 			ClosedCount: closed, DurationLE1SCount: shortClosed, UploadBytes: upload,
 			CollectionStartedAt: startedAt, CollectionEndedAt: startedAt.Add(time.Second), StartedAt: startedAt, EndedAt: startedAt.Add(time.Second),
 		})
@@ -231,7 +235,11 @@ func TestConnectionAuditUserDetailUsesSingleUserRiskPath(t *testing.T) {
 	enableHistoricalAuditDetails(t, s)
 	ctx := context.Background()
 	at := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
-	reports := probeParityReports(server.ID, user.ID, "detail-probe", 4, 4, at, "confirmed")
+	inboundIDs := make([]int64, 4)
+	for i := range inboundIDs {
+		inboundIDs[i] = *newAuditTestInbound(t, s, server.ID, i)
+	}
+	reports := probeParityReports(inboundIDs, server.ID, user.ID, "detail-probe", 4, 4, at, "confirmed")
 	left := meaningfulConnectionReport("detail-risk-left", server.ID, user.ID, "detail-risk", "1.1.1.1", "CN", "ISP-A", at, at.Add(90*time.Second))
 	right := meaningfulConnectionReport("detail-risk-right", server.ID, user.ID, "detail-risk", "8.8.8.8", "US", "ISP-B", at.Add(5*time.Second), at.Add(90*time.Second))
 	reports = append(reports, left, right)
@@ -266,8 +274,8 @@ func TestConnectionAuditUserDetailUsesSingleUserRiskPath(t *testing.T) {
 	if len(overview.Users) != 1 || !reflect.DeepEqual(detail.Summary, overview.Users[0]) {
 		t.Fatalf("single-user detail changed overview semantics:\n detail=%#v\n overview=%#v", detail.Summary, overview.Users)
 	}
-	if len(detail.Sources) == 0 || len(detail.Destinations) == 0 || len(detail.Outbounds) == 0 || len(detail.Servers) == 0 || len(detail.Recent) == 0 || len(detail.RiskEvents) == 0 || len(detail.ProbeEpisodes) == 0 || len(detail.Presence) == 0 {
-		t.Fatalf("detail lost data: sources=%d destinations=%d outbounds=%d servers=%d recent=%d risk_events=%d probe_episodes=%d presence=%d", len(detail.Sources), len(detail.Destinations), len(detail.Outbounds), len(detail.Servers), len(detail.Recent), len(detail.RiskEvents), len(detail.ProbeEpisodes), len(detail.Presence))
+	if len(detail.Sources) == 0 || len(detail.Servers) == 0 || len(detail.Recent) == 0 || len(detail.RiskEvents) == 0 || len(detail.ProbeEpisodes) == 0 || len(detail.Presence) == 0 {
+		t.Fatalf("detail lost data: sources=%d servers=%d recent=%d risk_events=%d probe_episodes=%d presence=%d", len(detail.Sources), len(detail.Servers), len(detail.Recent), len(detail.RiskEvents), len(detail.ProbeEpisodes), len(detail.Presence))
 	}
 }
 

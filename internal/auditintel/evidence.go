@@ -25,7 +25,7 @@ import (
 func (s *Service) BuildEvidencePack(ctx context.Context, subjectRef string, user model.User, windowStart, windowEnd time.Time, evidenceTypes []string, droppedBuckets int64) (*model.AuditEvidencePack, error) {
 	at := s.now().UTC()
 	policy := store.DefaultAuditPolicy()
-	wantConnection := containsString(evidenceTypes, model.AuditReviewEvidenceConnection) || containsString(evidenceTypes, model.AuditReviewEvidenceDestination)
+	wantConnection := containsString(evidenceTypes, model.AuditReviewEvidenceConnection)
 	wantSubscription := containsString(evidenceTypes, model.AuditReviewEvidenceSubscription)
 
 	var conn *model.ConnectionAuditUserSummary

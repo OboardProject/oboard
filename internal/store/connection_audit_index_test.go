@@ -326,8 +326,7 @@ func TestUserRiskAggregateIsIndexOnlyAndCountsMatchedRows(t *testing.T) {
 	}
 }
 
-// The evaluation loader is deliberately partial: it selects the 20 columns the
-// risk path reads out of the report's 47. This pins both halves of that
+// The evaluation loader selects only columns the risk path reads. This pins both halves of that
 // contract, so adding a field to a risk rule without adding it to
 // connectionAuditEvaluationColumns fails here rather than silently reading a
 // zero value in production.
@@ -338,6 +337,7 @@ func TestEvaluationReportsCarryOnlyWhatTheRiskPathReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableHistoricalAuditDetails(t, db)
 	server := &model.Server{Name: "narrow-node", PublicIPv4: "203.0.113.60", Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -360,7 +360,7 @@ func TestEvaluationReportsCarryOnlyWhatTheRiskPathReads(t *testing.T) {
 		PayloadFirstAt: at.Add(-2 * time.Minute), PayloadLastAt: at.Add(-time.Minute),
 		ProbeState: "", InternalProbe: false, ActivePeak: 3,
 		BucketCapacity: 8, DroppedBucketCount: 2, CollectionGeneration: 11,
-		Destination: "example.com", DestinationPort: 443, OutboundTag: "out-1", ClosedCount: 9,
+		ClosedCount:         9,
 		CollectionStartedAt: at.Add(-3 * time.Minute), CollectionEndedAt: at,
 		StartedAt: at.Add(-3 * time.Minute), EndedAt: at, CreatedAt: at,
 	}
@@ -405,9 +405,8 @@ func TestEvaluationReportsCarryOnlyWhatTheRiskPathReads(t *testing.T) {
 		// The node fanout window sorts and slides on these two.
 		{"StartedAt", !got.StartedAt.IsZero()},
 		{"EndedAt", !got.EndedAt.IsZero()},
-		// connectionAuditNode identifies a node by these two.
+		// Node identity uses the server and inbound, without an outbound.
 		{"InboundID", got.InboundID != nil && *got.InboundID == inbound.ID},
-		{"OutboundTag", got.OutboundTag == "out-1"},
 		// Geo quality is the share of public source IPs that resolved.
 		{"GeoDatabaseRevision", got.GeoDatabaseRevision == "geo-rev-1"},
 	} {
@@ -418,7 +417,7 @@ func TestEvaluationReportsCarryOnlyWhatTheRiskPathReads(t *testing.T) {
 
 	// And the columns it does not read must stay absent, so the projection is
 	// not quietly widened back to the full row.
-	if got.ReportID != "" || got.Destination != "" || got.DestinationPort != 0 || got.ClosedCount != 0 || !got.CollectionStartedAt.IsZero() {
+	if got.ReportID != "" || got.ClosedCount != 0 || !got.CollectionStartedAt.IsZero() {
 		t.Fatalf("the evaluation projection carries columns the risk path does not read: %#v", got)
 	}
 }

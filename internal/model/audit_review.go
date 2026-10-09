@@ -8,7 +8,6 @@ import (
 const (
 	AuditReviewEvidenceSubscription = "subscription"
 	AuditReviewEvidenceConnection   = "connection"
-	AuditReviewEvidenceDestination  = "destination"
 
 	AuditEvidenceSchemaVersion          = "audit-evidence-v2"
 	AuditUserFindingSchemaVersion       = "audit-user-finding-v1"
@@ -358,26 +357,15 @@ type AuditReviewUserData struct {
 	ConnectionActiveAtEnd  int64                        `json:"connection_active_at_end"`
 	ConnectionSourceIPs    int                          `json:"connection_source_ips"`
 	ConnectionServers      int                          `json:"connection_servers"`
-	ConnectionDestinations int                          `json:"connection_destinations"`
 	ConnectionDropped      int64                        `json:"connection_dropped_buckets"`
 	ConnectionLastSeenAt   *time.Time                   `json:"connection_last_seen_at,omitempty"`
 	ServerBreakdown        []AuditReviewServerBreakdown `json:"server_breakdown"`
 	RecentConnections      []ConnectionAuditReport      `json:"recent_connections"`
-	Destinations           []AuditReviewDestination     `json:"destinations"`
 }
 
 type AuditReviewServerBreakdown struct {
 	ServerID        int64     `json:"server_id"`
 	ConnectionCount int64     `json:"connection_count"`
 	ActivePeak      int64     `json:"active_peak"`
-	LastSeenAt      time.Time `json:"last_seen_at"`
-}
-
-type AuditReviewDestination struct {
-	Destination     string    `json:"destination"`
-	Port            int       `json:"port"`
-	Network         string    `json:"network"`
-	ConnectionCount int64     `json:"connection_count"`
-	ServerCount     int       `json:"server_count"`
 	LastSeenAt      time.Time `json:"last_seen_at"`
 }

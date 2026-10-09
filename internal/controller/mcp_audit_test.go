@@ -23,6 +23,9 @@ func TestAuditReadSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := userAutomationPrincipal(t, db, admin.ID)
+	if _, err := server.auditReviewCreateCandidate(ctx, principal, json.RawMessage("{\"evidence_types\":[\"destination\"]}")); err == nil {
+		t.Fatal("retired destination audit accepted at changeset validation")
+	}
 	connection, err := server.mcpAuditConnectionOverview(ctx, principal, 24)
 	if err == nil || !strings.Contains(err.Error(), "retired") || connection != nil {
 		t.Fatalf("retired connection overview returned %#v, %v", connection, err)

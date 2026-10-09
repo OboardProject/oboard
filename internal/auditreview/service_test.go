@@ -69,9 +69,7 @@ func TestAuditReviewMaskingAndPacking(t *testing.T) {
 	if got := maskIP("2001:db8:1234:5678::1"); got != "2001:db8:1234::/48" {
 		t.Fatalf("masked IPv6 = %q", got)
 	}
-	if got := reducedDestination("api.service.example.com"); got != "example.com" {
-		t.Fatalf("reduced destination = %q", got)
-	}
+
 	service := &Service{key: []byte("test-key")}
 	if raw, masked := service.subjectRef("user", 42, true), service.subjectRef("user", 42, false); raw != "user:42" || masked == raw || !strings.HasPrefix(masked, "user:") {
 		t.Fatalf("subject refs raw=%q masked=%q", raw, masked)
@@ -80,8 +78,7 @@ func TestAuditReviewMaskingAndPacking(t *testing.T) {
 	data := model.AuditReviewUserData{
 		UserID:              user.ID,
 		RecentSubscriptions: []model.SubscriptionPullAudit{{SourceIP: "203.0.113.44", UserAgent: "secret-agent", ClientName: "client", Format: "sing-box"}},
-		RecentConnections:   []model.ConnectionAuditReport{{ServerID: 7, SourceIP: "203.0.113.44", Destination: "api.service.example.com", DestinationPort: 443}},
-		Destinations:        []model.AuditReviewDestination{{Destination: "api.service.example.com", Port: 443}},
+		RecentConnections:   []model.ConnectionAuditReport{{ServerID: 7, SourceIP: "203.0.113.44"}},
 	}
 	maskedJSON, _ := json.Marshal(service.userEvidencePayload(service.subjectRef("user", user.ID, false), user, data, false))
 	for _, secret := range []string{"secret-user", "secret-agent", "203.0.113.44", "api.service.example.com", "secret-server"} {
@@ -89,13 +86,13 @@ func TestAuditReviewMaskingAndPacking(t *testing.T) {
 			t.Fatalf("masked evidence leaked %q: %s", secret, maskedJSON)
 		}
 	}
-	for _, expected := range []string{"203.0.113.0/24", "example.com"} {
+	for _, expected := range []string{"203.0.113.0/24"} {
 		if !strings.Contains(string(maskedJSON), expected) {
 			t.Fatalf("masked evidence omitted %q: %s", expected, maskedJSON)
 		}
 	}
 	rawJSON, _ := json.Marshal(service.userEvidencePayload(service.subjectRef("user", user.ID, true), user, data, true))
-	for _, expected := range []string{"secret-user", "secret-agent", "203.0.113.44", "api.service.example.com"} {
+	for _, expected := range []string{"secret-user", "secret-agent", "203.0.113.44"} {
 		if !strings.Contains(string(rawJSON), expected) {
 			t.Fatalf("raw evidence omitted %q: %s", expected, rawJSON)
 		}
@@ -152,6 +149,26 @@ func TestAuditReviewMaskingAndPacking(t *testing.T) {
 		}
 		if err := json.Unmarshal(input, &envelope); err != nil || envelope.Kind != "synthesis" || envelope.Engine["overall_risk"] != float64(78) {
 			t.Fatalf("synthesis input envelope invalid: %s", input)
+		}
+	}
+}
+
+func TestAuditReviewRejectsDestinationEvidence(t *testing.T) {
+	if _, _, err := normalizeEvidenceTypes([]string{"subscription", "connection", "destination"}); err == nil {
+		t.Fatal("destination evidence accepted")
+	}
+	values, _, err := normalizeEvidenceTypes([]string{"connection", "subscription"})
+	if err != nil || len(values) != 2 {
+		t.Fatalf("source evidence rejected: %v %v", values, err)
+	}
+	service := &Service{key: []byte("test-key")}
+	for _, raw := range []bool{false, true} {
+		body, err := json.Marshal(service.userEvidencePayload("user:7", model.User{ID: 7}, model.AuditReviewUserData{RecentConnections: []model.ConnectionAuditReport{{SourceIP: "198.51.100.4", Network: "tcp"}}}, raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "destination") || strings.Contains(string(body), "outbound") {
+			t.Fatalf("retired fields in AI evidence: %s", body)
 		}
 	}
 }

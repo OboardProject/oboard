@@ -65,8 +65,7 @@ func BenchmarkConnectionAuditInsertParallel(b *testing.B) {
 				at := dataset.at.Add(time.Duration(index) * time.Nanosecond)
 				report := model.ConnectionAuditReport{
 					ReportID: fmt.Sprintf("parallel-%d", index), ServerID: dataset.server.ID, UserID: user.ID,
-					DeviceIDHash: fmt.Sprintf("device-%d", user.ID), SourceIP: "1.1.1.1", Network: "tcp", OutboundTag: "direct",
-					ConnectionCount: 1, CollectionStartedAt: at, CollectionEndedAt: at, StartedAt: at, EndedAt: at,
+					DeviceIDHash: fmt.Sprintf("device-%d", user.ID), SourceIP: "1.1.1.1", Network: "tcp", ConnectionCount: 1, CollectionStartedAt: at, CollectionEndedAt: at, StartedAt: at, EndedAt: at,
 				}
 				if _, err := dataset.store.AddConnectionAuditReports(ctx, []model.ConnectionAuditReport{report}); err != nil {
 					b.Error(err)

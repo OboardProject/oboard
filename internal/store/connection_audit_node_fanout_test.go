@@ -46,7 +46,6 @@ func TestConnectionAuditNodeFanoutMatchesQuadraticOracle(t *testing.T) {
 			report := model.ConnectionAuditReport{
 				UserID:          1,
 				ServerID:        int64(1 + rng.Intn(12)),
-				OutboundTag:     fmt.Sprintf("out-%d", rng.Intn(8)),
 				StartedAt:       base.Add(time.Duration(rng.Intn(30_000)) * time.Millisecond),
 				ConnectionCount: int64(1 + rng.Intn(3)),
 				DeviceIDHash:    fmt.Sprintf("dev-%d", rng.Intn(4)),
@@ -76,9 +75,9 @@ func TestConnectionAuditNodeFanoutTenSecondBoundary(t *testing.T) {
 	base := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
 	inbound := int64(1)
 	reports := []model.ConnectionAuditReport{
-		{UserID: 1, ServerID: 1, InboundID: &inbound, OutboundTag: "a", StartedAt: base, ConnectionCount: 1, DeviceIDHash: "d1"},
-		{UserID: 1, ServerID: 2, InboundID: &inbound, OutboundTag: "b", StartedAt: base.Add(10 * time.Second), ConnectionCount: 1, DeviceIDHash: "d1"},
-		{UserID: 1, ServerID: 3, InboundID: &inbound, OutboundTag: "c", StartedAt: base.Add(10*time.Second + time.Nanosecond), ConnectionCount: 1, DeviceIDHash: "d1"},
+		{UserID: 1, ServerID: 1, InboundID: &inbound, StartedAt: base, ConnectionCount: 1, DeviceIDHash: "d1"},
+		{UserID: 1, ServerID: 2, InboundID: &inbound, StartedAt: base.Add(10 * time.Second), ConnectionCount: 1, DeviceIDHash: "d1"},
+		{UserID: 1, ServerID: 3, InboundID: &inbound, StartedAt: base.Add(10*time.Second + time.Nanosecond), ConnectionCount: 1, DeviceIDHash: "d1"},
 	}
 	if got := connectionAuditNodeFanout(reports[:2]); got != 2 {
 		t.Fatalf("exact 10s boundary fanout=%d, want 2", got)
@@ -101,7 +100,7 @@ func TestConnectionAuditNodeFanoutDenseComplexityTrend(t *testing.T) {
 		inbound := int64(j%7 + 1)
 		reports[j] = model.ConnectionAuditReport{
 			UserID: 1, ServerID: int64(j%11 + 1), InboundID: &inbound,
-			OutboundTag: fmt.Sprintf("o-%d", j%13), StartedAt: base.Add(time.Duration(j) * time.Millisecond),
+			StartedAt:       base.Add(time.Duration(j) * time.Millisecond),
 			ConnectionCount: 1, DeviceIDHash: "dense",
 		}
 	}

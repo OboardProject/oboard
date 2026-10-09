@@ -13,14 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/publicsuffix"
-
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-const FeatureVersion = 1
+const FeatureVersion = 2
 
 type Service struct {
 	store            *store.Store
@@ -33,8 +31,6 @@ type Features struct {
 	RegionCount          int      `json:"region_count"`
 	Regions              []string `json:"regions"`
 	ServerCount          int      `json:"server_count"`
-	DestinationCount     int      `json:"destination_count"`
-	DestinationPortCount int      `json:"destination_port_count"`
 	ConnectionCount      int64    `json:"connection_count"`
 	ClosedCount          int64    `json:"closed_count"`
 	ShortConnectionCount int64    `json:"short_connection_count"`
@@ -116,7 +112,7 @@ func (s *Service) EvaluateUserWithEvidence(ctx context.Context, userID int64, ev
 }
 
 func extractFeatures(reports []model.ConnectionAuditReport, since time.Time, maskSensitive bool) (Features, []any) {
-	ips, regions, servers, destinations, ports := map[string]bool{}, map[string]bool{}, map[int64]bool{}, map[string]bool{}, map[int]bool{}
+	ips, regions, servers := map[string]bool{}, map[string]bool{}, map[int64]bool{}
 	features := Features{}
 	representative := []any{}
 	coverageWindows := map[string]bool{}
@@ -131,12 +127,6 @@ func extractFeatures(reports []model.ConnectionAuditReport, since time.Time, mas
 		}
 		if region != "" {
 			regions[region] = true
-		}
-		if report.Destination != "" {
-			destinations[report.Destination] = true
-		}
-		if report.DestinationPort > 0 {
-			ports[report.DestinationPort] = true
 		}
 		features.ConnectionCount += report.ConnectionCount
 		features.ClosedCount += report.ClosedCount
@@ -157,15 +147,14 @@ func extractFeatures(reports []model.ConnectionAuditReport, since time.Time, mas
 		}
 		features.ReportCount++
 		if len(representative) < 12 {
-			sourceIP, destination := report.SourceIP, report.Destination
+			sourceIP := report.SourceIP
 			if maskSensitive {
-				sourceIP, destination = maskedIP(sourceIP), reducedDestination(destination)
+				sourceIP = maskedIP(sourceIP)
 			}
-			representative = append(representative, map[string]any{"source_ip": sourceIP, "region": region, "network": report.Network, "destination": destination, "destination_port": report.DestinationPort, "connection_count": report.ConnectionCount, "closed_count": report.ClosedCount, "duration_total_ms": report.DurationTotalMS, "duration_max_ms": report.DurationMaxMS, "active_peak": report.ActivePeak, "collection_dropped_buckets": report.DroppedBucketCount, "started_at": report.StartedAt, "ended_at": report.EndedAt})
+			representative = append(representative, map[string]any{"source_ip": sourceIP, "region": region, "network": report.Network, "connection_count": report.ConnectionCount, "closed_count": report.ClosedCount, "duration_total_ms": report.DurationTotalMS, "duration_max_ms": report.DurationMaxMS, "active_peak": report.ActivePeak, "collection_dropped_buckets": report.DroppedBucketCount, "started_at": report.StartedAt, "ended_at": report.EndedAt})
 		}
 	}
 	features.SourceIPCount, features.RegionCount, features.ServerCount = len(ips), len(regions), len(servers)
-	features.DestinationCount, features.DestinationPortCount = len(destinations), len(ports)
 	features.CoverageIncomplete = features.DroppedBucketCount > 0
 	for region := range regions {
 		features.Regions = append(features.Regions, region)
@@ -178,12 +167,6 @@ func deterministicScore(existing int, features Features) int {
 	score := existing
 	if features.ActivePeak >= 50 {
 		score += 15
-	}
-	if features.DestinationCount >= 100 {
-		score += 20
-	}
-	if features.DestinationPortCount >= 30 {
-		score += 20
 	}
 	if features.ClosedCount >= 500 && features.ShortConnectionCount*100/features.ClosedCount >= 80 {
 		score += 20
@@ -231,7 +214,7 @@ func anomalyScore(current Features, prior []model.AuditFeatureSnapshot) *int {
 
 func incidentFingerprint(userID int64, at time.Time, features Features) string {
 	bucket := at.Truncate(15 * time.Minute).Format(time.RFC3339)
-	payload, _ := json.Marshal([]any{FeatureVersion, userID, bucket, features.Regions, bucketInt(features.SourceIPCount, 2), bucketInt(int(features.ActivePeak), 10), bucketInt(features.DestinationCount, 20)})
+	payload, _ := json.Marshal([]any{FeatureVersion, userID, bucket, features.Regions, bucketInt(features.SourceIPCount, 2), bucketInt(int(features.ActivePeak), 10)})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }
@@ -261,17 +244,6 @@ func maskedIP(raw string) string {
 		bits = 48
 	}
 	return netip.PrefixFrom(addr, bits).Masked().String()
-}
-
-func reducedDestination(raw string) string {
-	raw = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
-	if addr, err := netip.ParseAddr(raw); err == nil {
-		return maskedIP(addr.String())
-	}
-	if domain, err := publicsuffix.EffectiveTLDPlusOne(raw); err == nil {
-		return domain
-	}
-	return "unknown"
 }
 
 func baselineJSON(prior []model.AuditFeatureSnapshot) json.RawMessage {

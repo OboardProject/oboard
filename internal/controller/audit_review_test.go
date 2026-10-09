@@ -64,7 +64,7 @@ func TestAuditAIReviewsAreAvailableToManagementRolesAndIdempotent(t *testing.T) 
 	body := map[string]any{
 		"request_id": "request-idempotent", "provider_id": provider["id"],
 		"scope":          map[string]any{"users": map[string]any{"mode": "all", "ids": []int64{}}, "servers": map[string]any{"mode": "all", "ids": []int64{}}},
-		"evidence_types": []string{"subscription", "connection", "destination"},
+		"evidence_types": []string{"subscription", "connection"},
 		"time_range":     map[string]any{"mode": "preset", "preset": "24h"},
 	}
 	first := request(t, handler, http.MethodPost, "/api/v1/ui/audit/ai-reviews", adminToken, body, http.StatusAccepted)["ai_audit_review"].(map[string]any)

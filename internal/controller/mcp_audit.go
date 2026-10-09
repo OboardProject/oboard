@@ -175,6 +175,13 @@ func (s *Server) auditReviewCreateCandidate(ctx context.Context, principal appli
 	if err := strictAutomationInput(input, &request); err != nil {
 		return auditReviewCreateRequest{}, err
 	}
+	for _, evidence := range request.EvidenceTypes {
+		switch strings.TrimSpace(evidence) {
+		case model.AuditReviewEvidenceSubscription, model.AuditReviewEvidenceConnection:
+		default:
+			return auditReviewCreateRequest{}, errors.New("审查项只支持订阅拉取和连接来源")
+		}
+	}
 	for _, userID := range request.Scope.Users.IDs {
 		if !principal.AllowsInt64("user_ids", userID) {
 			return auditReviewCreateRequest{}, errors.New("review scope includes an unauthorized user")

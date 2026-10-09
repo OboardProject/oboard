@@ -35,10 +35,6 @@ type connectionAuditReportItem struct {
 	SourceIP             string `json:"source_ip"`
 	SourceGeoCode        string `json:"source_geo_code"`
 	Network              string `json:"network"`
-	Destination          string `json:"destination"`
-	DestinationPort      int    `json:"destination_port"`
-	OutboundTag          string `json:"outbound_tag"`
-	OutboundType         string `json:"outbound_type"`
 	ConnectionCount      int64  `json:"connection_count"`
 	ClosedCount          int64  `json:"closed_count"`
 	DurationTotalMS      int64  `json:"duration_total_ms"`
@@ -261,15 +257,7 @@ func validateConnectionAuditItem(item connectionAuditReportItem, serverID int64)
 	if network != "tcp" && network != "udp" {
 		return model.ConnectionAuditReport{}, auditReject("invalid_network", "connection audit network must be tcp or udp")
 	}
-	destination := strings.TrimSpace(item.Destination)
-	outboundTag := strings.TrimSpace(item.OutboundTag)
-	outboundType := strings.TrimSpace(item.OutboundType)
-	if len(destination) > 255 || len(outboundTag) > 128 || len(outboundType) > 64 {
-		return model.ConnectionAuditReport{}, auditReject("invalid_destination", "connection audit destination or outbound is too long")
-	}
-	if item.DestinationPort < 0 || item.DestinationPort > 65535 {
-		return model.ConnectionAuditReport{}, auditReject("invalid_destination_port", "connection audit destination_port is invalid")
-	}
+
 	maxDurationMS := int64((31 * 24 * time.Hour) / time.Millisecond)
 	durationBucketTotal := item.DurationLE1SCount + item.DurationLE5SCount + item.DurationLE20SCount + item.DurationGT20SCount
 	if item.ConnectionCount < 0 || item.ClosedCount < 0 || item.DurationTotalMS < 0 || item.DurationMaxMS < 0 || item.DurationMaxMS > item.DurationTotalMS || item.DurationMaxMS > maxDurationMS || item.UploadBytes < 0 || item.DownloadBytes < 0 || item.UploadBytes > 1<<60 || item.DownloadBytes > 1<<60 || item.DurationLE1SCount < 0 || item.DurationLE5SCount < 0 || item.DurationLE20SCount < 0 || item.DurationGT20SCount < 0 || durationBucketTotal != item.ClosedCount || item.ActivePeak < 0 || item.ActiveAtEnd < 0 || item.ActiveAtEnd > item.ActivePeak || item.ConnectionCount > 1_000_000_000 || item.ClosedCount > 1_000_000_000 || item.DurationTotalMS > maxDurationMS*1_000_000 || item.ActivePeak > 1_000_000 || item.ClosedCount+item.ActiveAtEnd > item.ConnectionCount+item.ActivePeak {
@@ -328,7 +316,6 @@ func validateConnectionAuditItem(item connectionAuditReportItem, serverID int64)
 		ReportID: reportID, ServerID: serverID, UserID: item.UserID,
 		DeviceIDHash: deviceIDHash, CredentialEpoch: item.CredentialEpoch, ClientInstanceIDHash: clientInstanceIDHash,
 		SourceIP: sourceIP.Unmap().String(), SourceGeoCode: geo, Network: network,
-		Destination: destination, DestinationPort: item.DestinationPort, OutboundTag: outboundTag, OutboundType: outboundType,
 		ConnectionCount: item.ConnectionCount, ClosedCount: item.ClosedCount, DurationTotalMS: item.DurationTotalMS, DurationMaxMS: item.DurationMaxMS,
 		UploadBytes: item.UploadBytes, DownloadBytes: item.DownloadBytes, PayloadFirstAt: payloadFirstAt.UTC(), PayloadLastAt: payloadLastAt.UTC(),
 		DurationLE1SCount: item.DurationLE1SCount, DurationLE5SCount: item.DurationLE5SCount, DurationLE20SCount: item.DurationLE20SCount, DurationGT20SCount: item.DurationGT20SCount,

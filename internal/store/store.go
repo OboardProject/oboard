@@ -1267,6 +1267,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureConnectionAuditHourlySchema(ctx); err != nil {
 		return err
 	}
+	if err := s.retireAuditDestinations(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureLatencyRollupSchema(ctx); err != nil {
 		return err
 	}

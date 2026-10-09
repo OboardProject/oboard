@@ -361,8 +361,7 @@ func TestConnectionAuditOverviewForUsersMatchesFullOverview(t *testing.T) {
 	for index, user := range users {
 		reports = append(reports, model.ConnectionAuditReport{
 			ReportID: "parity-" + string(rune('a'+index)), ServerID: server.ID, UserID: user.ID, InboundID: &inbound.ID,
-			SourceIP: "198.51.100." + string(rune('1'+index)), Network: "tcp", Destination: "example.com", DestinationPort: 443,
-			ConnectionCount: 5, ClosedCount: 5, DurationTotalMS: 3000, DurationMaxMS: 1000, DurationLE1SCount: 5, ActivePeak: 3,
+			SourceIP: "198.51.100." + string(rune('1'+index)), Network: "tcp", ConnectionCount: 5, ClosedCount: 5, DurationTotalMS: 3000, DurationMaxMS: 1000, DurationLE1SCount: 5, ActivePeak: 3,
 			PresenceSequence: 1, BucketCapacity: 4096, CollectionStartedAt: nowTime.Add(-time.Minute), CollectionEndedAt: nowTime,
 			StartedAt: nowTime.Add(-time.Second), EndedAt: nowTime,
 		})

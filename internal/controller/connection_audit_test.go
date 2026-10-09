@@ -37,7 +37,6 @@ func TestValidateConnectionAuditItem(t *testing.T) {
 	nowTime := time.Now().UTC()
 	item := connectionAuditReportItem{
 		ReportID: "report-1", UserID: 7, SourceIP: "::ffff:198.51.100.7", SourceGeoCode: "us", Network: "TCP",
-		Destination: "example.com", DestinationPort: 443, OutboundTag: "direct", OutboundType: "direct",
 		ConnectionCount: 2, ClosedCount: 2, DurationTotalMS: 1200, DurationMaxMS: 700, DurationLE1SCount: 2, ActivePeak: 1, PresenceSequence: 1,
 		BucketCapacity: 4096, CollectionStartedAt: nowTime.Add(-time.Minute).Format(time.RFC3339Nano), CollectionEndedAt: nowTime.Format(time.RFC3339Nano),
 		StartedAt: nowTime.Add(-time.Second).Format(time.RFC3339Nano), EndedAt: nowTime.Format(time.RFC3339Nano),

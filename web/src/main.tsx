@@ -5999,9 +5999,8 @@ function AuditConsole({ data, client, load, notify }: any) {
 }
 
 const auditReviewEvidenceOptions = [
-  { value: 'subscription', label: '订阅活动', description: '更新次数、来源与请求结果' },
-  { value: 'connection', label: '连接活动', description: '来源活动、并发与节点摘要' },
-  { value: 'destination', label: '访问目标', description: '已采集的目标诊断信息；未采集的历史无法恢复' },
+  { value: 'subscription', label: '订阅拉取', description: '更新次数、来源与请求结果' },
+  { value: 'connection', label: '连接来源', description: '来源活动、并发与节点摘要' },
 ]
 
 function localDateTimeValue(date: Date) {
@@ -6028,7 +6027,7 @@ function AIAuditReviews({ data, client, notify }: any) {
   const [evidenceTotal, setEvidenceTotal] = useState(0)
   const [draft, setDraft] = useState({
     providerID: '', userMode: 'all' as 'all' | 'selected', userIDs: [] as string[], serverMode: 'all' as 'all' | 'selected', serverIDs: [] as string[],
-    evidenceTypes: ['subscription', 'connection', 'destination'], timeMode: 'preset' as 'preset' | 'custom', preset: '24h',
+    evidenceTypes: ['subscription', 'connection'], timeMode: 'preset' as 'preset' | 'custom', preset: '24h',
     startedAt: localDateTimeValue(new Date(Date.now() - 24 * 60 * 60 * 1000)), endedAt: localDateTimeValue(new Date()),
   })
   const users: User[] = data.users || []
@@ -6284,7 +6283,7 @@ function auditReviewRiskLabel(value: string) {
 }
 
 function auditReviewEvidenceLabel(values: string[]) {
-  return values.map(value => ({ subscription: '订阅拉取', connection: '节点连接', destination: '访问目标' } as Record<string, string>)[value] || value).join('、')
+  return values.map(value => ({ subscription: '订阅拉取', connection: '连接来源' } as Record<string, string>)[value] || value).join('、')
 }
 
 function auditReviewActionLabel(value: string) {
