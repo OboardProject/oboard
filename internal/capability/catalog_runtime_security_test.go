@@ -9,7 +9,7 @@ import (
 func TestRuntimeSecurityCatalogAuthorization(t *testing.T) {
 	catalog := NewCatalog()
 	reader := application.Principal{Role: model.RoleViewer, Scopes: []string{"servers:read"}}
-	for _, action := range []string{"read", "update", "check"} {
+	for _, action := range []string{"read", "update", "check", "repair"} {
 		name := "servers.runtime_security." + action
 		descriptor, ok := catalog.Get(name)
 		if !ok || !descriptor.MCPEnabled || descriptor.ResourceEvaluator != "server_ids" {

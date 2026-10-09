@@ -48,7 +48,7 @@ func TestRuntimeSecurityReportFreshnessAndReconnect(t *testing.T) {
 	}
 	report := model.RuntimeSecurityReport{DesiredMode: "standard", ActualMode: "standard", State: "standard", CheckedAt: time.Now().UTC()}
 	srv.recordRuntimeSecurity(ctx, server, &report)
-	if err := db.SaveRuntimeSecurityDesired(ctx, server.ID, model.RuntimeSecurityRequest{Mode: "enhanced", Revision: 42}); err != nil {
+	if err := db.SaveRuntimeSecurityDesired(ctx, *server, model.RuntimeSecurityRequest{Mode: "enhanced", Revision: 42}); err != nil {
 		t.Fatal(err)
 	}
 	server.Status = model.ServerOnline
@@ -94,7 +94,7 @@ func TestRuntimeSecurityFailureDoesNotCreateRetryStorm(t *testing.T) {
 		t.Fatal(err)
 	}
 	desired := model.RuntimeSecurityRequest{Mode: "enhanced", Revision: 42}
-	if err := db.SaveRuntimeSecurityDesired(ctx, server.ID, desired); err != nil {
+	if err := db.SaveRuntimeSecurityDesired(ctx, *server, desired); err != nil {
 		t.Fatal(err)
 	}
 	task, err := srv.queueRuntimeSecurity(ctx, *server, desired)
@@ -104,22 +104,91 @@ func TestRuntimeSecurityFailureDoesNotCreateRetryStorm(t *testing.T) {
 	if err := db.CompleteTask(ctx, task.ID, "failed", "{}"); err != nil {
 		t.Fatal(err)
 	}
+	check, err := srv.queueRuntimeSecurity(ctx, *server, model.RuntimeSecurityRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CompleteTask(ctx, check.ID, "succeeded", "{}"); err != nil {
+		t.Fatal(err)
+	}
 	report := model.RuntimeSecurityReport{DesiredMode: "standard", ActualMode: "standard", State: "standard", CheckedAt: time.Now().UTC()}
 	for range 3 {
 		srv.recordRuntimeSecurity(ctx, server, &report)
 		srv.reconcileRuntimeSecurityDesired(ctx, server)
 	}
 	tasks, err := db.ListTasksByServer(ctx, server.ID, 10)
-	if err != nil || len(tasks) != 1 {
+	if err != nil || len(tasks) != 2 {
 		t.Fatalf("retry storm: %d %v", len(tasks), err)
 	}
 	desired.Revision++
-	if err := db.SaveRuntimeSecurityDesired(ctx, server.ID, desired); err != nil {
+	if err := db.SaveRuntimeSecurityDesired(ctx, *server, desired); err != nil {
 		t.Fatal(err)
 	}
 	srv.recordRuntimeSecurity(ctx, server, &report)
 	tasks, err = db.ListTasksByServer(ctx, server.ID, 10)
-	if err != nil || len(tasks) != 2 {
+	if err != nil || len(tasks) != 3 {
 		t.Fatalf("explicit new revision not retried: %d %v", len(tasks), err)
+	}
+}
+
+func TestRuntimeSecurityManagementInputIsClosed(t *testing.T) {
+	for _, raw := range []string{`{"server_id":1,"path":"/etc/shadow"}`, `{"server_id":1,"command":"id"}`, `{"server_id":1,"mode":"standard"}`} {
+		if _, err := decodeRuntimeSecurityOperation(json.RawMessage(raw), false); err == nil {
+			t.Fatal("unsafe input accepted")
+		}
+	}
+	if _, err := decodeRuntimeSecurityOperation(json.RawMessage(`{"server_id":1}`), false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeSecurityApprovalRejectsReplacedServer(t *testing.T) {
+	ctx := context.Background()
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	admin := &model.User{Username: "security-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111113", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	old := &model.Server{Name: "security-old", AgentID: "old-agent", Status: model.ServerOffline}
+	if err := db.CreateServer(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(runtimeSecurityOperation{ServerID: old.ID, Mode: "enhanced"})
+	ops := []automation.OperationRequest{{Capability: "servers.runtime_security.update", Input: raw}}
+	draft, err := srv.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := json.Marshal(draft.ExpectedRevisions)
+	change, err := srv.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: "security-replaced", BaseRevisions: base, Operations: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.automation.Validate(ctx, principal, change.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteServer(ctx, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	fresh := &model.Server{Name: "security-new", AgentID: "new-agent", Status: model.ServerOffline}
+	if err := db.CreateServer(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.ID != old.ID {
+		t.Fatal("server ID was not reused")
+	}
+	if _, err := srv.automation.Approve(ctx, principal, change.ID, "approved"); err == nil {
+		t.Fatal("stale approval changed new server")
+	}
+	desired, err := db.RuntimeSecurityDesired(ctx, fresh.ID)
+	if err != nil || desired.Mode != "standard" || desired.Revision != 0 {
+		t.Fatal(desired, err)
+	}
+	report := model.RuntimeSecurityReport{DesiredMode: "enhanced", ActualMode: "enhanced", State: "enhanced", CheckedAt: time.Now().UTC()}
+	srv.recordRuntimeSecurity(ctx, old, &report)
+	if value, err := db.RuntimeSecurityReport(ctx, fresh.ID); err != nil || value != nil {
+		t.Fatal("old Agent report reached replacement", value, err)
 	}
 }

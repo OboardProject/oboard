@@ -10,6 +10,7 @@ import (
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"net/http"
 	"strconv"
 	"time"
@@ -65,7 +66,7 @@ func decodeRuntimeSecurityOperation(raw json.RawMessage, modeRequired bool) (run
 	return req, nil
 }
 func (s *Server) registerRuntimeSecurityOperations() {
-	for _, action := range []string{"update", "check"} {
+	for _, action := range []string{"update", "check", "repair"} {
 		name := "servers.runtime_security." + action
 		validate := func(ctx context.Context, p application.Principal, raw json.RawMessage) (any, error) {
 			req, err := decodeRuntimeSecurityOperation(raw, action == "update")
@@ -97,7 +98,11 @@ func (s *Server) registerRuntimeSecurityOperations() {
 			if err != nil {
 				return nil, err
 			}
-			return map[string]string{"runtime_security:" + strconv.FormatInt(req.ServerID, 10): strconv.FormatInt(desired.Revision, 10)}, nil
+			server, err := s.store.GetServer(ctx, req.ServerID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]string{"runtime_security_instance:" + strconv.FormatInt(req.ServerID, 10): server.CreatedAt.UTC().Format(time.RFC3339Nano) + ":" + server.AgentID, "runtime_security:" + strconv.FormatInt(req.ServerID, 10): strconv.FormatInt(desired.Revision, 10)}, nil
 		})
 		s.automation.Register(name, func(ctx context.Context, p application.Principal, raw json.RawMessage) (any, error) {
 			if _, err := validate(ctx, p, raw); err != nil {
@@ -110,9 +115,16 @@ func (s *Server) registerRuntimeSecurityOperations() {
 			if err != nil {
 				return nil, err
 			}
+			instance := server.CreatedAt.UTC().Format(time.RFC3339Nano) + ":" + server.AgentID
+			if approved, ok := automation.ApprovedResourceRevision(ctx, "runtime_security_instance:"+strconv.FormatInt(server.ID, 10)); ok && approved != instance {
+				return nil, errors.New("approved server instance changed")
+			}
 			desired, err := s.store.RuntimeSecurityDesired(ctx, req.ServerID)
 			if err != nil {
 				return nil, err
+			}
+			if approved, ok := automation.ApprovedResourceRevision(ctx, "runtime_security:"+strconv.FormatInt(server.ID, 10)); ok && approved != strconv.FormatInt(desired.Revision, 10) {
+				return nil, errors.New("approved runtime security revision changed")
 			}
 			if server.Status == model.ServerOnline && server.AgentID != "" && !serverSupportsCapability(*server, model.RuntimeSecurityCapability) {
 				return nil, errors.New("请先更新 Agent，当前节点不支持运行安全检查")
@@ -125,12 +137,17 @@ func (s *Server) registerRuntimeSecurityOperations() {
 					revision = desired.Revision + 1
 				}
 				desired = model.RuntimeSecurityRequest{Mode: req.Mode, Revision: revision}
-				if err := s.store.SaveRuntimeSecurityDesired(ctx, req.ServerID, desired); err != nil {
+				if err := s.store.SaveRuntimeSecurityDesired(ctx, *server, desired); err != nil {
 					return nil, err
 				}
 			}
-			if action == "check" {
-				desired = model.RuntimeSecurityRequest{}
+			if action != "update" {
+				if _, err := s.store.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeRuntimeSecurity); err == nil {
+					return nil, errors.New("已有运行安全任务排队或执行中，请完成后重试")
+				} else if !errors.Is(err, sql.ErrNoRows) {
+					return nil, err
+				}
+				desired = model.RuntimeSecurityRequest{Repair: action == "repair"}
 			}
 			if server.Status == model.ServerOnline && server.AgentID != "" {
 				if !serverSupportsCapability(*server, model.RuntimeSecurityCapability) {
@@ -139,7 +156,7 @@ func (s *Server) registerRuntimeSecurityOperations() {
 				if _, err := s.queueRuntimeSecurity(ctx, *server, desired); err != nil {
 					return nil, err
 				}
-			} else if action == "check" {
+			} else if action != "update" {
 				return nil, errors.New("Agent 离线，暂时无法检查")
 			}
 			return s.readRuntimeSecurity(ctx, p, req.ServerID)
@@ -147,6 +164,9 @@ func (s *Server) registerRuntimeSecurityOperations() {
 	}
 }
 func (s *Server) queueRuntimeSecurity(ctx context.Context, server model.Server, desired model.RuntimeSecurityRequest) (model.AgentTask, error) {
+	if !s.runtimeSecurityServerCurrent(ctx, &server) {
+		return model.AgentTask{}, errors.New("server incarnation changed")
+	}
 	active, err := s.store.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeRuntimeSecurity)
 	if err == nil {
 		return *active, nil
@@ -155,7 +175,7 @@ func (s *Server) queueRuntimeSecurity(ctx context.Context, server model.Server, 
 		return model.AgentTask{}, err
 	}
 	if desired.Revision > 0 {
-		latest, readErr := s.store.LatestTaskByServerType(ctx, server.ID, model.AgentTaskTypeRuntimeSecurity)
+		latest, readErr := s.store.LatestRuntimeSecurityAttempt(ctx, server.ID, desired.Revision)
 		if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
 			return model.AgentTask{}, readErr
 		}
@@ -166,7 +186,21 @@ func (s *Server) queueRuntimeSecurity(ctx context.Context, server model.Server, 
 			}
 		}
 	}
-	return s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeRuntimeSecurity, desired, 0)
+	raw, err := json.Marshal(desired)
+	if err != nil {
+		return model.AgentTask{}, err
+	}
+	nonce, err := security.RandomToken(12)
+	if err != nil {
+		return model.AgentTask{}, err
+	}
+	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeRuntimeSecurity, PayloadJSON: string(raw), Nonce: nonce, Status: "pending", ResultJSON: "{}"}
+	if err := s.store.CreateRuntimeSecurityTask(ctx, server, &task); err != nil {
+		return model.AgentTask{}, err
+	}
+	s.tasks.wake(server.ID)
+	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
+	return task, nil
 }
 func (s *Server) recordRuntimeSecurity(ctx context.Context, server *model.Server, report *model.RuntimeSecurityReport) {
 	if report == nil || !validRuntimeSecurityReport(*report) {
@@ -174,17 +208,20 @@ func (s *Server) recordRuntimeSecurity(ctx context.Context, server *model.Server
 	}
 	s.runtimeSecurityQueueMu.Lock()
 	defer s.runtimeSecurityQueueMu.Unlock()
+	if !s.runtimeSecurityServerCurrent(ctx, server) {
+		return
+	}
 	previousReport, err := s.store.RuntimeSecurityReport(ctx, server.ID)
 	if err != nil {
 		return
 	}
-	if previousReport != nil && (report.Revision < previousReport.Revision || report.CheckedAt.Before(previousReport.CheckedAt)) {
+	if previousReport != nil && (report.Revision < previousReport.Revision || (report.Revision == previousReport.Revision && report.CheckedAt.Before(previousReport.CheckedAt))) {
 		return
 	}
 	raw, _ := json.Marshal(report)
-	hash := sha256.Sum256(append([]byte(server.AgentID), raw...))
+	hash := sha256.Sum256(append([]byte(server.CreatedAt.UTC().Format(time.RFC3339Nano)+":"+server.AgentID), raw...))
 	if previous, ok := s.runtimeSecurityReports.Load(server.ID); !ok || previous != hash {
-		if err := s.store.SaveRuntimeSecurityReport(ctx, server.ID, *report); err != nil {
+		if err := s.store.SaveRuntimeSecurityReport(ctx, *server, *report); err != nil {
 			return
 		}
 		s.runtimeSecurityReports.Store(server.ID, hash)
@@ -250,6 +287,7 @@ func (s *Server) apiRuntimeSecurity(w http.ResponseWriter, r *http.Request, p ap
 	var input struct {
 		Mode      string `json:"mode"`
 		Check     bool   `json:"check"`
+		Repair    bool   `json:"repair"`
 		RequestID string `json:"request_id"`
 	}
 	if !decodeV2(w, r, &input) {
@@ -260,8 +298,15 @@ func (s *Server) apiRuntimeSecurity(w http.ResponseWriter, r *http.Request, p ap
 		return
 	}
 	name := "servers.runtime_security.update"
-	if input.Check {
+	if input.Check && input.Repair {
+		v2Error(w, r, 400, "invalid_input", "检查和修复不能同时请求")
+		return
+	}
+	if input.Check || input.Repair {
 		name = "servers.runtime_security.check"
+		if input.Repair {
+			name = "servers.runtime_security.repair"
+		}
 		if input.Mode != "" {
 			v2Error(w, r, 400, "invalid_input", "检查不接受模式变更")
 			return
@@ -293,6 +338,9 @@ func (s *Server) apiRuntimeSecurity(w http.ResponseWriter, r *http.Request, p ap
 func (s *Server) reconcileRuntimeSecurityDesired(ctx context.Context, server *model.Server) {
 	s.runtimeSecurityQueueMu.Lock()
 	defer s.runtimeSecurityQueueMu.Unlock()
+	if !s.runtimeSecurityServerCurrent(ctx, server) {
+		return
+	}
 	desired, err := s.store.RuntimeSecurityDesired(ctx, server.ID)
 	if err != nil || desired.Revision == 0 {
 		return
@@ -307,4 +355,9 @@ func (s *Server) reconcileRuntimeSecurityDesired(ctx context.Context, server *mo
 	if server.Status == model.ServerOnline && serverSupportsCapability(*server, model.RuntimeSecurityCapability) {
 		_, _ = s.queueRuntimeSecurity(ctx, *server, desired)
 	}
+}
+
+func (s *Server) runtimeSecurityServerCurrent(ctx context.Context, server *model.Server) bool {
+	current, err := s.store.GetServer(ctx, server.ID)
+	return err == nil && current.CreatedAt.Equal(server.CreatedAt) && current.AgentID == server.AgentID
 }

@@ -34,3 +34,34 @@ it('blocks a Hardened downgrade and keeps failure visible', async () => {
     expect(host.textContent).toContain('任务 #3 执行失败'); expect(host.textContent).toContain('回滚失败')
   } finally { act(() => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false }
 })
+
+it('repairs only through the authorized operation and disables duplicate queued actions', async () => {
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div'); document.body.appendChild(host)
+  const root = createRoot(host)
+  let queued = false
+  const requestV2 = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.includes('/runtime-security')) { expect(JSON.parse(init!.body as string)).toMatchObject({repair:true}); queued = true }
+    return { desired: { mode: 'standard', revision: 4 }, report: { revision: 4, desired_mode: 'standard', actual_mode: 'standard', state: 'partial', local_policy: 'standard', checks: [{id:'agent_config',category:'filesystem',severity:'high',status:'failed',message:'权限不安全',remedy:'修复权限',auto_fix:true}] }, online:true, queued, task_id:9 }
+  })
+  const client = {requestV2}
+  try {
+    await act(async () => root.render(<SystemRuntimeSecurityTab serverID={12} client={client} disabled={false} />))
+    await act(async () => [...host.querySelectorAll('button')].find(item => item.textContent === '修复文件权限')!.click())
+    for (const text of ['应用模式','重新检查','修复文件权限']) expect([...host.querySelectorAll('button')].find(item => item.textContent === text)!.disabled).toBe(true)
+    expect(host.textContent).toContain('任务 #9')
+  } finally { act(() => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false }
+})
+
+it('polls a same-mode reapply until the desired revision is reported', async () => {
+  vi.useFakeTimers()
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  const host = document.createElement('div'); document.body.appendChild(host)
+  const root = createRoot(host)
+  const client = {requestV2:vi.fn(async () => ({desired:{mode:'enhanced',revision:8},report:{revision:7,desired_mode:'enhanced',actual_mode:'enhanced',state:'enhanced',checks:[]},online:true,queued:false}))}
+  try {
+    await act(async () => root.render(<SystemRuntimeSecurityTab serverID={12} client={client} disabled={false} />))
+    await act(async () => {await vi.advanceTimersByTimeAsync(5000)})
+    expect(client.requestV2).toHaveBeenCalledTimes(2)
+  } finally { act(() => root.unmount()); host.remove(); vi.useRealTimers(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false }
+})

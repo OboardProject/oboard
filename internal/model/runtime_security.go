@@ -6,6 +6,7 @@ const AgentTaskTypeRuntimeSecurity = "runtime_security"
 const RuntimeSecurityCapability = "runtime_security_v1"
 
 type RuntimeSecurityRequest struct {
+	Repair   bool   `json:"repair,omitempty"`
 	Mode     string `json:"mode,omitempty"`
 	Revision int64  `json:"revision,omitempty"`
 }

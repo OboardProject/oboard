@@ -16735,6 +16735,7 @@ install_reused_stealth() {
     return 1
   fi
   eval "$existing_env"
+  "$tmp/$agent_name" -preflight-core-update -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" -staged-core "$tmp/$core_name" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || return 1
   STEALTH_REUSE=1
   BACKUP_READY=
   for asset in "$STEALTH_AGENT_BIN" "$STEALTH_CORE_BIN" "$STEALTH_REALM_BIN"; do
@@ -16777,6 +16778,7 @@ install_reused_stealth() {
   fi
   cat "$tmp/stealth-enroll.err" >> "$INSTALL_LOG"
   unset OBOARD_ENROLL_TOKEN
+  "$STEALTH_AGENT_BIN" -record-release-proof -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || { restore_reused_install || true; return 1; }
   release_core_lifecycle_lock
   case " $OLD_ACTIVE_SERVICES " in
     *" $STEALTH_CORE_SERVICE "*)
@@ -16832,6 +16834,7 @@ wait_service_stable() {
 # update landed. Agent owns the operational-digest normalization, so the check
 # is delegated to it rather than reimplemented here.
 verify_core_runtime() {
+  "$INSTALL_DIR/oboard-agent" -record-release-proof -config "$CONFIG_PATH" -state-dir "$STATE_DIR" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || return 1
   [ -s "$STATE_DIR/sing-box.json" ] || return 0
   [ -x "$INSTALL_DIR/oboard-agent" ] || return 0
   if ! "$INSTALL_DIR/oboard-agent" -h 2>&1 | grep -q -- '-verify-core-runtime'; then
@@ -17696,25 +17699,12 @@ download_binaries() {
 # node with an outage.
 preflight_staged_core() {
   staged=$1
-  staged_config="$STATE_DIR/sing-box.json"
-  if [ ! -s "$staged_config" ]; then
-    return 0
-  fi
-  echo "校验新版内核是否接受当前运行的配置"
-  staged_status=0
-  "$staged" -check -config "$staged_config" >> "$INSTALL_LOG" 2>&1 || staged_status=$?
-  case "$staged_status" in
-    0) return 0 ;;
-    126|127)
-      # The staged binary could not be executed at all, so there is no verdict.
-      echo "无法执行新版内核进行预检（退出码 $staged_status），已跳过该检查。" >&2
-      return 0
-      ;;
-  esac
-  rm -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-realm.new"
-  echo "新版内核无法接受当前正在运行的配置，已中止更新，未替换任何文件。" >&2
-  echo "请先在面板重新下发配置后重试；详细信息见 $INSTALL_LOG。" >&2
-  return 1
+  [ -s "$CONFIG_PATH" ] || return 0
+  echo "校验新版内核的运行安全限制与当前配置"
+  "$tmp/$agent_name" -preflight-core-update -config "$CONFIG_PATH" -state-dir "$STATE_DIR" -staged-core "$staged" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || {
+    echo "新版内核预检失败，已中止更新，未替换任何文件。" >&2
+    return 1
+  }
 }
 
 register_obag_path() {
@@ -18099,6 +18089,7 @@ case "$ACTION" in
       fi
       cat "$tmp/stealth-enroll.err" >> "$INSTALL_LOG"
       unset OBOARD_ENROLL_TOKEN
+      "$STEALTH_AGENT_BIN" -record-release-proof -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || exit 1
       stop_previous_services "$STEALTH_AGENT_BIN" || exit 1
       release_core_lifecycle_lock
       if [ "$SERVICE_MANAGER" = systemd ]; then
@@ -18148,6 +18139,7 @@ case "$ACTION" in
         exit 1
       fi
       unset OBOARD_ENROLL_TOKEN
+      "$INSTALL_DIR/oboard-agent" -record-release-proof -config "$CONFIG_PATH" -state-dir "$STATE_DIR" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || exit 1
       release_core_lifecycle_lock
       restart_after_install
       verify_installed_versions
@@ -18175,6 +18167,8 @@ case "$ACTION" in
       download_quiet "$BASE_URL/downloads/release-manifest.json" "$tmp/release-manifest.json"
       download_quiet "$BASE_URL/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
       verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name" >> "$INSTALL_LOG" 2>&1
+      chmod 0700 "$tmp/$agent_name" "$tmp/$core_name"
+      "$tmp/$agent_name" -preflight-core-update -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" -staged-core "$tmp/$core_name" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || exit 1
       echo "[3/4] 安装已验证的组件"
       install -m 0755 "$tmp/$agent_name" "$STEALTH_AGENT_BIN.next.$$"
       install -m 0755 "$tmp/$core_name" "$STEALTH_CORE_BIN.next.$$"
@@ -18182,6 +18176,7 @@ case "$ACTION" in
       mv -f "$STEALTH_AGENT_BIN.next.$$" "$STEALTH_AGENT_BIN"
       mv -f "$STEALTH_CORE_BIN.next.$$" "$STEALTH_CORE_BIN"
       mv -f "$STEALTH_REALM_BIN.next.$$" "$STEALTH_REALM_BIN"
+      "$STEALTH_AGENT_BIN" -record-release-proof -config "$STEALTH_CONFIG_PATH" -key "$STEALTH_KEY_PATH" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || exit 1
       echo "[4/4] 刷新安全进程服务"
       if service_active "$STEALTH_CORE_SERVICE"; then
         restart_managed_service "$STEALTH_CORE_SERVICE"
@@ -18858,23 +18853,12 @@ release_core_lifecycle_lock() {
 # turns a stale-but-serving node into an outage.
 preflight_staged_core() {
   staged=$1
-  staged_config="$STATE_DIR/sing-box.json"
-  if [ ! -s "$staged_config" ]; then
-    return 0
-  fi
-  echo "校验新版内核是否接受当前运行的配置"
-  staged_status=0
-  "$staged" -check -config "$staged_config" >/dev/null 2>&1 || staged_status=$?
-  case "$staged_status" in
-    0) return 0 ;;
-    126|127)
-      echo "无法执行新版内核进行预检（退出码 $staged_status），已跳过该检查。" >&2
-      return 0
-      ;;
-  esac
-  echo "新版内核无法接受当前正在运行的配置，已中止更新，未替换任何文件。" >&2
-  echo "请先在面板重新下发配置后重试。" >&2
-  return 1
+  [ -s "$CONFIG_PATH" ] || return 0
+  echo "校验新版内核的运行安全限制与当前配置"
+  "$tmp/$agent_name" -preflight-core-update -config "$CONFIG_PATH" -state-dir "$STATE_DIR" -staged-core "$staged" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || {
+    echo "新版内核预检失败，已中止更新，未替换任何文件。" >&2
+    return 1
+  }
 }
 
 service_active() {
@@ -18913,6 +18897,7 @@ wait_service_stable() {
 # landed. Agent owns the operational-digest normalization, so the verdict is
 # delegated to it rather than reimplemented here.
 verify_core_runtime() {
+  "$INSTALL_DIR/oboard-agent" -record-release-proof -config "$CONFIG_PATH" -state-dir "$STATE_DIR" -verify-manifest "$tmp/release-manifest.json" -verify-signature "$tmp/release-manifest.json.sig" || return 1
   [ -s "$STATE_DIR/sing-box.json" ] || return 0
   [ -x "$INSTALL_DIR/oboard-agent" ] || return 0
   if ! "$INSTALL_DIR/oboard-agent" -h 2>&1 | grep -q -- '-verify-core-runtime'; then
