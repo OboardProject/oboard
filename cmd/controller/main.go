@@ -179,7 +179,7 @@ func main() {
 	}
 	log.Printf("OBoard controller listening on %s%s", *addr, app.BasePath())
 	if err := serveController(ctx, srv, listener, 10*time.Second); err != nil {
-		log.Printf("controller stopped: %v", err)
+		log.Fatalf("controller stopped: %v", err)
 	}
 }
 
