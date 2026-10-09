@@ -159,10 +159,10 @@ func TestHuaweiACMETXTValueRestoresExistingRecordset(t *testing.T) {
 	}
 }
 
-func TestCloudflareRecordListingRequestsFullPage(t *testing.T) {
+func TestCloudflareRecordListingUsesBoundedPages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("per_page") != "5000" {
-			http.Error(w, "missing full page", 400)
+		if r.URL.Query().Get("per_page") != "100" {
+			http.Error(w, "unexpected page size", 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": []map[string]any{}})

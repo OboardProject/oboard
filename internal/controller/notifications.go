@@ -1730,7 +1730,7 @@ func (s *Server) notifyDNSSyncFailure(ctx context.Context, inbound model.Inbound
 	}
 	s.enqueueNotificationEvent(ctx, notificationEvent{
 		Name:    notificationDNSSyncFailed,
-		Key:     fmt.Sprintf("dns:%d:%s:%s", inbound.ID, lastSuccess, notificationValueKey(errorText)),
+		Key:     fmt.Sprintf("dns:%d:%s:%s", inbound.ID, lastSuccess, notificationValueKey(normalizeDomainName(inbound.DNSDomain))),
 		Context: notificationContext{InboundID: inbound.ID, ServerID: inbound.ServerID},
 		Data: map[string]string{
 			"InboundName": inbound.Name,

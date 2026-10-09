@@ -562,6 +562,9 @@ func (s *Server) syncDNSInbounds(ctx context.Context, servers []model.Server, in
 		status, syncErr := s.syncDNSInbound(ctx, serverByID, credentialByID, inbound)
 		now := time.Now().UTC()
 		if syncErr != nil {
+			if ctx.Err() != nil {
+				return results, ctx.Err()
+			}
 			_ = s.store.UpdateInboundDNSSyncResult(ctx, inbound.ID, "同步失败", syncErr.Error(), nil)
 			serverName := ""
 			if server, ok := serverByID[inbound.ServerID]; ok {
@@ -634,7 +637,7 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 	if err != nil {
 		return "", err
 	}
-	records, err := client.ListRecords(ctx)
+	records, err := listDNSRecordsForDomain(ctx, client, domain)
 	if err != nil {
 		return "", err
 	}
@@ -813,6 +816,8 @@ func (s *Server) StartDNSDDNS(ctx context.Context) {
 }
 
 func (s *Server) runDNSDDNS(ctx context.Context) {
+	s.dnsDDNSMu.Lock()
+	defer s.dnsDDNSMu.Unlock()
 	servers, err := s.store.ListServers(ctx)
 	if err != nil {
 		log.Printf("dns ddns: list servers: %v", err)
@@ -824,8 +829,14 @@ func (s *Server) runDNSDDNS(ctx context.Context) {
 		return
 	}
 	now := time.Now()
+	previousAttempts := s.dnsDDNSNext
+	s.dnsDDNSNext = make(map[int64]time.Time)
 	for _, inbound := range inbounds {
 		if !inbound.Enabled || !inbound.DNSSyncEnabled || !inbound.DDNSEnabled {
+			continue
+		}
+		if next := previousAttempts[inbound.ID]; next.After(now) {
+			s.dnsDDNSNext[inbound.ID] = next
 			continue
 		}
 		interval := time.Duration(inbound.DDNSInterval) * time.Second
@@ -836,6 +847,10 @@ func (s *Server) runDNSDDNS(ctx context.Context) {
 			continue
 		}
 		if _, err := s.syncDNSInbounds(ctx, servers, []model.Inbound{inbound}); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.dnsDDNSNext[inbound.ID] = time.Now().Add(interval)
 			log.Printf("dns ddns: inbound=%d error=%v", inbound.ID, err)
 		}
 	}

@@ -30,6 +30,15 @@ type dnsProviderClient interface {
 	DeleteRecord(context.Context, string) error
 }
 
+func listDNSRecordsForDomain(ctx context.Context, client dnsProviderClient, domain string) ([]model.DNSRecord, error) {
+	if filtered, ok := client.(interface {
+		ListRecordsForName(context.Context, string) ([]model.DNSRecord, error)
+	}); ok {
+		return filtered.ListRecordsForName(ctx, normalizeDomainName(domain))
+	}
+	return client.ListRecords(ctx)
+}
+
 type dnsProviderEndpoints struct {
 	cloudflare string
 	aliDNS     string
@@ -142,11 +151,15 @@ func (p *cloudflareDNSProvider) Verify(ctx context.Context) error {
 }
 
 func (p *cloudflareDNSProvider) ListRecords(ctx context.Context) ([]model.DNSRecord, error) {
+	return p.ListRecordsForName(ctx, "")
+}
+
+func (p *cloudflareDNSProvider) ListRecordsForName(ctx context.Context, name string) ([]model.DNSRecord, error) {
 	zone, err := p.zone(ctx)
 	if err != nil {
 		return nil, err
 	}
-	items, err := p.client().listDNSRecords(ctx, zone)
+	items, err := p.client().listDNSRecordsForName(ctx, zone, name)
 	if err != nil {
 		return nil, err
 	}

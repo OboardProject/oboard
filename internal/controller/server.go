@@ -129,6 +129,8 @@ type Server struct {
 	trustedProxyEnvironmentCIDRs  []string
 	allowedOrigins                map[string]bool
 	dnsEndpoints                  dnsProviderEndpoints
+	dnsDDNSMu                     sync.Mutex
+	dnsDDNSNext                   map[int64]time.Time
 	acmeCommand                   string
 	acmeHome                      string
 	logs                          *oboardlog.Manager

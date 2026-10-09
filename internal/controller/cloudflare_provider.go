@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,6 +44,9 @@ type cloudflareDNSRecord struct {
 }
 
 type cloudflareEnvelope struct {
+	ResultInfo struct {
+		TotalPages int `json:"total_pages"`
+	} `json:"result_info"`
 	Success bool              `json:"success"`
 	Errors  []cloudflareError `json:"errors"`
 	Result  json.RawMessage   `json:"result"`
@@ -94,12 +99,31 @@ func (c *cloudflareClient) findZone(ctx context.Context, domain string) (cloudfl
 }
 
 func (c *cloudflareClient) listDNSRecords(ctx context.Context, zone cloudflareZone) ([]cloudflareDNSRecord, error) {
-	query := url.Values{"per_page": []string{"5000"}}
-	var records []cloudflareDNSRecord
-	if err := c.do(ctx, http.MethodGet, "/zones/"+url.PathEscape(zone.ID)+"/dns_records", query, nil, &records); err != nil {
-		return nil, err
+	return c.listDNSRecordsForName(ctx, zone, "")
+}
+
+type cloudflareDNSRecordPage struct {
+	Records    []cloudflareDNSRecord
+	TotalPages int
+}
+
+func (c *cloudflareClient) listDNSRecordsForName(ctx context.Context, zone cloudflareZone, name string) ([]cloudflareDNSRecord, error) {
+	query := url.Values{"per_page": {"100"}}
+	if name != "" {
+		query.Set("name", normalizeDomainName(name))
 	}
-	return records, nil
+	var records []cloudflareDNSRecord
+	for page := 1; ; page++ {
+		query.Set("page", strconv.Itoa(page))
+		var result cloudflareDNSRecordPage
+		if err := c.do(ctx, http.MethodGet, "/zones/"+url.PathEscape(zone.ID)+"/dns_records", query, nil, &result); err != nil {
+			return nil, err
+		}
+		records = append(records, result.Records...)
+		if page >= result.TotalPages {
+			return records, nil
+		}
+	}
 }
 
 func (c *cloudflareClient) deleteDNSRecord(ctx context.Context, zoneID, recordID string) error {
@@ -107,6 +131,33 @@ func (c *cloudflareClient) deleteDNSRecord(ctx context.Context, zoneID, recordID
 }
 
 func (c *cloudflareClient) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	for attempt := 0; ; attempt++ {
+		err := c.doOnce(ctx, method, path, query, body, out)
+		var network net.Error
+		var temporary cloudflareTemporaryError
+		retryable := errors.As(err, &network) || errors.As(err, &temporary)
+		if err == nil || method != http.MethodGet || !retryable || attempt >= 2 || ctx.Err() != nil {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+type cloudflareTemporaryError struct{ Status int }
+
+func (e cloudflareTemporaryError) Error() string {
+	return fmt.Sprintf("cloudflare API returned HTTP %d", e.Status)
+}
+
+func (c *cloudflareClient) doOnce(ctx context.Context, method, path string, query url.Values, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -136,6 +187,10 @@ func (c *cloudflareClient) do(ctx context.Context, method, path string, query ur
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return cloudflareTemporaryError{Status: resp.StatusCode}
+	}
 	var envelope cloudflareEnvelope
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&envelope); err != nil {
 		return fmt.Errorf("cloudflare API returned HTTP %d", resp.StatusCode)
@@ -145,6 +200,10 @@ func (c *cloudflareClient) do(ctx context.Context, method, path string, query ur
 	}
 	if out == nil || len(envelope.Result) == 0 || string(envelope.Result) == "null" {
 		return nil
+	}
+	if page, ok := out.(*cloudflareDNSRecordPage); ok {
+		page.TotalPages = envelope.ResultInfo.TotalPages
+		return json.Unmarshal(envelope.Result, &page.Records)
 	}
 	return json.Unmarshal(envelope.Result, out)
 }

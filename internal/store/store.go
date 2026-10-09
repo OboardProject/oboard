@@ -4000,7 +4000,7 @@ func (s *Store) ListInbounds(ctx context.Context) ([]model.Inbound, error) {
 }
 
 func (s *Store) UpdateInboundDNSSyncResult(ctx context.Context, id int64, status, syncError string, syncedAt *time.Time) error {
-	_, err := s.db.ExecContext(ctx, `update inbounds set dns_sync_status=?, dns_sync_error=?, dns_last_synced_at=?, updated_at=? where id=?`, status, syncError, timePtrString(syncedAt), now(), id)
+	_, err := s.db.ExecContext(ctx, `update inbounds set dns_sync_status=?, dns_sync_error=?, dns_last_synced_at=coalesce(?,dns_last_synced_at), updated_at=? where id=?`, status, syncError, timePtrString(syncedAt), now(), id)
 	return err
 }
 
