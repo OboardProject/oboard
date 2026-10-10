@@ -372,6 +372,16 @@ func (s *Server) offlineIsolationPanel(ctx context.Context) (map[string]any, err
 	prompts := []map[string]any{}
 	active := []map[string]any{}
 	for _, event := range events {
+		server, err := s.store.GetServer(ctx, event.ServerID)
+		if nodeIncidentNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if server.CreatedAt.After(event.DetectedAt) {
+			continue
+		}
 		isolations, err := s.store.ListNodePublicationIsolations(ctx, event.ID)
 		if err != nil {
 			return nil, err
@@ -383,7 +393,7 @@ func (s *Server) offlineIsolationPanel(ctx context.Context) (map[string]any, err
 			}
 			hidden[*isolation.InboundID] = true
 			row := map[string]any{
-				"id": isolation.ID, "incident_id": event.ID, "server_id": event.ServerID, "server_name": event.ServerName,
+				"id": isolation.ID, "incident_id": event.ID, "server_id": event.ServerID, "server_name": server.Name,
 				"inbound_name": isolation.InboundName, "recovery_policy": isolation.RecoveryPolicy,
 			}
 			if isolation.RestoreAt != nil {
@@ -391,7 +401,7 @@ func (s *Server) offlineIsolationPanel(ctx context.Context) (map[string]any, err
 			}
 			active = append(active, row)
 		}
-		if event.Status != model.NodeIncidentActive {
+		if event.Status != model.NodeIncidentActive || server.Status != model.ServerOffline {
 			continue
 		}
 		inbounds := []map[string]any{}
@@ -399,13 +409,23 @@ func (s *Server) offlineIsolationPanel(ctx context.Context) (map[string]any, err
 			if hidden[inbound.ID] {
 				continue
 			}
-			inbounds = append(inbounds, map[string]any{"id": inbound.ID, "name": inbound.Name})
+			current, err := s.store.GetInbound(ctx, inbound.ID)
+			if nodeIncidentNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if !current.Enabled || current.ServerID != server.ID {
+				continue
+			}
+			inbounds = append(inbounds, map[string]any{"id": current.ID, "name": current.Name})
 		}
 		if len(inbounds) == 0 {
 			continue
 		}
 		prompts = append(prompts, map[string]any{
-			"id": event.ID, "version": event.Version, "server_id": event.ServerID, "server_name": event.ServerName, "inbounds": inbounds,
+			"id": event.ID, "version": event.Version, "server_id": event.ServerID, "server_name": server.Name, "inbounds": inbounds,
 		})
 	}
 	return map[string]any{"incidents": prompts, "active": active}, nil

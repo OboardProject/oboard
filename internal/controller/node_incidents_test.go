@@ -317,3 +317,92 @@ func TestSubscriptionIsolationHidesOnlySelectedInboundWithoutDeployment(t *testi
 		t.Fatalf("temporary isolation queued deployment tasks=%#v err=%v", tasks, err)
 	}
 }
+
+func TestOfflineIsolationPanelUsesCurrentServerState(t *testing.T) {
+	for _, state := range []string{"offline", "online", "missing", "replaced", "disabled_inbound", "deleted_inbound"} {
+		t.Run(state, func(t *testing.T) {
+			db, err := store.Open(filepath.Join(t.TempDir(), "panel.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			srv := newTestServer(db, "secret", "")
+			ctx := context.Background()
+			server := &model.Server{Name: "old-name", Status: model.ServerOffline}
+			if err := db.CreateServer(ctx, server); err != nil {
+				t.Fatal(err)
+			}
+			inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: "{}", Enabled: true}
+			if err := db.CreateInbound(ctx, inbound); err != nil {
+				t.Fatal(err)
+			}
+			entries := []nodeIncidentSnapshotInbound{{ID: inbound.ID, Name: inbound.Name, Published: true}}
+			if state == "online" {
+				another := &model.Inbound{ServerID: server.ID, Name: "second", Protocol: model.ProtocolVLESS, Port: 8443, ConfigJSON: "{}", Enabled: true}
+				if err := db.CreateInbound(ctx, another); err != nil {
+					t.Fatal(err)
+				}
+				entries = append(entries, nodeIncidentSnapshotInbound{ID: another.ID, Name: another.Name, Published: true})
+			}
+			snapshot, _ := json.Marshal(nodeIncidentSnapshot{Inbounds: entries})
+			at := time.Now().UTC()
+			incident, _, err := db.OpenOrReopenNodeIncident(ctx, *server, at.Add(-time.Minute), at, time.Minute, time.Minute, string(snapshot))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch state {
+			case "online":
+				actor := &model.User{Username: "admin", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active"}
+				if err := db.CreateUser(ctx, actor); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.CreateNodePublicationIsolations(ctx, incident.ID, actor.ID, []int64{inbound.ID}, "manual", nil); err != nil {
+					t.Fatal(err)
+				}
+				server.Status = model.ServerOnline
+				server.Name = "current-name"
+				if err := db.UpdateServer(ctx, server); err != nil {
+					t.Fatal(err)
+				}
+			case "missing", "replaced":
+				if err := db.Delete(ctx, "servers", server.ID); err != nil {
+					t.Fatal(err)
+				}
+				if state == "replaced" {
+					replacement := &model.Server{Name: "replacement", Status: model.ServerOffline}
+					if err := db.CreateServer(ctx, replacement); err != nil {
+						t.Fatal(err)
+					}
+					if replacement.ID != server.ID {
+						t.Fatal("fixture did not reuse server ID")
+					}
+				}
+			case "disabled_inbound":
+				inbound.Enabled = false
+				if err := db.UpdateInbound(ctx, inbound); err != nil {
+					t.Fatal(err)
+				}
+			case "deleted_inbound":
+				if err := db.Delete(ctx, "inbounds", inbound.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			panel, err := srv.offlineIsolationPanel(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prompts := panel["incidents"].([]map[string]any)
+			want := 0
+			if state == "offline" {
+				want = 1
+			}
+			if len(prompts) != want {
+				t.Fatalf("%s: offline prompts=%d, want %d", state, len(prompts), want)
+			}
+			active := panel["active"].([]map[string]any)
+			if state == "online" && (len(active) != 1 || active[0]["server_name"] != "current-name") {
+				t.Fatalf("active manual isolation lost or stale: %#v", active)
+			}
+		})
+	}
+}
