@@ -143,7 +143,8 @@ func TestRunAccessSyncPlanIsBounded(t *testing.T) {
 	var inFlight, peak atomic.Int64
 	var mu sync.Mutex
 	seen := map[int64]int{}
-	runAccessSyncPlan(context.Background(), plan, func(_ context.Context, serverID int64, _ bool) {
+	databaseSem := make(chan struct{}, 2)
+	runAccessSyncPlan(context.Background(), plan, databaseSem, func(_ context.Context, serverID int64, _ bool) {
 		current := inFlight.Add(1)
 		for {
 			high := peak.Load()
@@ -157,8 +158,8 @@ func TestRunAccessSyncPlanIsBounded(t *testing.T) {
 		mu.Unlock()
 		inFlight.Add(-1)
 	})
-	if peak.Load() > accessSyncConcurrency {
-		t.Fatalf("round ran %d servers in parallel, bound is %d", peak.Load(), accessSyncConcurrency)
+	if peak.Load() > int64(cap(databaseSem)) {
+		t.Fatalf("round ran %d database-heavy servers in parallel, bound is %d", peak.Load(), cap(databaseSem))
 	}
 	if len(seen) != len(plan.work) {
 		t.Fatalf("visited %d of %d servers", len(seen), len(plan.work))
@@ -182,7 +183,7 @@ func TestRunAccessSyncPlanStopsOnCancel(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runAccessSyncPlan(ctx, plan, func(_ context.Context, _ int64, _ bool) {
+		runAccessSyncPlan(ctx, plan, nil, func(_ context.Context, _ int64, _ bool) {
 			if handled.Add(1) == 4 {
 				cancel()
 			}

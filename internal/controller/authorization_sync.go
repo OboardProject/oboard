@@ -203,7 +203,7 @@ func (s *Server) reconcileAuthorizationSync(ctx context.Context, full bool) {
 	})
 	s.hotPath.authorizationSyncSkipped.Add(int64(plan.skipped))
 	s.hotPath.authorizationSyncEvaluated.Add(int64(len(plan.work)))
-	runAccessSyncPlan(ctx, plan, s.syncServerAuthorization)
+	runAccessSyncPlan(ctx, plan, s.accessSyncDatabaseSem, s.syncServerAuthorization)
 	if _, err := s.store.PruneAuthorizationDenials(ctx, time.Now().UTC()); err != nil {
 		log.Printf("authorization sync: prune denials: %v", err)
 	}

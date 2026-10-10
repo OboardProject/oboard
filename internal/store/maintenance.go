@@ -9,7 +9,10 @@ import (
 )
 
 var (
-	maintenanceBatchSize  = 2000
+	// Keep each retention delete short so Agent callbacks can use the serialized
+	// writer between batches. A large batch held the writer long enough to make
+	// authorization and runtime-user pulls wait behind maintenance.
+	maintenanceBatchSize  = 500
 	maintenanceMaxBatches = 50
 )
 

@@ -14,6 +14,12 @@ import (
 // against itself through the per-server in-flight guard.
 const accessSyncConcurrency = 4
 
+// accessSyncDatabaseConcurrency is shared by authorization and runtime-user
+// rounds. They used to each start four workers, so a periodic pass could run
+// eight SQLite-heavy evaluations at once and starve Agent callbacks. Keep the
+// per-round worker bound for ordering, but cap the combined database work.
+const accessSyncDatabaseConcurrency = 2
+
 // accessSyncWork is one server the round decided actually needs evaluating.
 type accessSyncWork struct {
 	serverID int64
@@ -81,7 +87,7 @@ func planAccessSyncRound(candidates []store.AccessSyncCandidate, routingRevision
 
 // runAccessSyncPlan executes the plan with bounded concurrency, preserving the
 // plan's priority order as the order work is handed out.
-func runAccessSyncPlan(ctx context.Context, plan accessSyncPlan, reconcile func(ctx context.Context, serverID int64, force bool)) {
+func runAccessSyncPlan(ctx context.Context, plan accessSyncPlan, databaseSem chan struct{}, reconcile func(ctx context.Context, serverID int64, force bool)) {
 	if len(plan.work) == 0 {
 		return
 	}
@@ -96,7 +102,17 @@ func runAccessSyncPlan(ctx context.Context, plan accessSyncPlan, reconcile func(
 				if ctx.Err() != nil {
 					return
 				}
+				if databaseSem != nil {
+					select {
+					case databaseSem <- struct{}{}:
+					case <-ctx.Done():
+						return
+					}
+				}
 				reconcile(ctx, item.serverID, item.force)
+				if databaseSem != nil {
+					<-databaseSem
+				}
 			}
 		}()
 	}

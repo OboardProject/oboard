@@ -9,6 +9,8 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+const retiredScriptOutboxMigrationKey = "system.migration.retired-script-outbox-v1"
+
 // retiredPluginTables belong to the retired plugin runtime (revisions,
 // bindings, webhooks and management grants). They are dropped, never read.
 // Order respects foreign keys.
@@ -225,6 +227,9 @@ func (s *Store) migratePluginSchema(ctx context.Context) error {
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("plugin schema: %w", err)
 	}
+	if err := retireScriptOutboxTx(ctx, tx); err != nil {
+		return err
+	}
 	if marker != model.PluginModelCurrent {
 		if err := dropRetiredPluginRuntime(ctx, tx); err != nil {
 			return err
@@ -247,6 +252,28 @@ func (s *Store) migratePluginSchema(ctx context.Context) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// retireScriptOutboxTx removes pending events from the pre-capability script
+// runtime. There is no current consumer for script.* topics, so retaining them
+// only made the indexed outbox queue grow and added stale rows to every queue
+// inspection. Completed rows remain as audit history; pending/leased rows are
+// abandoned work that can never be delivered. The marker makes this a one-time
+// migration rather than a blanket delete on every startup.
+func retireScriptOutboxTx(ctx context.Context, tx *sql.Tx) error {
+	var marker string
+	err := tx.QueryRowContext(ctx, `select value from app_settings where key=?`, retiredScriptOutboxMigrationKey).Scan(&marker)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if marker == "done" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `delete from event_outbox where topic like 'script.%' and status in ('pending','leased')`); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at`, retiredScriptOutboxMigrationKey, "done", now())
+	return err
 }
 
 // widenPluginRunTriggers rebuilds capability-model plugin_runs whose check

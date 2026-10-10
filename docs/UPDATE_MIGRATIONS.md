@@ -83,6 +83,16 @@
 | `agent-kernel-20260902-runtime-config-digest` | Agent / kernel | wire protocol / rolling upgrade | `dev-fa897b03f1f8` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+### controller-retired-script-outbox-001
+
+- Owner：Controller/store；类别：事件队列数据清理；状态：生效中。引入提交/版本：待提交 / dev-<commit>；首次稳定版：待发布。
+- 源状态：旧脚本运行时写入 event_outbox 的 script.* 事件，当前 Controller 已无对应消费者；pending/leased 事件长期积压并增加队列扫描和数据库压力。
+- 目标状态：一次性删除 script.* 的 pending/leased 工作，保留 completed 记录；迁移标记写入 app_settings，重复启动不重复删除。
+- 实现：internal/store/plugin_schema.go 的 retireScriptOutboxTx，随 Store 打开迁移在事务内执行；不改变流量、审计、任务或服务器数据。
+- 幂等/失败：删除与标记同事务提交；失败回滚，下一次启动继续。若未来恢复旧脚本运行时，必须先移除或调整此迁移。
+- 回归：TestRetiredScriptOutboxMigrationRemovesUndeliverableWork 验证 pending/leased 清理、completed 保留和重复打开幂等。
+- 移除门槛：最老支持升级版本和备份恢复均已经过此清理，且旧脚本运行时不可再写入 script.*；当前未满足。
+
 
 ### controller-db-20260930-plugin-capability-runtime
 

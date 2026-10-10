@@ -141,7 +141,7 @@ func (s *Server) reconcileRuntimeUsersSync(ctx context.Context, full bool) {
 	})
 	s.hotPath.runtimeUsersSyncSkipped.Add(int64(plan.skipped))
 	s.hotPath.runtimeUsersSyncEvaluated.Add(int64(len(plan.work)))
-	runAccessSyncPlan(ctx, plan, s.syncServerRuntimeUsers)
+	runAccessSyncPlan(ctx, plan, s.accessSyncDatabaseSem, s.syncServerRuntimeUsers)
 }
 
 func (s *Server) buildRuntimeUserPackage(ctx context.Context, server model.Server, revision int64) (core.RuntimeUserPackage, error) {

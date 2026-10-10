@@ -157,6 +157,57 @@ func TestRetiredPluginRuntimeUpgradesToCapabilityModel(t *testing.T) {
 	}
 }
 
+func TestRetiredScriptOutboxMigrationRemovesUndeliverableWork(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct{ id, status string }{{"script-pending", "pending"}, {"script-leased", "leased"}, {"script-complete", "completed"}} {
+		if _, err := db.db.ExecContext(ctx, `insert into event_outbox(id,topic,aggregate_id,payload_json,status,available_at,created_at) values(?,?,?,'{}',?,?,?)`, row.id, "script.server.offline", row.id, row.status, now(), now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.db.ExecContext(ctx, `delete from app_settings where key=?`, retiredScriptOutboxMigrationKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending, leased, completed int
+	if err := db.db.QueryRowContext(ctx, `select count(*) from event_outbox where id='script-pending'`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRowContext(ctx, `select count(*) from event_outbox where id='script-leased'`).Scan(&leased); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRowContext(ctx, `select count(*) from event_outbox where id='script-complete'`).Scan(&completed); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || leased != 0 || completed != 1 {
+		t.Fatalf("script outbox migration left pending=%d leased=%d completed=%d", pending, leased, completed)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.db.QueryRowContext(ctx, `select count(*) from event_outbox where topic like 'script.%'`).Scan(&completed); err != nil {
+		t.Fatal(err)
+	}
+	if completed != 1 {
+		t.Fatalf("script outbox migration is not idempotent, remaining=%d", completed)
+	}
+}
+
 func TestPluginPageSchemaUpgradesPreviousRuns(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "oboard.sqlite")
