@@ -85,7 +85,7 @@
 ## 生效中的迁移
 ### controller-retired-script-outbox-001
 
-- Owner：Controller/store；类别：事件队列数据清理；状态：生效中。引入提交/版本：待提交 / dev-<commit>；首次稳定版：待发布。
+- Owner：Controller/store；类别：事件队列数据清理；状态：生效中。引入提交/版本：b5e40f58f60e / dev-b5e40f58f60e；首次稳定版：待发布。
 - 源状态：旧脚本运行时写入 event_outbox 的 script.* 事件，当前 Controller 已无对应消费者；pending/leased 事件长期积压并增加队列扫描和数据库压力。
 - 目标状态：一次性删除 script.* 的 pending/leased 工作，保留 completed 记录；迁移标记写入 app_settings，重复启动不重复删除。
 - 实现：internal/store/plugin_schema.go 的 retireScriptOutboxTx，随 Store 打开迁移在事务内执行；不改变流量、审计、任务或服务器数据。
