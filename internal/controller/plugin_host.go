@@ -379,5 +379,5 @@ func pluginRuntimeInstallCommand() string {
 			version = pinned
 		}
 	}
-	return "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/plugins/install.sh | sudo env OBOARD_ACTION=enable-plugins VERSION=" + version + " sh"
+	return "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env OBOARD_ACTION=enable-plugins VERSION=" + version + " sh"
 }

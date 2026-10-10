@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
 )
 
 func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
@@ -538,7 +537,8 @@ func TestControllerInstallPluginRuntimeIsOptional(t *testing.T) {
 func TestPluginRuntimeInstallCommandUsesUpdateChannel(t *testing.T) {
 	t.Setenv("OBOARD_UPDATE_CHANNEL", "dev")
 	command := pluginRuntimeInstallCommand()
-	if !strings.Contains(command, "OBOARD_ACTION=enable-plugins") || !strings.Contains(command, "VERSION=dev") {
+	if !strings.Contains(command, "https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh") ||
+		!strings.Contains(command, "OBOARD_ACTION=enable-plugins") || !strings.Contains(command, "VERSION=dev") {
 		t.Fatalf("unexpected install command: %s", command)
 	}
 }
