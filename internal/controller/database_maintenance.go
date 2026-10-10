@@ -11,6 +11,10 @@ const (
 	databaseMaintenanceTick           = 30 * time.Second
 	databaseMaintenanceTimeout        = 2 * time.Minute
 	databaseMaintenanceCatchUpTimeout = 5 * time.Minute
+	// Let the Controller and Agents reconnect before the first retention pass
+	// after a restart. Running the full pass immediately after an update made
+	// the first authorization and traffic callbacks wait behind SQLite deletes.
+	databaseMaintenanceInitialDelay = time.Minute
 	// A deferred index build is one-time and does not block serving, so it is
 	// given room to finish on a slow host instead of being retried from the
 	// start on every boot.
@@ -42,6 +46,15 @@ func (s *Server) StartDatabaseMaintenance(ctx context.Context) {
 	// migration over a grown reporting table, not part of the recurring
 	// retention work whose timeout they would otherwise consume.
 	s.migrateDeferredIndexes(ctx)
+	initialTimer := time.NewTimer(databaseMaintenanceInitialDelay)
+	select {
+	case <-ctx.Done():
+		if !initialTimer.Stop() {
+			<-initialTimer.C
+		}
+		return
+	case <-initialTimer.C:
+	}
 	catchUp := s.runDatabaseMaintenance(ctx, true)
 	lastFull := time.Now()
 	ticker := time.NewTicker(databaseMaintenanceTick)
