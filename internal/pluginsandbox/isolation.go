@@ -253,7 +253,11 @@ func configureRunnerCgroup(group string, memoryMiB int) error {
 // capability. --unshare-all includes the network namespace, so the runner has
 // no route to any network; SDK network access goes through the Controller.
 func sandboxArgs(self, mode string) []string {
-	args := []string{"--unshare-all", "--disable-userns", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv", "--setenv", "GOMAXPROCS", "1", "--ro-bind", self, "/worker", "--size", "8388608", "--tmpfs", "/tmp", "--proc", "/proc", "--dev", "/dev", "--remount-ro", "/", "--chdir", "/tmp"}
+	// bubblewrap 0.12 requires --unshare-user to be explicit when
+	// --disable-userns is used; --unshare-all alone does not satisfy that
+	// validation on the Debian test host. Keep both flags so the runner still
+	// gets a private user namespace while nested user namespaces are disabled.
+	args := []string{"--unshare-all", "--unshare-user", "--disable-userns", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv", "--setenv", "GOMAXPROCS", "1", "--ro-bind", self, "/worker", "--size", "8388608", "--tmpfs", "/tmp", "--proc", "/proc", "--dev", "/dev", "--remount-ro", "/", "--chdir", "/tmp"}
 	if mode == "-runner" {
 		args = append(args, "--preserve-fds", "2")
 	}

@@ -11,7 +11,7 @@ import (
 func TestSandboxHasOnlyWorkerMountAndRPCDescriptors(t *testing.T) {
 	args := sandboxArgs("/opt/private/worker", "-runner")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"--unshare-all", "--disable-userns", "--cap-drop ALL", "--clearenv", "--ro-bind /opt/private/worker /worker", "--size 8388608 --tmpfs /tmp", "--remount-ro /", "--preserve-fds 2", "/worker -runner"} {
+	for _, want := range []string{"--unshare-all", "--unshare-user", "--disable-userns", "--cap-drop ALL", "--clearenv", "--ro-bind /opt/private/worker /worker", "--size 8388608 --tmpfs /tmp", "--remount-ro /", "--preserve-fds 2", "/worker -runner"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %s: %s", want, joined)
 		}
