@@ -33,6 +33,26 @@ type deferredIndex struct {
 
 var deferredIndexes = []deferredIndex{
 	{
+		name: "idx_traffic_stats_inbound", table: "traffic_stats",
+		create: `create index if not exists idx_traffic_stats_inbound on traffic_stats(inbound_id) where inbound_id is not null`,
+	},
+	{
+		name: "idx_traffic_reports_inbound", table: "traffic_reports",
+		create: `create index if not exists idx_traffic_reports_inbound on traffic_reports(inbound_id) where inbound_id is not null`,
+	},
+	{
+		name: "idx_traffic_reports_path", table: "traffic_reports",
+		create: `create index if not exists idx_traffic_reports_path on traffic_reports(path_id) where path_id is not null`,
+	},
+	{
+		name: "idx_connection_audit_inbound", table: "connection_audit_reports",
+		create: `create index if not exists idx_connection_audit_inbound on connection_audit_reports(inbound_id) where inbound_id is not null`,
+	},
+	{
+		name: "idx_connection_audit_path", table: "connection_audit_reports",
+		create: `create index if not exists idx_connection_audit_path on connection_audit_reports(path_id) where path_id is not null`,
+	},
+	{
 		name:     "idx_connection_audit_user_window",
 		table:    "connection_audit_reports",
 		create:   `create index if not exists idx_connection_audit_user_window on connection_audit_reports(user_id, ended_at desc, source_ip, server_id, connection_count, active_peak)`,
@@ -67,6 +87,9 @@ func (s *Store) deferredIndexApplied(ctx context.Context, item deferredIndex) (b
 	present, err := s.indexExists(ctx, item.name)
 	if err != nil || !present {
 		return false, err
+	}
+	if item.replaces == "" {
+		return true, nil
 	}
 	superseded, err := s.indexExists(ctx, item.replaces)
 	if err != nil {
@@ -111,8 +134,10 @@ func (s *Store) MigrateDeferredIndexes(ctx context.Context) error {
 			}
 			log.Printf("built deferred index %s in %s", item.name, time.Since(startedAt).Round(time.Millisecond))
 		}
-		if _, err := s.db.ExecContext(ctx, `drop index if exists `+item.replaces); err != nil {
-			return fmt.Errorf("drop superseded index %s: %w", item.replaces, err)
+		if item.replaces != "" {
+			if _, err := s.db.ExecContext(ctx, `drop index if exists `+item.replaces); err != nil {
+				return fmt.Errorf("drop superseded index %s: %w", item.replaces, err)
+			}
 		}
 	}
 	return nil

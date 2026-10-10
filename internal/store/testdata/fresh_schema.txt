@@ -34,6 +34,8 @@ index idx_configuration_sync_queue on configuration_sync_states
 index idx_connection_audit_hourly_dimensions_window on connection_audit_hourly_dimensions
 index idx_connection_audit_hourly_dirty_at on connection_audit_hourly_dirty
 index idx_connection_audit_hourly_hour on connection_audit_hourly
+index idx_connection_audit_inbound on connection_audit_reports
+index idx_connection_audit_path on connection_audit_reports
 index idx_connection_audit_route_time on connection_audit_reports
 index idx_connection_audit_server_time on connection_audit_reports
 index idx_connection_audit_source_window on connection_audit_reports
@@ -145,6 +147,7 @@ index idx_tasks_config_version on agent_tasks
 index idx_tasks_server_status_id on agent_tasks
 index idx_tasks_server_type_version on agent_tasks
 index idx_tasks_status_updated on agent_tasks
+index idx_telegram_action_tokens_expiry on telegram_action_tokens
 index idx_telegram_binding_codes_expiry on telegram_binding_codes
 index idx_telegram_bindings_user on telegram_bindings
 index idx_traffic_counter_streams_lookup on traffic_counter_streams
@@ -153,9 +156,12 @@ index idx_traffic_period_transitions_target on traffic_period_transitions
 index idx_traffic_periods_user on traffic_periods
 index idx_traffic_periods_user_started on traffic_periods
 index idx_traffic_reconciliation_open on traffic_reconciliation_events
+index idx_traffic_reports_inbound on traffic_reports
+index idx_traffic_reports_path on traffic_reports
 index idx_traffic_reports_range on traffic_reports
 index idx_traffic_reports_user_period on traffic_reports
 index idx_traffic_server on traffic_stats
+index idx_traffic_stats_inbound on traffic_stats
 index idx_traffic_tail_streams_lookup on traffic_tail_streams
 index idx_tunnels_source on tunnels
 index idx_user_devices_user on user_devices
@@ -1384,6 +1390,7 @@ table node_publication_isolations
     inbound_name TEXT notnull=1 default=- pk=0
     server_id INTEGER notnull=1 default=- pk=0
     recovery_policy TEXT notnull=1 default=- pk=0
+    restore_at TEXT notnull=0 default=- pk=0
     status TEXT notnull=1 default=- pk=0
     actor_user_id INTEGER notnull=1 default=- pk=0
     restored_by INTEGER notnull=0 default=- pk=0
@@ -1451,6 +1458,7 @@ table notification_channels
     name TEXT notnull=1 default=- pk=0
     type TEXT notnull=1 default=- pk=0
     enabled INTEGER notnull=1 default=1 pk=0
+    enabled_since TEXT notnull=1 default='' pk=0
     events TEXT notnull=1 default='server_offline,server_online' pk=0
     config_json TEXT notnull=1 default='{}' pk=0
     templates_json TEXT notnull=1 default='{}' pk=0
@@ -1463,6 +1471,7 @@ table notification_deliveries
     event_key TEXT notnull=1 default=- pk=0
     title TEXT notnull=1 default=- pk=0
     body TEXT notnull=1 default=- pk=0
+    context_json TEXT notnull=1 default='{}' pk=0
     status TEXT notnull=1 default='pending' pk=0
     attempts INTEGER notnull=1 default=0 pk=0
     error TEXT notnull=1 default='' pk=0
@@ -1651,6 +1660,12 @@ table plugin_packages
     source_commit TEXT notnull=1 default='' pk=0
     created_by_user_id INTEGER notnull=1 default=0 pk=0
     created_at TEXT notnull=1 default=- pk=0
+table plugin_page_snapshots
+    instance_id INTEGER notnull=1 default=- pk=1
+    page_id TEXT notnull=1 default=- pk=2
+    document_json TEXT notnull=1 default=- pk=0
+    run_uuid TEXT notnull=1 default='' pk=0
+    published_at TEXT notnull=1 default=- pk=0
 table plugin_run_logs
     run_id INTEGER notnull=1 default=- pk=1
     seq INTEGER notnull=1 default=- pk=2
@@ -2453,6 +2468,15 @@ table task_operations
     source TEXT notnull=1 default=- pk=0
     actor_principal TEXT notnull=1 default=- pk=0
     actor_user_id INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table telegram_action_tokens
+    token_hash TEXT notnull=0 default=- pk=1
+    chat_id INTEGER notnull=1 default=- pk=0
+    message_id INTEGER notnull=1 default=0 pk=0
+    action TEXT notnull=1 default=- pk=0
+    payload_json TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
 table telegram_binding_codes
     code_hash TEXT notnull=0 default=- pk=1
