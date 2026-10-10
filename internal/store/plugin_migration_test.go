@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -154,6 +155,25 @@ func TestRetiredPluginRuntimeUpgradesToCapabilityModel(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+func TestClaimPluginEventsRequeuesExpiredLease(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.db.ExecContext(ctx, `insert into event_outbox(id,topic,aggregate_id,payload_json,status,attempts,available_at,lease_owner,lease_until,created_at) values('expired-plugin','plugin.server.offline','server:1','{}','leased',2,?,?,?,?)`, now(), "old-worker", time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), now()); err != nil {
+		t.Fatal(err)
+	}
+	items, err := db.ClaimPluginEvents(ctx, "new-worker", time.Now().UTC().Add(time.Minute), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "expired-plugin" || items[0].Attempts != 2 {
+		t.Fatalf("expired lease was not reclaimed: %#v", items)
 	}
 }
 

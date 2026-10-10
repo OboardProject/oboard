@@ -212,7 +212,7 @@ func (s *Server) buildRoutingSnapshotLocked(ctx context.Context, revision uint64
 }
 
 func loadConsistentRoutingSnapshot(ctx context.Context, revision uint64, readRevision func(context.Context) (uint64, error), read func(context.Context, uint64) (*routingSnapshot, error)) (*routingSnapshot, error) {
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 6; attempt++ {
 		entry, err := read(ctx, revision)
 		if err != nil {
 			return nil, err
@@ -225,6 +225,16 @@ func loadConsistentRoutingSnapshot(ctx context.Context, revision uint64, readRev
 			return entry, nil
 		}
 		revision = current
+		if attempt < 5 {
+			delay := time.Duration(attempt+1) * 5 * time.Millisecond
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
 	}
 	return nil, errRoutingSnapshotChanged
 }

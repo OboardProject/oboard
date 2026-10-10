@@ -1172,6 +1172,12 @@ func (s *Store) ClaimPluginEvents(ctx context.Context, owner string, until time.
 	}
 	defer tx.Rollback()
 	ts := now()
+	// A worker can disappear after leasing an event. Requeue leases that have
+	// expired before selecting new work; otherwise one abandoned event remains
+	// stuck in leased forever and is never retried.
+	if _, err := tx.ExecContext(ctx, `update event_outbox set status='pending',lease_owner='',lease_until=null where topic like 'plugin.%' and status='leased' and lease_until is not null and lease_until<=?`, ts); err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, `select id,topic,aggregate_id,payload_json,attempts,created_at from event_outbox where status='pending' and available_at<=? and topic like 'plugin.%' order by created_at limit ?`, ts, limit)
 	if err != nil {
 		return nil, err

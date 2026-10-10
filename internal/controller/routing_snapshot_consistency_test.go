@@ -73,7 +73,7 @@ func TestRoutingSnapshotContinuousChangesAreBounded(t *testing.T) {
 	var revision uint64 = 1
 	loads := 0
 	entry, err := loadConsistentRoutingSnapshot(ctx, revision, func(context.Context) (uint64, error) { revision++; return revision, nil }, func(context.Context, uint64) (*routingSnapshot, error) { loads++; return &routingSnapshot{}, nil })
-	if entry != nil || !errors.Is(err, errRoutingSnapshotChanged) || loads != 3 {
+	if entry != nil || !errors.Is(err, errRoutingSnapshotChanged) || loads != 6 {
 		t.Fatalf("entry=%v err=%v loads=%d", entry, err, loads)
 	}
 }
