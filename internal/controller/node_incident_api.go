@@ -289,7 +289,15 @@ func (s *Server) applyConfirmedNodeChangeset(ctx context.Context, principal appl
 }
 
 func (s *Server) applyConfirmedChangeset(ctx context.Context, principal application.Principal, operations []automation.OperationRequest, idempotencyKey, reason string) (*model.AutomationChangeset, error) {
-	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: reason, IdempotencyKey: idempotencyKey, BaseRevisions: json.RawMessage(`{}`), Operations: operations})
+	draft, err := s.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: operations})
+	if err != nil {
+		return nil, err
+	}
+	baseRevisions, err := json.Marshal(draft.ExpectedRevisions)
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: reason, IdempotencyKey: idempotencyKey, BaseRevisions: baseRevisions, Operations: operations})
 	if err != nil {
 		return nil, err
 	}

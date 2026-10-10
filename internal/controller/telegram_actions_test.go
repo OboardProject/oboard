@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -88,3 +91,76 @@ func labels(specs []telegramActionSpec) []string {
 }
 
 func telegramTimePtr(value time.Time) *time.Time { return &value }
+
+func TestTelegramExtendExpiryChangeset(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		days       int
+		restricted bool
+	}{
+		{name: "7 days", days: 7},
+		{name: "30 days", days: 30},
+		{name: "90 days", days: 90},
+		{name: "1 year", days: 365},
+		{name: "outside server scope", days: 30, restricted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			db := openControllerAutomationTestStore(t)
+			srv := newTestServer(db, "test-secret", "")
+			admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111112", ProxyPassword: "unused"}
+			if err := db.CreateUser(ctx, admin); err != nil {
+				t.Fatal(err)
+			}
+			principal := userAutomationPrincipal(t, db, admin.ID)
+			if tc.restricted {
+				principal.ResourceFilter = json.RawMessage(`{"servers":{"mode":"selected","ids":[]}}`)
+			}
+			expiry := time.Date(2026, 10, 14, 0, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*3600))
+			server := &model.Server{Name: "telegram-renewal", Status: model.ServerOffline, ExpiresAt: &expiry}
+			if err := db.CreateServer(ctx, server); err != nil {
+				t.Fatal(err)
+			}
+			before, err := db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, execErr := srv.executeTelegramAction(ctx, *admin, model.RoleAdmin, principal, telegramActionPayload{Action: "extend_expiry", ServerID: server.ID, Days: tc.days}, "renewal-confirmation")
+			if (execErr != nil) != tc.restricted {
+				t.Fatalf("execute renewal: %v", execErr)
+			}
+			stored, err := db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := expiry.AddDate(0, 0, tc.days)
+			if tc.restricted {
+				want = expiry
+			}
+			if stored.ExpiresAt == nil || !stored.ExpiresAt.Equal(want) {
+				t.Fatalf("expiry = %v, want %v", stored.ExpiresAt, want)
+			}
+			tasks, err := db.ListTasksByServer(ctx, server.ID, 10)
+			if err != nil || len(tasks) != 0 {
+				t.Fatalf("renewal queued Agent tasks: %v, error: %v", tasks, err)
+			}
+			if tc.restricted {
+				return
+			}
+			changeset, err := db.FindAutomationChangesetByIdempotency(ctx, principal.ID, "telegram-action:renewal-confirmation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changeset.Status != model.ChangesetSucceeded {
+				t.Fatalf("changeset status = %s", changeset.Status)
+			}
+			var revisions map[string]string
+			if err := json.Unmarshal(changeset.BaseRevisions, &revisions); err != nil {
+				t.Fatal(err)
+			}
+			if revisions[fmt.Sprintf("server:%d", server.ID)] != before.UpdatedAt.UTC().Format(time.RFC3339Nano) {
+				t.Fatalf("changeset did not retain the server revision before renewal: %v", revisions)
+			}
+		})
+	}
+}
