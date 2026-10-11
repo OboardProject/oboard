@@ -10,7 +10,9 @@
 .signal-settings .settings-group-head { padding-block: 20px 8px; }
 .signal-settings .settings-group + .settings-group { border-top: 1px solid var(--border); }
 .signal-settings-row.settings-row { grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1fr); gap: 16px; }
+.signal-settings-row.settings-switch-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .signal-settings-row .settings-row-control { max-width: 100%; }
+.signal-settings-row.settings-switch-row .settings-row-control { justify-content: flex-end; }
 .signal-settings-row .settings-row-control > input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--primary); }
 .signal-settings-row .settings-row-control > textarea { resize: vertical; min-height: 120px; }
 .signal-settings-row .settings-row-control > :is(input, textarea, .custom-select) { min-width: 0; }
