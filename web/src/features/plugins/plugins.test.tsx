@@ -75,6 +75,24 @@ it('shows the conditional field once its parent matches', async () => {
   }
 })
 
+it('keeps a defaulted numeric field empty while it is being edited', async () => {
+  const onChange = vi.fn()
+  const defaultedFields: EnvField[] = [{ name: 'LIMIT', type: 'number', label: '限额', default: 20 }]
+  const view = await render(<EnvironmentForm fields={defaultedFields} values={{}} onChange={onChange} custom={[]} servers={servers} />)
+  try {
+    const input = view.container.querySelector('input[type="number"]') as HTMLInputElement
+    expect(input.value).toBe('20')
+    await act(async () => {
+      const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setNativeValue?.call(input, '')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(onChange).toHaveBeenLastCalledWith({ LIMIT: undefined })
+  } finally {
+    await view.unmount()
+  }
+})
+
 it('validates custom variable names before they reach the Controller', async () => {
   const view = await render(<EnvironmentForm fields={fields} values={{}} onChange={() => undefined} custom={[{ name: 'OBOARD_TOKEN', type: 'string' }, { name: 'MODE', type: 'string' }]}
     onCustomChange={() => undefined} customTypes={['string', 'server']} servers={servers} />)

@@ -136,8 +136,9 @@ export function EnvironmentForm({ fields, values, onChange, custom, onCustomChan
   const active = fields.filter(field => fieldActive(field, values, fields))
   const setValue = (name: string, value: unknown) => {
     const next = { ...values }
-    if (value === undefined) delete next[name]
-    else next[name] = value
+    // Keep an explicit empty draft distinct from an omitted value so a field
+    // with a manifest default does not immediately repopulate while editing.
+    next[name] = value
     onChange(next)
   }
   return <div className="plugin-env-form">
@@ -147,7 +148,7 @@ export function EnvironmentForm({ fields, values, onChange, custom, onCustomChan
       const errorID = `${id}-error`
       const hintText = hint(field)
       const error = issues[field.name]
-      const current = values[field.name] !== undefined ? values[field.name] : field.default
+      const current = Object.prototype.hasOwnProperty.call(values, field.name) ? values[field.name] : field.default
       return <div key={field.name} className="plugin-env-field">
         <label htmlFor={id} className="plugin-env-label">
           <span>{field.label}{field.required && <span className="plugin-required" aria-hidden="true">*</span>}</span>
