@@ -91,7 +91,7 @@ function ServerDialog({ client, global, notify, onClose }: { client: Client; glo
   const selectable = rows.filter(row => !row.error)
   const toggle = (id: number) => setSelected(current => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next })
   return <MotionDialogPanel onCancel={() => { if (!busy) onClose() }} className="remote-access-server-dialog" aria-labelledby="proxy-dscp-title">
-    <header className="dialog-head"><div className="settings-heading"><h2 id="proxy-dscp-title">代理流量优先标记</h2><FieldHelp label="代理 DSCP 覆盖范围" hint={coverage} /></div><button type="button" className="ghost icon-button dialog-close" disabled={busy} onClick={onClose} aria-label="关闭"><X size={16} aria-hidden="true" /></button></header>
+    <header className="dialog-head"><div className="settings-heading"><h2 id="proxy-dscp-title">代理流量优先标记</h2><FieldHelp label="代理 DSCP 覆盖范围" hint={coverage} /></div><button type="button" className="ghost icon-button dialog-close" autoFocus disabled={busy} onClick={onClose} aria-label="关闭"><X size={16} aria-hidden="true" /></button></header>
     <div className="dialog-body" aria-busy={loading || busy}>
       {global ? <p className="muted">全局设置已覆盖逐台设置；关闭全局后可编辑。</p> : null}
       {error ? <p role="alert">{error}</p> : null}

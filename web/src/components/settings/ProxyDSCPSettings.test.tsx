@@ -45,3 +45,19 @@ it('global enable locks individual switches without erasing their saved values',
     expect(f.requestV2.mock.calls.every(([, init]) => !init?.method)).toBe(true)
   } finally { f.close() }
 })
+
+it('does not open help on dialog entry but keeps keyboard help available', async () => {
+  const f = await fixture(false, false)
+  try {
+    await act(async () => Array.from(f.host.querySelectorAll('button')).find(b => b.textContent?.includes('管理服务器'))!.click())
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(document.activeElement).toBe(dialog.querySelector('button[aria-label="关闭"]'))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    const help = dialog.querySelector<HTMLButtonElement>('button[aria-label="代理 DSCP 覆盖范围说明"]')!
+    await act(async () => help.focus())
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('HY2（Hysteria2）暂不支持')
+    await act(async () => help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  } finally { f.close() }
+})
