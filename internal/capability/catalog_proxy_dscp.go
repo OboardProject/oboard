@@ -9,7 +9,7 @@ func proxyDSCPDescriptors(id, text, boolean map[string]any) []Descriptor {
 	var result []Descriptor
 	for _, action := range []string{"read", "update"} {
 		fields := map[string]any{"server_id": id}
-		d := Descriptor{Name: "servers.proxy_dscp." + action, Description: "读取或设置代理 EF（46）标记；全局开启覆盖逐台设置；不重启；report 为节点实测范围，partial 的 excluded 路径未标记", OutputSchema: output, RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: action == "read", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: action == "update", MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromServerID}
+		d := Descriptor{Name: "servers.proxy_dscp." + action, Description: "读取或设置代理 EF（46）标记；全局开启覆盖逐台设置；不重启；report 为节点实测范围，partial 的 excluded 路径未标记；ipv6-mptcp 表示内核不支持 IPv6 MPTCP 的 DSCP，双栈 IPv4 单独尝试，不等同于全部 Socket 失败", OutputSchema: output, RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: action == "read", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: action == "update", MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromServerID}
 		if action == "update" {
 			fields["enabled"] = boolean
 			fields["retry"] = boolean

@@ -7,6 +7,7 @@ import (
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
+	"slices"
 	"testing"
 )
 
@@ -76,10 +77,10 @@ func TestProxyDSCPConvergenceAcknowledgementAndRetry(t *testing.T) {
 	if tasks[0].ConfigVersion != 0 {
 		t.Fatal("DSCP changed deployment version")
 	}
-	report := &model.ProxyDSCPReport{ProxyDSCPPolicy: desired, State: "partial", Value: 46, Excluded: []string{"hysteria2"}}
+	report := &model.ProxyDSCPReport{ProxyDSCPPolicy: desired, State: "partial", Value: 46, Excluded: []string{"hysteria2", "ipv6-mptcp"}}
 	s.reconcileProxyDSCP(ctx, node, report)
 	saved, e := db.ProxyDSCPReport(ctx, node.ID)
-	if e != nil || saved == nil || saved.Revision != desired.Revision {
+	if e != nil || saved == nil || saved.Revision != desired.Revision || saved.Error != "" || !slices.Contains(saved.Excluded, "ipv6-mptcp") {
 		t.Fatal(saved, e)
 	}
 	report.Revision--

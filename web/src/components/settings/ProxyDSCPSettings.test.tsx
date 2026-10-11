@@ -4,12 +4,12 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { ProxyDSCPSettings } from './ProxyDSCPSettings'
 
-async function fixture(global: boolean, single: boolean) {
+async function fixture(global: boolean, single: boolean, report: { excluded: string[]; error?: string } = { excluded: ['hysteria2'] }) {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   const host = document.createElement('div'); document.body.appendChild(host)
   const root = createRoot(host)
   const request = vi.fn(async (path: string) => path === '/servers' ? [{ id: 7, name: '节点甲' }] : {})
-  const requestV2 = vi.fn(async (_path: string, init?: RequestInit) => { if (init?.method === 'POST') { const body = JSON.parse(init.body as string); if ('enabled' in body) single = body.enabled } return { enabled: single, effective_enabled: global || single, state: 'partial', report: { excluded: ['hysteria2'] } } })
+  const requestV2 = vi.fn(async (_path: string, init?: RequestInit) => { if (init?.method === 'POST') { const body = JSON.parse(init.body as string); if ('enabled' in body) single = body.enabled } return { enabled: single, effective_enabled: global || single, state: 'partial', report } })
   await act(async () => root.render(<ProxyDSCPSettings data={{ settings: { proxy_dscp_enabled: global } }} client={{ request, requestV2 }} load={async () => {}} notify={vi.fn()} />))
   const close = () => { act(() => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false }
   return { host, root, request, requestV2, close }
@@ -59,5 +59,30 @@ it('does not open help on dialog entry but keeps keyboard help available', async
     await act(async () => help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
     expect(document.querySelector('[role="tooltip"]')).toBeNull()
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  } finally { f.close() }
+})
+
+it('shows the IPv6 MPTCP limitation without offering a misleading retry', async () => {
+  const f = await fixture(false, true, { excluded: ['hysteria2', 'ipv6-mptcp'] })
+  try {
+    await act(async () => Array.from(f.host.querySelectorAll('button')).find(b => b.textContent?.includes('管理服务器'))!.click())
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('部分支持：IPv6 MPTCP 的 DSCP 受内核限制')
+    expect(dialog.textContent).not.toContain('标记失败')
+    expect(Array.from(dialog.querySelectorAll('button')).some(b => b.textContent === '重试')).toBe(false)
+  } finally { f.close() }
+})
+it('keeps actual socket failures visible alongside the MPTCP limitation', async () => {
+  const f = await fixture(false, true, { excluded: ['ipv6-mptcp'], error: 'socket_mark_failed' })
+  try {
+    await act(async () => Array.from(f.host.querySelectorAll('button')).find(b => b.textContent?.includes('管理服务器'))!.click())
+    expect(document.querySelector('[role="dialog"]')!.textContent).toContain('部分 Socket 标记失败，可重试')
+  } finally { f.close() }
+})
+it('does not mislabel unreadable policy as a socket marking failure', async () => {
+  const f = await fixture(false, true, { excluded: [], error: 'policy_state_unreadable' })
+  try {
+    await act(async () => Array.from(f.host.querySelectorAll('button')).find(b => b.textContent?.includes('管理服务器'))!.click())
+    expect(document.querySelector('[role="dialog"]')!.textContent).toContain('DSCP 策略读取失败，可重试')
   } finally { f.close() }
 })
