@@ -158,6 +158,7 @@ import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 const AgentSettingsPanel = lazySurface(() => import('./components/AgentSettingsPanel').then(module => ({ default: module.AgentSettingsPanel })))
+const ProxyDSCPSettings = lazySurface(() => import('./components/settings/ProxyDSCPSettings').then(module => ({ default: module.ProxyDSCPSettings })))
 const RemoteAccessSettings = lazySurface(() => import('./components/remote-access/RemoteAccessSettings').then(module => ({ default: module.RemoteAccessSettings })))
 import { RemoteAccessStatus } from './components/remote-access/RemoteAccessStatus'
 const TerminalWorkspace = lazyDialog(() => import('./components/remote-access/TerminalWorkspace').then(module => ({ default: module.TerminalWorkspace })), '远程终端')
@@ -3944,6 +3945,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
         </SettingsGroup>
         <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />
+ <ProxyDSCPSettings data={data} client={client} load={load} notify={notify} />
         <SettingsGroup title="用户注册" description="控制登录页注册入口与新用户的初始权限。">
           <SettingsSwitchRow label="开放注册" description="允许访客在登录页自行创建账号。" checked={registrationEnabled} onChange={setRegistrationEnabled} disabled={Boolean(saving)} ariaLabel="开放注册" />
           <SettingsRow label="默认注册用户组" description="未分配用户组的新用户没有面板权限。">

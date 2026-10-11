@@ -30862,3 +30862,10 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
   .controller-backup-page .backup-record-main { flex-basis: 100%; }
   .controller-backup-page .backup-record-actions { margin-inline-start: auto; }
 }
+
+.proxy-dscp-list { list-style: none; padding: 0; margin: 0; max-height: min(50dvh, 420px); overflow-y: auto; }
+.proxy-dscp-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.proxy-dscp-list li + li { border-top: 1px solid var(--border); }
+.proxy-dscp-name { flex: 1; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.proxy-dscp-name .muted { font-size: 12px; }
+.proxy-dscp-list button { flex: none; min-height: 30px; padding: 4px 10px; }

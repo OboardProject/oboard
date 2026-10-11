@@ -14,6 +14,7 @@ import (
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
@@ -295,7 +296,7 @@ var settingsAutomationFields = map[string]bool{
 	"agent_update_max_concurrency":         true,
 	"managed_update_startup_quiet_seconds": true,
 	"registration_enabled":                 true,
-	"remote_terminal_enabled":              true, "mcp_enabled": true,
+	"remote_terminal_enabled":              true, "mcp_enabled": true, "proxy_dscp_enabled": true,
 }
 
 func (s *Server) registerTelegramBotOperations() {
@@ -733,7 +734,7 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, err
 		}
 	}
-	for _, key := range []string{settingRemoteTerminalEnabled, settingMCPEnabled} {
+	for _, key := range []string{settingRemoteTerminalEnabled, settingMCPEnabled, store.ProxyDSCPGlobalSetting} {
 		if value, ok := fields[key]; ok {
 			var enabled bool
 			if err := json.Unmarshal(value, &enabled); err != nil {

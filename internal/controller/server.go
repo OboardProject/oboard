@@ -84,6 +84,7 @@ type trustedProxyStateContextKey struct{}
 
 type Server struct {
 	runtimeSecurityReports     sync.Map
+	proxyDSCPMu                sync.Mutex
 	runtimeSecurityQueueMu     sync.Mutex
 	proxyCredentialMu          sync.Mutex
 	proxyCredentialRevision    atomic.Uint64
@@ -1102,6 +1103,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			RemoteTerminalEnabled                     *bool              `json:"remote_terminal_enabled"`
 			StepUpToken                               string             `json:"step_up_token"`
 			RemoteTerminalPasswordConfirmationEnabled *bool              `json:"remote_terminal_password_confirmation_enabled"`
+			ProxyDSCPEnabled                          *bool              `json:"proxy_dscp_enabled"`
 			MCPEnabled                                *bool              `json:"mcp_enabled"`
 			StealthTransport                          json.RawMessage    `json:"stealth_transport"`
 		}
@@ -1667,6 +1669,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			{req.RemoteTerminalEnabled, settingRemoteTerminalEnabled},
 			{req.RemoteTerminalPasswordConfirmationEnabled, settingRemoteTerminalPasswordConfirmationEnabled},
 			{req.MCPEnabled, settingMCPEnabled},
+			{req.ProxyDSCPEnabled, store.ProxyDSCPGlobalSetting},
 		} {
 			if item.value == nil {
 				continue
@@ -1732,7 +1735,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_runtime_security.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_runtime_security.") || strings.HasPrefix(key, "server_proxy_dscp.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
 			continue
 		}
 		out[key] = value
@@ -1800,6 +1803,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[settingRemoteTerminalEnabled] = settingBool(items, settingRemoteTerminalEnabled, true)
 	out[settingRemoteTerminalPasswordConfirmationEnabled] = settingBool(items, settingRemoteTerminalPasswordConfirmationEnabled, true)
 	out[settingMCPEnabled] = settingBool(items, settingMCPEnabled, false)
+	out[store.ProxyDSCPGlobalSetting] = settingBool(items, store.ProxyDSCPGlobalSetting, false)
 	if migration, err := s.basePathMigrationProgress(ctx); err == nil {
 		out["base_path_migration"] = migration
 	}
@@ -15465,6 +15469,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 					s.commitRemoteAccessStatus(server.ID, server.AgentID, accessIdentity)
 				}
 				s.recordRuntimeSecurity(ctx, server, h.RuntimeSecurity)
+				s.reconcileProxyDSCP(ctx, server, h.ProxyDSCP)
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
 				s.recordUsersApplied(ctx, server, h.AppliedUsers)
@@ -15720,6 +15725,14 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	}
 	if task.Type == model.AgentTaskTypeRemoteExec || task.Type == model.AgentTaskTypeRemoteOperation {
 		req.ResultJSON = s.captureRemoteExecResult(*task, req.Status, req.ResultJSON)
+	}
+	if task.Type == model.AgentTaskTypeProxyDSCP {
+		var result struct {
+			Report *model.ProxyDSCPReport `json:"proxy_dscp"`
+		}
+		if json.Unmarshal([]byte(req.ResultJSON), &result) == nil && validProxyDSCPReport(result.Report) {
+			_ = s.store.SaveProxyDSCPReport(r.Context(), *server, *result.Report)
+		}
 	}
 	if task.Type == model.AgentTaskTypeRuntimeSecurity {
 		var result struct {

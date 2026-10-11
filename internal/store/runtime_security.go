@@ -50,7 +50,7 @@ func (s *Store) SaveRuntimeSecurityReport(ctx context.Context, server model.Serv
 
 func runtimeSecurityServerTx(ctx context.Context, tx *sql.Tx, server model.Server) error {
 	var created, agent string
-	if err := tx.QueryRowContext(ctx, "select created_at,agent_id from servers where id=?", server.ID).Scan(&created, &agent); err != nil {
+	if err := tx.QueryRowContext(ctx, "select created_at,coalesce(agent_id,'') from servers where id=?", server.ID).Scan(&created, &agent); err != nil {
 		return err
 	}
 	if server.CreatedAt.IsZero() || !parseTime(created).Equal(server.CreatedAt) || agent != server.AgentID {

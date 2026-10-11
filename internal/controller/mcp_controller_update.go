@@ -37,6 +37,12 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		return s.queryAccountAuditEvidence(ctx, principal, input)
 	case "audit.accounts.list", "audit.events.list", "audit.executions.list":
 		return s.queryAccountAudit(ctx, principal, capabilityName, input)
+	case "servers.proxy_dscp.read":
+		var req proxyDSCPOperation
+		if err := strictAutomationInput(input, &req); err != nil {
+			return nil, err
+		}
+		return s.readProxyDSCP(ctx, principal, req.ServerID)
 	case "servers.runtime_security.read":
 		var inputValue runtimeSecurityOperation
 		if err := strictAutomationInput(input, &inputValue); err != nil {

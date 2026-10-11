@@ -2067,6 +2067,9 @@ func (s *Store) SetSettingIfAbsent(ctx context.Context, key, value string) (stri
 }
 
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	if key == ProxyDSCPGlobalSetting {
+		return s.SetSettings(ctx, map[string]string{key: value})
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, key, value, now)
 	if err == nil {
@@ -2116,6 +2119,12 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for key, value := range values {
+		if key == ProxyDSCPGlobalSetting {
+			if err := setGlobalProxyDSCPTx(ctx, tx, value); err != nil {
+				return err
+			}
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, key, value, now); err != nil {
 			return err
 		}

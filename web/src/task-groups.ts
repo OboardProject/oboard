@@ -136,7 +136,7 @@ export function taskCategory(task: any): TaskCategory {
   if (type.startsWith('remote_') || type === 'exec_shell') return 'remote'
   if (Number(task.config_version) > 0 || ['apply_deployment', 'apply_core_config', 'apply_traffic_policy'].includes(type)) return 'deployment'
   if (/^(probe_|detect_|diagnose_|list_network|benchmark_dns$)/.test(type)) return 'diagnostics'
-  if (/^(update_|uninstall_|collect_logs$|manage_logs$|check_time$|host_power)/.test(type)) return 'maintenance'
+  if (type === 'apply_proxy_dscp' || /^(update_|uninstall_|collect_logs$|manage_logs$|check_time$|host_power)/.test(type)) return 'maintenance'
   return 'other'
 }
 
