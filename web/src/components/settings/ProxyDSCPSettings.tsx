@@ -12,7 +12,7 @@ type Props = { data: any; client: Client; load: () => Promise<void>; notify: (me
 type Row = { id: number; name: string; enabled: boolean; effective_enabled: boolean; state: string; error?: string; report?: { error?: string; excluded?: string[] } }
 const on = (value: unknown) => value === true || value === 'true'
 const states: Record<string, string> = { pending: '等待同步', offline: '离线，等待同步', unsupported: '需要更新 Agent／内核或当前平台不支持', failed: '同步失败', partial: '部分支持', disabled: '' }
-const coverage = 'EF（46）标记已支持的代理 TCP／原生 UDP socket。HY2、WARP、SSH、realm 转发及直接路由动作暂不覆盖。切换后新 TCP 连接生效，已有 TCP 自然结束；共享 UDP 立即更新。实际优先级由网络设备决定。'
+const coverage = 'EF（46）标记已支持的代理 TCP／原生 UDP socket。HY2（Hysteria2）暂不支持 DSCP 标记。SSH、realm、WARP 不在本功能范围内，直接路由动作也未覆盖。切换后新 TCP 连接生效，已有 TCP 自然结束；共享 UDP 立即更新。实际优先级由网络设备决定。'
 
 export function ProxyDSCPSettings({ data, client, load, notify }: Props) {
   const [enabled, setEnabled] = useState(on(data.settings?.proxy_dscp_enabled))
@@ -32,7 +32,7 @@ export function ProxyDSCPSettings({ data, client, load, notify }: Props) {
   }
   return <>
     <SettingsGroup title="代理流量优先标记" actions={<><FieldHelp label="代理 DSCP 覆盖范围" hint={coverage} /><button type="button" className="ghost remote-access-server-button" onClick={() => setOpen(true)}><Settings2 size={14} aria-hidden="true" />管理服务器</button></>}>
-      <SettingsSwitchRow label="全局启用 DSCP" description="开启覆盖所有服务器；关闭后按逐台设置生效。" checked={enabled} disabled={saving} onChange={value => void save(value)} ariaLabel="全局启用代理 DSCP" />
+      <SettingsSwitchRow label="全局启用 DSCP" description="开启覆盖所有服务器；关闭后按逐台设置生效。HY2（Hysteria2）暂不支持。" checked={enabled} disabled={saving} onChange={value => void save(value)} ariaLabel="全局启用代理 DSCP" />
       {error ? <p role="alert">{error}</p> : null}
     </SettingsGroup>
     <AnimatePresence>{open ? <ServerDialog client={client} global={enabled} notify={notify} onClose={() => setOpen(false)} /> : null}</AnimatePresence>
