@@ -28,7 +28,7 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
   const role = data?.session?.role || data?.current_user?.role
   const isAdmin = canAuthorizePlugins(role)
   const canOperate = hasManagementAccess(role)
-  const channels: NotificationChannelOption[] = data?.notification_channels || []
+  const [channels, setChannels] = useState<NotificationChannelOption[]>(() => data?.notification_channels || [])
   const [plugins, setPlugins] = useState<Installation[]>([])
   const [runs, setRuns] = useState<Run[]>([])
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null)
@@ -71,6 +71,7 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
     void api.serverOptions(request).then(page => setServers(page.servers || []), () => undefined)
     void api.userOptions(request).then(page => setUsers(page.users || []), () => undefined)
     void api.planOptions(request).then(page => setPlans(page.plans || []), () => undefined)
+    void api.notificationChannelOptions(request).then(page => setChannels(page.notification_channels || []), () => undefined)
   }, [request])
   useRegisterPageRefresh(() => refresh())
 
