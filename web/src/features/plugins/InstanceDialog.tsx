@@ -67,8 +67,12 @@ export function InstanceDialog(props: InstanceDialogProps) {
   const [secretValue, setSecretValue] = useState('')
   const [nameDraft, setNameDraft] = useState('')
 
-  const applyInstance = useCallback((next: InstanceDetail) => {
+  const applyInstance = useCallback((next: InstanceDetail, preserveDraft = false) => {
     setInstance(next)
+    if (preserveDraft) {
+      setIssues(issuesByField(next.issues))
+      return
+    }
     setValues(next.values || {})
     setCustom(next.custom || [])
     setIssues(issuesByField(next.issues))
@@ -237,14 +241,14 @@ export function InstanceDialog(props: InstanceDialogProps) {
         </TabsContent>
       </Tabs>
     </div>
-    <Dialog isOpen={Boolean(secretName)} onClose={() => setSecretName('')} title={`设置密钥 ${secretName}`} size="sm"
+    <Dialog isOpen={Boolean(secretName)} onClose={() => setSecretName('')} title={`设置密钥 ${secretName}`} size="sm" className="plugin-secret-dialog"
       footer={<>
         <Button variant="ghost" onClick={() => setSecretName('')}>取消</Button>
-        {instance.secrets?.[secretName]?.configured && <Button variant="outline" className="danger-text" disabled={busy} onClick={() => void act(async () => { await api.setSecret(request, instance.id, secretName, ''); setSecretName(''); await load() }, '已清除密钥')}>清除</Button>}
-        <Button busy={busy} disabled={!secretValue} onClick={() => void act(async () => { await api.setSecret(request, instance.id, secretName, secretValue); setSecretName(''); setSecretValue(''); await load() }, '密钥已保存')}>保存</Button>
+        {instance.secrets?.[secretName]?.configured && <Button variant="outline" className="danger-text" disabled={busy} onClick={() => void act(async () => { await api.setSecret(request, instance.id, secretName, ''); const next = await api.getInstance(request, instance.id); applyInstance(next, true); setSecretName('') }, '已清除密钥')}>清除</Button>}
+        <Button busy={busy} disabled={!secretValue} onClick={() => void act(async () => { await api.setSecret(request, instance.id, secretName, secretValue); const next = await api.getInstance(request, instance.id); applyInstance(next, true); setSecretName(''); setSecretValue('') }, '密钥已保存')}>保存</Button>
       </>}>
       <p className="plugin-env-help">密钥加密保存，保存后任何人都无法再查看明文。插件只能在 HTTP 认证或签名中引用它。</p>
-      <Input type="password" autoComplete="new-password" aria-label="密钥内容" value={secretValue} onChange={event => setSecretValue(event.target.value)} />
+      <Input className="plugin-secret-input" type="password" autoComplete="new-password" aria-label="密钥内容" value={secretValue} onChange={event => setSecretValue(event.target.value)} />
     </Dialog>
   </Dialog>
 }
