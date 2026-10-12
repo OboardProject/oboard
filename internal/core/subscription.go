@@ -265,6 +265,7 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 		nodes = append(nodes, newSubscriptionNode(topo, model.AssignableNodeExternalOutbound, external.ID, name, group, opts.NodeOrderPositions, model.Inbound{}, model.Server{}, raw))
 		nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameExternal, resourceID: external.ID, regionCode: external.EffectiveRegionCode})
 	}
+	resolveSubscriptionProxyPathNames(nodes, servers, inbounds, opts)
 	resolveSubscriptionNodeNames(nodes, nameRefs)
 	for i := range nodes {
 		nodes[i].SourceName = nodes[i].Name
@@ -410,6 +411,38 @@ func newSubscriptionNode(topo AssignableNodeTopology, nodeType model.AssignableN
 		node.ManualPosition = &position
 	}
 	return node
+}
+
+func resolveSubscriptionProxyPathNames(nodes []SubscriptionNode, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) {
+	visible := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		visible[node.Key] = true
+	}
+	paths := make([]model.ProxyPath, 0, len(nodes))
+	for _, path := range opts.ProxyPaths {
+		if visible[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)] {
+			paths = append(paths, path)
+		}
+	}
+	nameInbounds := append([]model.Inbound(nil), inbounds...)
+	for i := range nameInbounds {
+		if !visible[NodeKeyOf(model.AssignableNodeInbound, nameInbounds[i].ID)] {
+			nameInbounds[i].Name = ""
+		}
+	}
+	nameExternals := append([]model.ExternalOutbound(nil), opts.ExternalOutbounds...)
+	for i := range nameExternals {
+		nameExternals[i].ExposeToUsers = visible[NodeKeyOf(model.AssignableNodeExternalOutbound, nameExternals[i].ID)]
+	}
+	names := make(map[int64]string, len(paths))
+	for _, path := range ResolveProxyPathNames(paths, opts.ProxyPathSteps, servers, nameInbounds, nameExternals) {
+		names[path.ID] = path.Name
+	}
+	for i := range nodes {
+		if nodes[i].NodeType == model.AssignableNodeProxyPath {
+			nodes[i].Name = names[nodes[i].NodeID]
+		}
+	}
 }
 
 func resolveSubscriptionNodeNames(nodes []SubscriptionNode, refs []subscriptionNodeNameRef) {

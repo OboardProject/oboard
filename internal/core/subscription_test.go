@@ -8,6 +8,56 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func TestSubscriptionPathNamesUseOnlyVisiblePaths(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "pass-a"}
+	servers := []model.Server{{ID: 1, Name: "A", PublicIPv4: "203.0.113.1"}, {ID: 2, Name: "B", PublicIPv4: "203.0.113.2"}}
+	inbounds := []model.Inbound{
+		{ID: 1, ServerID: 1, Protocol: model.ProtocolAnyTLS, Port: 443, ConfigJSON: "{}", Enabled: true},
+		{ID: 2, ServerID: 1, Protocol: model.ProtocolHY2, Port: 8443, ConfigJSON: "{}", Enabled: true},
+	}
+	paths := []model.ProxyPath{{ID: 10, InboundID: 1, Enabled: true}, {ID: 20, InboundID: 2, Enabled: true}, {ID: 30, InboundID: 1, Enabled: true}}
+	steps := []model.ProxyPathStep{}
+	for _, path := range paths {
+		steps = append(steps, model.ProxyPathStep{ID: path.ID, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2), TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: "{}"})
+	}
+	custom := "自定义 AnyTLS 01"
+	for _, tt := range []struct {
+		name     string
+		ids      []int64
+		override *string
+		want     map[int64]string
+	}{
+		{name: "single protocol", ids: []int64{10}, want: map[int64]string{10: "A｜B"}},
+		{name: "single ordinal", ids: []int64{30}, want: map[int64]string{30: "A｜B"}},
+		{name: "same protocol", ids: []int64{10, 30}, want: map[int64]string{10: "A｜B｜AnyTLS｜SSH｜01", 30: "A｜B｜AnyTLS｜SSH｜02"}},
+		{name: "different protocols", ids: []int64{10, 20}, want: map[int64]string{10: "A｜B｜AnyTLS", 20: "A｜B｜HY2"}},
+		{name: "custom override", ids: []int64{10}, override: &custom, want: map[int64]string{10: custom}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := SubscriptionOptions{ProxyPaths: paths, ProxyPathSteps: steps, EffectiveNodes: map[string]bool{}, GlobalNodeNames: map[string]*string{}}
+			for _, id := range tt.ids {
+				opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeProxyPath, id)] = true
+			}
+			if tt.override != nil {
+				opts.GlobalNodeNames[NodeKeyOf(model.AssignableNodeProxyPath, 10)] = tt.override
+			}
+			nodes, err := buildFixtureSubscriptionNodes(user, servers, inbounds, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(nodes) != len(tt.want) {
+				t.Fatalf("got %d nodes, want %d", len(nodes), len(tt.want))
+			}
+			for _, node := range nodes {
+				want := "🇦🇶 " + tt.want[node.NodeID]
+				if node.Name != want || node.Raw["tag"] != want {
+					t.Fatalf("node %d: name=%q tag=%v, want %q", node.NodeID, node.Name, node.Raw["tag"], want)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateSubscriptionWithPlanNodesAndGroups(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}
 	inboundID := int64(101)
