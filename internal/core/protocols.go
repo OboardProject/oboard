@@ -3105,12 +3105,36 @@ func ResolveDNSPreferredEntryAddress(inbound model.Inbound, server model.Server)
 	return ResolveLiteralEntryAddress(inbound, server)
 }
 
-func inboundClientHostUsesDomain(inbound model.Inbound, server model.Server, alwaysUseDomain bool) bool {
+// InboundDualStackDNS reports whether the inbound is a dual-stack entry: it
+// follows the server address (entry_ip_mode auto) and publishes both A and
+// AAAA records. A client can only reach both families through one name, so
+// this is the one entry shape that always needs a DNS record.
+func InboundDualStackDNS(inbound model.Inbound) bool {
+	switch inbound.EntryIPMode {
+	case "", model.EntryIPModeAuto:
+	default:
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(inbound.DNSRecordTypes), "both")
+}
+
+// InboundDNSRecordAllowed is the DNS resolution policy for an inbound with
+// dns_sync_enabled. Single-stack entries (IPv4 only, IPv6 only, the server's
+// preferred single family, or a custom address) are reached by IP and keep no
+// public DNS record, so a proxy entry never looks like a website. Only a
+// dual-stack entry resolves by default; the panel-wide always-resolve switch
+// lets every entry keep a record. TLS SNI is the certificate domain and never
+// depends on this record: certificates are issued through DNS-01.
+func InboundDNSRecordAllowed(inbound model.Inbound, alwaysResolve bool) bool {
+	return alwaysResolve || InboundDualStackDNS(inbound)
+}
+
+func inboundClientHostUsesDomain(inbound model.Inbound, server model.Server, alwaysResolve bool) bool {
 	domain := strings.TrimSpace(inbound.DNSDomain)
 	if !inbound.DNSSyncEnabled || domain == "" {
 		return false
 	}
-	if alwaysUseDomain || inbound.DDNSEnabled {
+	if alwaysResolve || inbound.DDNSEnabled {
 		return true
 	}
 	literal := ResolveLiteralEntryAddress(inbound, server)
@@ -3118,24 +3142,17 @@ func inboundClientHostUsesDomain(inbound model.Inbound, server model.Server, alw
 	case "domain", "":
 		return true
 	}
-	switch inbound.EntryIPMode {
-	case model.EntryIPModeIPv4, model.EntryIPModeIPv6, model.EntryIPModeCustom:
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(inbound.DNSRecordTypes), "both") {
-		return true
-	}
-	return false
+	return InboundDualStackDNS(inbound)
 }
 
-// ResolveEntryAddressHost is the client-facing subscription Host.
-// TLS SNI stays the certificate/DNS domain. Static single-stack inbounds
-// may advertise a public IP to skip a client lookup; dns_record_types=both
-// always advertises the managed name so dual-stack A+AAAA can take effect
-// even before both families are detected. DDNS, custom domain targets, and
-// alwaysUseDomain also keep the managed name.
-func ResolveEntryAddressHost(inbound model.Inbound, server model.Server, alwaysUseDomain bool) string {
-	if inboundClientHostUsesDomain(inbound, server, alwaysUseDomain) {
+// ResolveEntryAddressHost is the client-facing subscription Host (the
+// server/address field). TLS SNI is a separate field and always comes from the
+// certificate domain. Single-stack inbounds advertise their IP; a dual-stack
+// entry advertises the managed name so A+AAAA can take effect even before both
+// families are detected. DDNS, custom domain targets, and the always-resolve
+// switch also keep the managed name.
+func ResolveEntryAddressHost(inbound model.Inbound, server model.Server, alwaysResolve bool) string {
+	if inboundClientHostUsesDomain(inbound, server, alwaysResolve) {
 		return strings.TrimSpace(inbound.DNSDomain)
 	}
 	if literal := ResolveLiteralEntryAddress(inbound, server); literal != "" {

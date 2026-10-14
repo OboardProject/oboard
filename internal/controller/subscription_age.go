@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	settingSubscriptionAgePolicy           = "subscription_age_policy"
-	settingSubscriptionAlwaysUseDomainHost = "subscription_always_use_domain_host"
+	settingSubscriptionAgePolicy = "subscription_age_policy"
+	settingDNSAlwaysResolve      = "dns_always_resolve"
 )
 
 var (
@@ -34,12 +34,12 @@ func normalizeSubscriptionAgePolicy(value string) string {
 	return "optional"
 }
 
-func (s *Server) subscriptionAlwaysUseDomainHost(ctx context.Context) bool {
+func (s *Server) dnsAlwaysResolve(ctx context.Context) bool {
 	items, err := s.store.ListSettings(ctx)
 	if err != nil {
 		return false
 	}
-	return settingBool(items, settingSubscriptionAlwaysUseDomainHost, false)
+	return settingBool(items, settingDNSAlwaysResolve, false)
 }
 
 func subscriptionAgeCapableFormat(format model.SubscriptionFormat) bool {

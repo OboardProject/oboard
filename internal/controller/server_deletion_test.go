@@ -167,6 +167,7 @@ func TestServerDeleteSurvivesUnreachableDNSProvider(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"dns_always_resolve": true}, http.StatusOK)
 	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"auto_renew_enabled": false, "name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(created["id"].(float64))
 	credential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)["dns_credential"].(map[string]any)
@@ -270,6 +271,7 @@ func TestUninstallCallbackIsNotFailedByPanelSideCleanup(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"dns_always_resolve": true}, http.StatusOK)
 	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -380,6 +382,7 @@ func TestServerDeleteDoesNotWaitForDNSProvider(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"dns_always_resolve": true}, http.StatusOK)
 	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"auto_renew_enabled": false, "name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(created["id"].(float64))
 	credential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)["dns_credential"].(map[string]any)

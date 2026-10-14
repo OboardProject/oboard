@@ -280,7 +280,7 @@ var settingsAutomationFields = map[string]bool{
 	resourceDownloadCNControllerSetting: true,
 	"audit_enabled":                     true, "subscription_audit_enabled": true, "connection_audit_enabled": true,
 	"audit_action": true, "traffic_timezone": true,
-	"subscription_age_policy": true, "subscription_always_use_domain_host": true, "subscription_custom_path_mode": true,
+	"subscription_age_policy": true, "dns_always_resolve": true, "subscription_custom_path_mode": true,
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
 	"server_default_mtu_mode": true, "server_default_bbr_enabled": true, "server_default_tcp_tuning_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
@@ -535,8 +535,8 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 		}
 		updates[settingSubscriptionAgePolicy] = policy
 	}
-	if value, ok := fields["subscription_always_use_domain_host"]; ok {
-		if err := setBool(settingSubscriptionAlwaysUseDomainHost, value); err != nil {
+	if value, ok := fields["dns_always_resolve"]; ok {
+		if err := setBool(settingDNSAlwaysResolve, value); err != nil {
 			return nil, err
 		}
 	}

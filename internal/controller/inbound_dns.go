@@ -2,8 +2,11 @@ package controller
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"sort"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -179,4 +182,24 @@ func (s *Server) dnsBootstrapContext(ctx context.Context) map[string]any {
 		"default_dns_credential_id": defaultID,
 		"available_credentials":     dnsCredentialRefs(enabled),
 	}
+}
+
+// validateInboundDNSPolicy enforces core.InboundDNSRecordAllowed on writes.
+// Only a dual-stack entry may turn DNS sync on unless the panel-wide
+// always-resolve switch is set. A stored record whose DNS identity this write
+// leaves untouched is not re-judged; turning sync off removes it as usual.
+func (s *Server) validateInboundDNSPolicy(ctx context.Context, inbound model.Inbound) error {
+	if !inbound.DNSSyncEnabled || core.InboundDNSRecordAllowed(inbound, s.dnsAlwaysResolve(ctx)) {
+		return nil
+	}
+	if inbound.ID > 0 {
+		current, err := s.store.GetInbound(ctx, inbound.ID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if current != nil && current.DNSSyncEnabled && !inboundDNSIdentityChanged(*current, inbound) {
+			return nil
+		}
+	}
+	return errors.New("单栈入口直接使用 IP 连接，不创建 DNS 解析；只有双栈入口（A + AAAA）需要解析。如需为单栈入口保留解析，请在「设置 → 订阅」开启「始终解析」")
 }

@@ -401,6 +401,9 @@ func (s *Server) validateInboundAutomationCandidate(ctx context.Context, princip
 	if err := validateInbound(*inbound); err != nil {
 		return err
 	}
+	if err := s.validateInboundDNSPolicy(ctx, *inbound); err != nil {
+		return err
+	}
 	if err := s.store.ValidateServerExists(ctx, inbound.ServerID); err != nil {
 		return err
 	}

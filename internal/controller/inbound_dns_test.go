@@ -250,6 +250,9 @@ func TestInboundUpdateReplacesDNSRecordsAndFollowsCertificateDomain(t *testing.T
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
+	// These cases exercise single-stack record replacement, which needs the
+	// panel-wide always-resolve switch.
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"dns_always_resolve": true}, http.StatusOK)
 	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010, "renewal_cycle": "monthly"}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
 	createdCredential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)
@@ -367,6 +370,9 @@ func TestInboundUpdateRebindsCoveringCertificateOnDomainChange(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
+	// These cases exercise single-stack record replacement, which needs the
+	// panel-wide always-resolve switch.
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"dns_always_resolve": true}, http.StatusOK)
 	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010, "renewal_cycle": "monthly"}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
 	createdCredential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)
@@ -407,5 +413,53 @@ func TestInboundUpdateRebindsCoveringCertificateOnDomainChange(t *testing.T) {
 		if record.Name != "new.example.com" {
 			t.Fatalf("replacement record = %#v", record)
 		}
+	}
+}
+
+func TestInboundDNSSyncRequiresDualStackUnlessAlwaysResolve(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	verified := time.Now()
+	credential := &model.DNSCredential{Name: "primary", Provider: model.DNSProviderCloudflare, ZoneName: "example.com", Enabled: true, VerifiedAt: &verified, Zones: []model.DNSCredentialZone{{ZoneName: "example.com"}}}
+	if err := db.CreateDNSCredential(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	serverID := int64(request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "public_ipv4": "203.0.113.10", "public_ipv6": "2001:db8::10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010, "renewal_cycle": "monthly"}, http.StatusCreated)["server"].(map[string]any)["id"].(float64))
+	inbound := func(name string, port int, entryMode, records string) map[string]any {
+		return map[string]any{"server_id": serverID, "name": name, "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": port, "entry_ip_mode": entryMode, "dns_domain": name + ".example.com", "dns_sync_enabled": true, "dns_record_types": records, "config_json": `{"method":"2022-blake3-aes-128-gcm"}`, "enabled": true}
+	}
+
+	for _, shape := range []struct{ mode, records string }{{"ipv4", "a"}, {"ipv6", "aaaa"}, {"auto", "auto"}, {"auto", "a"}, {"ipv4", "both"}} {
+		got := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, inbound("single", 10001, shape.mode, shape.records), http.StatusBadRequest)
+		if !strings.Contains(fmt.Sprint(got["error"]), "始终解析") {
+			t.Fatalf("single-stack %s/%s error = %#v", shape.mode, shape.records, got)
+		}
+	}
+	dual := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, inbound("dual", 10002, "auto", "both"), http.StatusCreated)["inbound"].(map[string]any)
+	if dual["dns_sync_enabled"] != true {
+		t.Fatalf("dual-stack inbound lost DNS sync: %#v", dual)
+	}
+
+	// A stored single-stack record survives edits that leave its DNS identity
+	// alone, but cannot be moved to another name without always-resolve.
+	legacy := &model.Inbound{ServerID: serverID, Name: "legacy", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 10003, EntryIPMode: model.EntryIPModeIPv4, DNSSyncEnabled: true, DNSCredentialID: &credential.ID, DNSDomain: "legacy.example.com", DNSRecordTypes: "a", ConfigJSON: `{"method":"2022-blake3-aes-128-gcm","password":"MTIzNDU2Nzg5MDEyMzQ1Ng=="}`, Enabled: true}
+	if err := db.CreateInbound(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/inbounds/%d", legacy.ID), token, map[string]any{"name": "legacy-renamed"}, http.StatusOK)
+	request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/inbounds/%d", legacy.ID), token, map[string]any{"dns_domain": "moved.example.com"}, http.StatusBadRequest)
+
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"dns_always_resolve": true}, http.StatusOK)
+	single := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, inbound("always", 10004, "ipv4", "a"), http.StatusCreated)["inbound"].(map[string]any)
+	if single["dns_sync_enabled"] != true {
+		t.Fatalf("always-resolve single-stack inbound lost DNS sync: %#v", single)
 	}
 }

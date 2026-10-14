@@ -60,7 +60,7 @@ func (s *Server) registerTaskTriggerOperations() {
 		if err != nil {
 			return nil, err
 		}
-		alwaysDomain := s.subscriptionAlwaysUseDomainHost(ctx)
+		alwaysDomain := s.dnsAlwaysResolve(ctx)
 		targets := []model.DiagnosticTarget{}
 		for _, inbound := range inbounds {
 			if inbound.ServerID != server.ID || !inbound.Enabled {

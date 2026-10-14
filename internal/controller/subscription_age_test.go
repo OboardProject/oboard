@@ -209,7 +209,7 @@ func TestSubscriptionAgeAPIOptionalRequiredAndHeaderModes(t *testing.T) {
 	}
 }
 
-func TestSubscriptionAlwaysUseDomainHostDefaultsOff(t *testing.T) {
+func TestDNSAlwaysResolveDefaultsOff(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "host-setting.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -217,11 +217,11 @@ func TestSubscriptionAlwaysUseDomainHostDefaultsOff(t *testing.T) {
 	defer db.Close()
 	server := newTestServer(db, "test-secret", "")
 	settings := server.publicSettings(context.Background(), map[string]string{})
-	if settings[settingSubscriptionAlwaysUseDomainHost] != false {
-		t.Fatalf("default always-use-domain host = %#v", settings[settingSubscriptionAlwaysUseDomainHost])
+	if settings[settingDNSAlwaysResolve] != false {
+		t.Fatalf("default always-use-domain host = %#v", settings[settingDNSAlwaysResolve])
 	}
-	settings = server.publicSettings(context.Background(), map[string]string{settingSubscriptionAlwaysUseDomainHost: "true"})
-	if settings[settingSubscriptionAlwaysUseDomainHost] != true {
-		t.Fatalf("enabled always-use-domain host = %#v", settings[settingSubscriptionAlwaysUseDomainHost])
+	settings = server.publicSettings(context.Background(), map[string]string{settingDNSAlwaysResolve: "true"})
+	if settings[settingDNSAlwaysResolve] != true {
+		t.Fatalf("enabled always-use-domain host = %#v", settings[settingDNSAlwaysResolve])
 	}
 }

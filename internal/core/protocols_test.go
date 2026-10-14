@@ -3614,3 +3614,40 @@ func testSSHKeyPair(t *testing.T) (string, string) {
 	}
 	return string(pem.EncodeToMemory(block)), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsedPublicKey)))
 }
+
+func TestInboundDNSRecordAllowedOnlyForDualStackByDefault(t *testing.T) {
+	cases := []struct {
+		mode    model.EntryIPMode
+		records string
+		dual    bool
+	}{
+		{"", "both", true},
+		{model.EntryIPModeAuto, "BOTH", true},
+		{model.EntryIPModeAuto, "auto", false},
+		{model.EntryIPModeAuto, "a", false},
+		{model.EntryIPModeIPv4, "both", false},
+		{model.EntryIPModeIPv6, "aaaa", false},
+		{model.EntryIPModeCustom, "both", false},
+	}
+	for _, tc := range cases {
+		inbound := model.Inbound{EntryIPMode: tc.mode, DNSRecordTypes: tc.records, DNSSyncEnabled: true, DNSDomain: "entry.example.com"}
+		if got := InboundDNSRecordAllowed(inbound, false); got != tc.dual {
+			t.Fatalf("mode=%q records=%q allowed=%v, want %v", tc.mode, tc.records, got, tc.dual)
+		}
+		if !InboundDNSRecordAllowed(inbound, true) {
+			t.Fatalf("mode=%q records=%q rejected with always-resolve", tc.mode, tc.records)
+		}
+	}
+	server := model.Server{PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10"}
+	single := model.Inbound{EntryIPMode: model.EntryIPModeIPv4, DNSSyncEnabled: true, DNSDomain: "entry.example.com", DNSRecordTypes: "a"}
+	if got := ResolveEntryAddressHost(single, server, false); got != "203.0.113.10" {
+		t.Fatalf("single-stack host = %q", got)
+	}
+	if got := ResolveEntryAddressHost(single, server, true); got != "entry.example.com" {
+		t.Fatalf("always-resolve host = %q", got)
+	}
+	dual := model.Inbound{EntryIPMode: model.EntryIPModeAuto, DNSSyncEnabled: true, DNSDomain: "entry.example.com", DNSRecordTypes: "both"}
+	if got := ResolveEntryAddressHost(dual, server, false); got != "entry.example.com" {
+		t.Fatalf("dual-stack host = %q", got)
+	}
+}

@@ -34,9 +34,10 @@ type SubscriptionOptions struct {
 	PlanNodeNames      map[string]*string
 	Render             SubscriptionRenderOptions
 	UserAgent          string
-	// AlwaysUseDomainHost forces the subscription server/host field to the
-	// managed DNS domain even for static single-stack inbounds.
-	AlwaysUseDomainHost bool
+	// DNSAlwaysResolve is the panel-wide "always resolve" switch: single-stack
+	// inbounds may then keep a DNS record, and every synced inbound advertises
+	// its managed DNS domain as the subscription host.
+	DNSAlwaysResolve bool
 	// PortLedger supplies the persisted ports of generated listeners. Snell
 	// gives every identity its own listener, so its nodes cannot be rendered
 	// without it. Rendering only ever reads the ledger; allocation belongs to
@@ -138,7 +139,7 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 		if !ok {
 			continue
 		}
-		server.EntryAddress = ResolveEntryAddressHost(inbound, server, opts.AlwaysUseDomainHost)
+		server.EntryAddress = ResolveEntryAddressHost(inbound, server, opts.DNSAlwaysResolve)
 		if strings.TrimSpace(server.EntryAddress) == "" {
 			continue
 		}
