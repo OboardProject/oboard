@@ -520,9 +520,6 @@ type UserGroupDraft = { name: string; description: string; role: Role; enabled: 
 const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks', 'ssh']
 const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks']
 const externalProtocols: ExternalProtocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks']
-const forwardProtocols: ForwardProtocol[] = ['tcp', 'udp', 'tcp_udp']
-const probeModes: ProbeMode[] = ['never', 'apply', 'periodic']
-const tunnelTypes: TunnelType[] = ['wireguard', 'ssh']
 const proxyPathChainMethods = [
   { value: '2022-blake3-aes-128-gcm', label: 'SS 2022-128' },
   { value: '2022-blake3-aes-256-gcm', label: 'SS 2022-256' },
@@ -1299,8 +1296,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
-  'port-forwards': { label: '端口转发', desc: '配置 OBoard Realm 端口转发与延迟探测。', group: '拓扑' },
-  tunnels: { label: '隧道', desc: '配置 WireGuard / SSH 服务器间隧道。', group: '拓扑' },
+  'traffic-forwarding': { label: '流量转发', desc: '管理端口转发与服务器间隧道。', group: '网络' },
   notifications: { label: '通知中心', desc: '', group: '' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计中心', desc: '汇总订阅更新、连接活动和管理操作，识别异常并提供可追溯的处理依据。', group: '运维' },
@@ -1311,7 +1307,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
 }
 const navGroups = [
   { label: '', tabs: ['dashboard'] },
-  { label: '网络', tabs: ['servers', 'proxy-paths', 'return-latency', 'dns', 'dns-records'] },
+  { label: '网络', tabs: ['servers', 'proxy-paths', 'traffic-forwarding', 'return-latency', 'dns', 'dns-records'] },
   { label: '访问', tabs: ['users', 'plans', 'nodes'] },
   { label: '运维', tabs: ['tasks', 'audit', 'notifications', 'automation'] },
   { label: '', tabs: ['settings', 'account'] },
@@ -1324,7 +1320,7 @@ function navTabVisible(tab: string, role: Role) {
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 2, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
-  'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator',
+  'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator', 'traffic-forwarding': 'operator',
   users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
   plugins: 'operator', 'plugin-runs': 'operator',
   nodes: 'none',
@@ -1425,6 +1421,7 @@ function getTabIcon(x: string) {
   if (x === 'return-latency') return <Gauge size={18} />
   if (x === 'servers') return <ServerIcon size={18} />
   if (x === 'proxy-paths') return <Workflow size={18} />
+  if (x === 'traffic-forwarding') return <Network size={18} />
   if (x === 'users') return <UsersIcon size={18} />
   if (x === 'plans') return <Package size={18} />
   if (x === 'nodes') return <LinkIcon size={18} />
@@ -3122,8 +3119,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
   if (tab === 'mtu') return <MTU data={data} client={client} load={load} notify={notify} />
-  if (tab === 'port-forwards') return <PortForwards data={data} client={client} load={load} notify={notify} />
-  if (tab === 'tunnels') return <Tunnels data={data} client={client} load={load} />
+  if (tab === 'traffic-forwarding') return <TrafficForwardingPage data={data} client={client} load={load} />
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
   if (tab === 'tasks') return <Tasks tasks={data.agent_tasks} servers={data.servers} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} load={load} notify={notify} />
@@ -9860,7 +9856,7 @@ function inboundEntryAddress(data: any, entry: Inbound) {
   return inboundClientEntryHost(entry, server, settingEnabled(data.settings?.subscription_always_use_domain_host, false))
 }
 
-type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport' | 'family_split_template'
+type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'family_split_template'
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
 function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData, focusRequest }: any) {
@@ -10118,8 +10114,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   const [editEntry, setEditEntry] = useState<any | null>(null)
 	const [routingDraft, setRoutingDraft] = useState<RoutingDraft | null>(null)
 	const [routingCanvasTargetID, setRoutingCanvasTargetID] = useState('')
-	const [trafficForwardingOpen, setTrafficForwardingOpen] = useState(false)
-	const [tunnelDraft, setTunnelDraft] = useState<TunnelDraft | null>(null)
 	const [importDraft, setImportDraft] = useState<ImportedNodeDraft | null>(null)
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
@@ -11713,15 +11707,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(e.message || e) })
     }
   }
-	const openTrafficForwarding = () => setTrafficForwardingOpen(true)
-	const openServerTunnel = (sourceServerID: number) => {
-	  if (servers.length < 2) {
-	    void dialogs.alert({ title: '无法创建服务器隧道', message: '至少需要两台服务器。' })
-	    return
-	  }
-	  setTrafficForwardingOpen(false)
-	  setTunnelDraft(defaultTunnelDraft(servers, servers.find(server => server.id === sourceServerID) || selected))
-	}
 	const openImportNode = (position?: GraphPosition) => {
 	  setImportDraft({ content: 'socks5://user:password@example.com:1080#SOCKS-A', scope: 'global', server_id: selected?.id || 0, expose_to_users: false, position: position || null })
 	}
@@ -11736,55 +11721,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 		    reconcileTopology()
 	  } catch (e: any) {
 	    await dialogs.alert({ title: '导入节点失败', message: localizeErrorMessage(e.message || e) })
-	  }
-	}
-	const saveTrafficForward = async (draft: TrafficForwardDraft, id?: number) => {
-	  try {
-	    const result = await client.request(id ? `/port-forwards/${id}` : '/port-forwards', {
-	      method: id ? 'PATCH' : 'POST',
-	      body: JSON.stringify(draft),
-	    }) as Record<string, any>
-	    applyMutationResult(result)
-	    if (id) {
-	      const staleProbeIDs = ((data.port_forward_probes || []) as PortForwardProbeResult[])
-	        .filter(probe => probe.port_forward_id === id)
-	        .map(probe => probe.id)
-	      removeMutationRows({ port_forward_probes: staleProbeIDs })
-	    }
-	    reconcileTopology()
-	  } catch (error: any) {
-	    throw new Error(localizeErrorMessage(error?.message || error))
-	  }
-	}
-  const deleteTrafficForward = async (forward: PortForward) => dialogs.confirm({
-    title: '删除流量转发',
-    message: '确认删除「' + forward.name + '」？相关监听会从入口服务器移除，历史检查结果也会一并删除。',
-    tone: 'danger',
-    confirmText: '删除转发',
-    pendingText: '删除中…',
-    onConfirm: async () => {
-      await client.request('/port-forwards/' + forward.id, { method: 'DELETE' })
-      const probeIDs = ((data.port_forward_probes || []) as PortForwardProbeResult[])
-        .filter(probe => probe.port_forward_id === forward.id).map(probe => probe.id)
-      removeMutationRows({ port_forwards: [forward.id], port_forward_probes: probeIDs })
-    },
-  })
-	const probeTrafficForward = async (forward: PortForward) => {
-	  try {
-	    await client.request(`/port-forwards/${forward.id}/probe`, { method: 'POST', body: '{}' })
-	  } catch (error: any) {
-	    throw new Error(localizeErrorMessage(error?.message || error))
-	  }
-	}
-	const submitTunnelDraft = async () => {
-	  if (!tunnelDraft) return
-	  try {
-	    const result = await client.request('/tunnels', { method: 'POST', body: JSON.stringify(tunnelDraft) }) as Record<string, any>
-	    applyMutationResult(result)
-	    setTunnelDraft(null)
-	    reconcileTopology()
-	  } catch (error: any) {
-	    await dialogs.alert({ title: '创建服务器隧道失败', message: localizeErrorMessage(error?.message || error) })
 	  }
 	}
   const deleteGraphEntity = async (entity: GraphEntity) => {
@@ -12099,7 +12035,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       placeGraphNode(canvasRoutingNodeID(instance), targetPos)
       return
     }
-    if (action === 'transport') return void openTrafficForwarding()
     if (action === 'family_split_template') return void setFamilySplitEditor({})
   }
   const onToolDragOver = (e: React.DragEvent) => {
@@ -12564,7 +12499,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
             >
               {canvasMenu.sheet && <div className="graph-context-menu-handle" aria-hidden="true" />}
               <div className="graph-context-menu-title">新建</div>
-              {proxyTools.filter(tool => tool.id !== 'transport' && tool.id !== 'family_split_template').map(tool => <button
+              {proxyTools.filter(tool => tool.id !== 'family_split_template').map(tool => <button
                 key={tool.id}
                 type="button"
                 role="menuitem"
@@ -12573,7 +12508,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               ><ProxyToolIcon kind={tool.id} />{tool.label}</button>)}
               <button type="button" role="menuitem" onClick={() => openNodePickerAt(canvasMenuPosition(canvasMenu.position, 280, 140))}><ServerIcon size={14} />其他服务器</button>
               <div className="graph-context-menu-separator" role="separator" />
-              <button type="button" role="menuitem" onClick={() => runCanvasMenuTool('transport')}><ProxyToolIcon kind="transport" />流量转发</button>
               <button type="button" role="menuitem" onClick={() => runCanvasMenuTool('family_split_template')}><ProxyToolIcon kind="family_split_template" />双栈模板</button>
               <div className="graph-context-menu-separator" role="separator" />
               <button type="button" role="menuitem" disabled={!nodes.length} onClick={() => { setCanvasMenu(null); fitGraphToSafeArea() }}><Search size={14} />查看全图</button>
@@ -12604,7 +12538,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               {graphMenu.entity.type === 'direct' && <button type="button" role="menuitem" onClick={copyGraphMenuDirectExit}><Copy size={14} />复制</button>}
               {graphMenu.source === 'node' && graphMenuServerID(graphMenu.entity) > 0 && <button type="button" role="menuitem" onClick={createEntryFromGraphMenu}><ProxyToolIcon kind="entry" />创建入口</button>}
               {graphMenu.source === 'node' && graphMenu.entity.type === 'entry' && <button type="button" role="menuitem" onClick={addRoutingFromGraphMenu}><ProxyToolIcon kind="routing" />添加分流</button>}
-              {graphMenu.source === 'node' && graphMenu.entity.type === 'server' && <button type="button" role="menuitem" onClick={() => { setGraphMenu(null); openTrafficForwarding() }}><ProxyToolIcon kind="transport" />流量转发</button>}
               <button type="button" role="menuitem" className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphEntityRemoveLabel(graphMenu.entity)}</button>
               {graphMenu.sheet && <button type="button" role="menuitem" className="graph-context-menu-cancel" onClick={dismissGraphMenu}>取消</button>}
             </div>
@@ -12636,18 +12569,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>
     <AnimatePresence>{familySplitEditor && <FamilySplitTemplateEditor data={data} client={client} load={load} chainMethods={proxyPathChainMethods} initialTemplateID={familySplitEditor.templateID} onClose={() => setFamilySplitEditor(null)} onSelect={familySplitEditor.select ? id => { setRoutingDraft(old => old ? { ...old, family_split_template_id: id, action: 'family_split' } : old); setFamilySplitEditor(null) } : undefined} />}</AnimatePresence>
-    <AnimatePresence>{trafficForwardingOpen && <TrafficForwardingDialog
-      servers={servers}
-      forwards={(data.port_forwards || []) as PortForward[]}
-      probes={(data.port_forward_probes || []) as PortForwardProbeResult[]}
-      initialServerID={selected?.id}
-      onCancel={() => setTrafficForwardingOpen(false)}
-      onSave={saveTrafficForward}
-      onDelete={deleteTrafficForward}
-      onProbe={probeTrafficForward}
-      onOpenTunnel={openServerTunnel}
-    />}</AnimatePresence>
-    <AnimatePresence>{tunnelDraft && <TunnelDraftDialog draft={tunnelDraft} setDraft={setTunnelDraft} servers={servers} onCancel={() => setTunnelDraft(null)} onSubmit={submitTunnelDraft} />}</AnimatePresence>
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
 	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
@@ -12910,7 +12831,6 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
   { id: 'routing', label: '分流出口', desc: '连上服务器后配置规则，后面的节点是未匹配兜底' },
   { id: 'family_split_template', label: '双栈模板', desc: '独立编排可复用的 IPv4 / IPv6 分支' },
-  { id: 'transport', label: '流量转发', desc: '按入口管理转发规则' },
 ]
 
 function isProxyToolAction(value: string): value is ProxyToolAction {
@@ -15490,17 +15410,6 @@ function latestInboundProbeSummary(data: any, inboundID: number) {
 
 function latestForwardProbe(data: any, forwardID: number): PortForwardProbeResult | undefined {
   return (data.port_forward_probes || []).find((x: PortForwardProbeResult) => x.port_forward_id === forwardID)
-}
-
-function forwardProbeDetails(probe?: PortForwardProbeResult) {
-  if (!probe) return { successCount: 0, p95: 0, jitter: 0, listenerOK: false }
-  const raw = parseConfig(probe.result_json) || {}
-  return {
-    successCount: Number(raw.success_count ?? (probe.available ? probe.sample_count : 0)),
-    p95: Number(raw.p95_latency_ms || 0),
-    jitter: Number(raw.jitter_ms || 0),
-    listenerOK: raw.listener_ok === true,
-  }
 }
 
 function inboundSupportsMultipleUsersUI(entry: Inbound) {
@@ -19395,41 +19304,102 @@ function MTU({ data, client, load, notify }: any) {
   return <Panel title="MTU 检测"><p className="muted">MTU 检测会交叉校验出口网卡 MTU、系统路由 MTU、tracepath PMTU、DF ping 二分探测和 TCP 可达性。仅检测模式只记录建议值；应用模式会要求 Agent 修改网卡 MTU，通常需要 root/CAP_NET_ADMIN，容器环境建议优先使用仅检测。</p><div className="form signal-resource-form"><FormField label="服务器"><Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><Select variant="segmented" value={f.mode} onChange={e => setF({ ...f, mode: e.target.value })}>{mtuModes.filter(x => x !== 'disabled').map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select><FormField label="目标主机，空为默认"><input value={f.target_host} onChange={e => setF({ ...f, target_host: e.target.value })} placeholder="目标主机，空为默认" /></FormField><FormField label="目标端口，空为默认"><input type="number" value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口，空为默认" /></FormField><FormField label="网卡名，可选"><input value={f.interface_name} onChange={e => setF({ ...f, interface_name: e.target.value })} placeholder="网卡名，可选" /></FormField><FormField label="额外开销字节"><input type="number" value={f.overhead_bytes} onChange={e => setF({ ...f, overhead_bytes: Number(e.target.value) })} placeholder="额外开销字节" /></FormField><FormField label="目标 MTU，0 为自动"><input type="number" value={f.desired_mtu} onChange={e => setF({ ...f, desired_mtu: Number(e.target.value) })} placeholder="目标 MTU，0 为自动" /></FormField><FormField label="采样次数"><input type="number" value={f.sample_count} onChange={e => setF({ ...f, sample_count: Number(e.target.value) })} placeholder="采样次数" /></FormField><FormField label="超时毫秒"><input type="number" value={f.timeout_ms} onChange={e => setF({ ...f, timeout_ms: Number(e.target.value) })} placeholder="超时毫秒" /></FormField><button onClick={submit}>检测/应用</button></div><Table rows={data.mtu_detections || []} /></Panel>
 }
 
-function PortForwards({ data, client, load, notify }: any) {
+function TrafficForwardingPage({ data, client, load }: any) {
   const dialogs = useDialogs()
-	const [f, setF] = useState({ name: 'forward-1', source_server_id: 0, target_server_id: 0, listen_ip: '0.0.0.0', listen_port: 443, target_address: '', target_port: 443, protocol: 'tcp' as ForwardProtocol, backend: 'realm' as ForwardBackend, probe_mode: 'periodic' as ProbeMode, probe_interval_seconds: 300, priority: 100, config_json: '{}', enabled: true })
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const submit = async () => {
-    if (busy) return
-    setBusy(true)
-    setError('')
-    try { await client.request('/port-forwards', { method: 'POST', body: JSON.stringify(f) }); await load() } catch (error: any) { setError(localizeErrorMessage(error?.message || error)) } finally { setBusy(false) }
-  }
-  const forwardRows = (data.port_forwards || []).map((forward: PortForward) => {
-    const probe = latestForwardProbe(data, forward.id)
-    return { id: forward.id, name: forward.name, source_server_id: forward.source_server_id, target_server_id: forward.target_server_id, protocol: forward.protocol, listen_port: forward.listen_port, target_port: forward.target_port, probe_status: !probe ? '等待探测' : probe.available ? `正常 · ${probe.latency_ms}ms` : '转发异常', checked_at: probe?.created_at || '', enabled: forward.enabled, _raw: forward }
-  })
-  const probeRows = (data.port_forward_probes || []).map((probe: PortForwardProbeResult) => {
-    const details = forwardProbeDetails(probe)
-    const forward = (data.port_forwards || []).find((x: PortForward) => x.id === probe.port_forward_id)
-    return { id: probe.id, name: forward?.name || `转发 ${probe.port_forward_id}`, mode: probe.mode, probe_status: probe.available ? '正常' : '异常', latency_ms: probe.latency_ms, p95_latency_ms: details.p95, jitter_ms: details.jitter, success_count: details.successCount, sample_count: probe.sample_count, checked_at: probe.created_at, error: probe.error }
-  })
-  return <Panel title="端口转发"><p className="muted">下发后自动检查源端监听，并从 A 节点连续 5 次连接 B 节点目标端口，回报平均延迟、P95、抖动和成功率。周期模式默认每 5 分钟复检。转发由源服务器上随 Agent 安装的 OBoard Realm 执行。</p><div className="form signal-resource-form"><FormField label="名称"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /></FormField><FormField label="源服务器"><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="目标服务器"><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="监听 IP"><input value={f.listen_ip} onChange={e => setF({ ...f, listen_ip: e.target.value })} placeholder="监听 IP" /></FormField><FormField label="监听端口"><input type="number" value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /></FormField><FormField label="目标地址，可选"><input value={f.target_address} onChange={e => setF({ ...f, target_address: e.target.value })} placeholder="目标地址，可选" /></FormField><FormField label="目标端口"><input type="number" value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /></FormField><FormField label="协议"><Select variant="segmented" value={f.protocol} onChange={e => setF({ ...f, protocol: e.target.value as ForwardProtocol })}>{forwardProtocols.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select></FormField><FormField label="探测方式"><Select value={f.probe_mode} onChange={e => setF({ ...f, probe_mode: e.target.value as ProbeMode })}>{probeModes.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select></FormField><FormField label="探测间隔秒"><input type="number" value={f.probe_interval_seconds} onChange={e => setF({ ...f, probe_interval_seconds: Number(e.target.value) })} placeholder="探测间隔秒" /></FormField><FormField label="优先级"><input type="number" value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /></FormField><FormField label="JSON 配置"><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /></FormField><button type="button" onClick={() => void submit()} disabled={busy}>{busy ? '创建中…' : '创建'}</button>{error && <p className="danger-text" role="alert">{error}</p>}</div><Table rows={forwardRows} actions={(r: any) => <><button onClick={() => void probeForwardNow(client, r._raw, load, notify)}>立即探测</button><button onClick={() => remove(client, `/port-forwards/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /><h3>探测结果</h3><Table rows={probeRows} /></Panel>
-}
+  const servers = (data.servers || []) as Server[]
+  const [view, setView] = useState<'forwards' | 'tunnels'>('forwards')
+  const [tunnelDraft, setTunnelDraft] = useState<TunnelDraft | null>(null)
+  const tunnels = (data.tunnels || []) as Tunnel[]
+  const serverName = (id: number) => servers.find(server => server.id === id)?.name || `服务器 ${id}`
 
-function Tunnels({ data, client, load }: any) {
-  const dialogs = useDialogs()
-  const [f, setF] = useState({ name: 'tunnel-1', source_server_id: 0, target_server_id: 0, type: 'wireguard' as TunnelType, local_address: '', peer_address: '', listen_port: 0, target_endpoint: '', target_port: 0, priority: 100, config_json: '{}', enabled: true })
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const submit = async () => {
-    if (busy) return
-    setBusy(true)
-    setError('')
-    try { await client.request('/tunnels', { method: 'POST', body: JSON.stringify(f) }); await load() } catch (error: any) { setError(localizeErrorMessage(error?.message || error)) } finally { setBusy(false) }
+  const saveForward = async (draft: TrafficForwardDraft, id?: number) => {
+    try {
+      await client.request(id ? `/port-forwards/${id}` : '/port-forwards', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(draft) })
+    } catch (error: any) {
+      throw new Error(localizeErrorMessage(error?.message || error))
+    }
+    await load()
   }
-  return <Panel title="隧道"><p className="muted">独立隧道使用 WireGuard。代理路径中的 SSH 由系统自动创建专用账户和密钥。</p><div className="form signal-resource-form"><FormField label="名称"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /></FormField><FormField label="源服务器"><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="目标服务器"><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><FormField label="类型"><Select variant="segmented" value={f.type} onChange={e => setF({ ...f, type: e.target.value as TunnelType })}><option value="wireguard">WireGuard</option></Select></FormField><FormField label="本地地址"><input value={f.local_address} onChange={e => setF({ ...f, local_address: e.target.value })} placeholder="本地地址" /></FormField><FormField label="对端地址 / 允许 IP"><input value={f.peer_address} onChange={e => setF({ ...f, peer_address: e.target.value })} placeholder="对端地址 / 允许 IP" /></FormField><FormField label="监听端口"><input type="number" value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /></FormField><FormField label="目标端点，可选"><input value={f.target_endpoint} onChange={e => setF({ ...f, target_endpoint: e.target.value })} placeholder="目标端点，可选" /></FormField><FormField label="目标端口"><input type="number" value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /></FormField><FormField label="优先级"><input type="number" value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /></FormField><FormField label="JSON 配置"><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /></FormField><button type="button" onClick={() => void submit()} disabled={busy}>{busy ? '创建中…' : '创建'}</button>{error && <p className="danger-text" role="alert">{error}</p>}</div><Table rows={data.tunnels || []} actions={(r: Tunnel) => <button onClick={() => remove(client, `/tunnels/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
+  const deleteForward = (forward: PortForward) => dialogs.confirm({
+    title: '删除流量转发',
+    message: '确认删除「' + forward.name + '」？相关监听会从入口服务器移除，历史检查结果也会一并删除。',
+    tone: 'danger',
+    confirmText: '删除转发',
+    pendingText: '删除中…',
+    onConfirm: async () => {
+      await client.request('/port-forwards/' + forward.id, { method: 'DELETE' })
+      await load()
+    },
+  })
+  const probeForward = async (forward: PortForward) => {
+    try {
+      await client.request(`/port-forwards/${forward.id}/probe`, { method: 'POST', body: '{}' })
+    } catch (error: any) {
+      throw new Error(localizeErrorMessage(error?.message || error))
+    }
+  }
+  const openTunnelCreate = () => {
+    if (servers.length < 2) {
+      void dialogs.alert({ title: '无法创建服务器隧道', message: '至少需要两台服务器。' })
+      return
+    }
+    setTunnelDraft(defaultTunnelDraft(servers))
+  }
+  const submitTunnel = async () => {
+    if (!tunnelDraft) return
+    try {
+      await client.request('/tunnels', { method: 'POST', body: JSON.stringify(tunnelDraft) })
+      setTunnelDraft(null)
+      await load()
+    } catch (error: any) {
+      await dialogs.alert({ title: '创建服务器隧道失败', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
+  const deleteTunnel = (tunnel: Tunnel) => dialogs.confirm({
+    title: '删除服务器隧道',
+    message: '确认删除「' + tunnel.name + '」？依赖它的转发路径需要重新选择传输方式。',
+    tone: 'danger',
+    confirmText: '删除隧道',
+    pendingText: '删除中…',
+    onConfirm: async () => {
+      await client.request('/tunnels/' + tunnel.id, { method: 'DELETE' })
+      await load()
+    },
+  })
+  const tunnelRows = tunnels.map(tunnel => ({
+    name: tunnel.name,
+    route: `${serverName(tunnel.source_server_id)} → ${serverName(tunnel.target_server_id)}`,
+    type: tunnel.type === 'wireguard' ? 'WireGuard' : 'SSH',
+    listen_port: tunnel.listen_port || '自动',
+    target_port: tunnel.target_port || '自动',
+    priority: tunnel.priority,
+    enabled: tunnel.enabled ? '已启用' : '已停用',
+    _raw: tunnel,
+  }))
+
+  return <div className="traffic-forwarding-page">
+    <div className="traffic-forwarding-page-switch">
+      <Select variant="segmented" value={view} onChange={event => setView(event.target.value as 'forwards' | 'tunnels')} aria-label="流量转发类型">
+        <option value="forwards">端口转发 · {(data.port_forwards || []).length}</option>
+        <option value="tunnels">服务器隧道 · {tunnels.length}</option>
+      </Select>
+    </div>
+    {view === 'forwards'
+      ? <TrafficForwardingDialog
+        embedded
+        servers={servers}
+        forwards={(data.port_forwards || []) as PortForward[]}
+        probes={(data.port_forward_probes || []) as PortForwardProbeResult[]}
+        onSave={saveForward}
+        onDelete={deleteForward}
+        onProbe={probeForward}
+      />
+      : <Panel title="服务器隧道" actions={<button type="button" onClick={openTunnelCreate}><Plus size={15} />创建隧道</button>}>
+        <p className="muted">独立隧道使用 WireGuard。代理路径中的 SSH 由系统自动创建专用账户和密钥。</p>
+        <Table rows={tunnelRows} actions={(row: any) => <button type="button" className="ghost danger-text" onClick={() => void deleteTunnel(row._raw)}>删除</button>} />
+      </Panel>}
+    <AnimatePresence>{tunnelDraft && <TunnelDraftDialog draft={tunnelDraft} setDraft={setTunnelDraft} servers={servers} onCancel={() => setTunnelDraft(null)} onSubmit={submitTunnel} />}</AnimatePresence>
+  </div>
 }
 
 const subscriptionClientIcons: Record<string, string> = {
@@ -21449,12 +21419,6 @@ async function remove(client: ReturnType<typeof api>, path: string, load: () => 
   if (!confirmed) return
   await client.request(path, { method: 'DELETE' })
   if (!isConfigurationMutationPath(path)) await load()
-}
-
-async function probeForwardNow(client: ReturnType<typeof api>, row: PortForward, load: () => Promise<void>, notify?: (message: string, tone?: ToastKind) => void) {
-  await client.request(`/port-forwards/${row.id}/probe`, { method: 'POST', body: '{}' })
-  await load()
-  notify?.(`已创建「${row.name || '端口转发'}」探测，请在任务中心查看结果`, 'success')
 }
 
 async function setSubscriptionBurnPolicy(client: ReturnType<typeof api>, user: User, enabled: boolean, load: () => Promise<void>, dialogs: DialogApi, notify?: (message: string, tone?: ToastKind) => void) {

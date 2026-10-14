@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { AnimatePresence } from 'motion/react'
 import {
   Activity,
   ArrowLeft,
@@ -93,16 +94,18 @@ export function TrafficForwardingDialog({
   onDelete,
   onProbe,
   onOpenTunnel,
+  embedded = false,
 }: {
   servers: Server[]
   forwards: TrafficForward[]
   probes: TrafficForwardProbe[]
   initialServerID?: number
-  onCancel: () => void
+  onCancel?: () => void
   onSave: (draft: TrafficForwardDraft, id?: number) => Promise<void>
   onDelete: (forward: TrafficForward) => Promise<boolean>
   onProbe: (forward: TrafficForward) => Promise<void>
   onOpenTunnel?: (sourceServerID: number) => void
+  embedded?: boolean
 }) {
   const initialSourceID = servers.some(server => server.id === initialServerID) ? Number(initialServerID) : Number(servers[0]?.id || 0)
   const [sourceServerID, setSourceServerID] = useState(initialSourceID)
@@ -211,9 +214,21 @@ export function TrafficForwardingDialog({
     }
   }
 
-  return (
-    <MotionDialogPanel onCancel={() => { if (!saving && busyIDs.size === 0) onCancel() }} className="traffic-forwarding-dialog" aria-labelledby="traffic-forwarding-title">
-      <header className="traffic-forwarding-head">
+  const closeEditor = () => { setEditor(null); setNotice(null) }
+  const editorForm = editor ? (
+    <TrafficForwardEditor
+      servers={servers}
+      editor={editor}
+      notice={notice}
+      saving={saving}
+      onBack={closeEditor}
+      onChange={draft => setEditor(current => current ? { ...current, draft } : current)}
+      onSave={() => void save()}
+    />
+  ) : null
+  const body = (
+    <>
+      {!embedded && <header className="traffic-forwarding-head">
         <div className="traffic-forwarding-title-block">
           <span className="traffic-forwarding-title-icon" aria-hidden="true"><Network size={18} /></span>
           <div>
@@ -225,7 +240,7 @@ export function TrafficForwardingDialog({
           {onOpenTunnel && <button type="button" className="ghost" onClick={() => onOpenTunnel(sourceServerID)} disabled={Boolean(editor) || saving || busyIDs.size > 0}><Cable size={15} aria-hidden="true" />服务器隧道</button>}
           <button type="button" className="ghost icon-button dialog-close" onClick={onCancel} disabled={saving || busyIDs.size > 0} aria-label="关闭流量转发" title="关闭"><X size={17} /></button>
         </div>
-      </header>
+      </header>}
 
       <div className="traffic-forwarding-shell">
         <aside className="traffic-forwarding-sidebar" aria-label="入口服务器">
@@ -273,17 +288,7 @@ export function TrafficForwardingDialog({
         </aside>
 
         <main className="traffic-forwarding-main">
-          {editor ? (
-            <TrafficForwardEditor
-              servers={servers}
-              editor={editor}
-              notice={notice}
-              saving={saving}
-              onBack={() => { setEditor(null); setNotice(null) }}
-              onChange={draft => setEditor(current => current ? { ...current, draft } : current)}
-              onSave={() => void save()}
-            />
-          ) : (
+          {editor && !embedded ? editorForm : (
             <>
               <section className="traffic-forwarding-overview" aria-label="转发概况">
                 <div>
@@ -343,7 +348,23 @@ export function TrafficForwardingDialog({
           )}
         </main>
       </div>
-    </MotionDialogPanel>
+    </>
+  )
+
+  if (!embedded) {
+    return <MotionDialogPanel onCancel={() => { if (!saving && busyIDs.size === 0) onCancel?.() }} className="traffic-forwarding-dialog" aria-labelledby="traffic-forwarding-title">{body}</MotionDialogPanel>
+  }
+  return (
+    <section className="traffic-forwarding-workspace" aria-label="端口转发">
+      {body}
+      <AnimatePresence>
+        {editor && (
+          <MotionDialogPanel onCancel={() => { if (!saving) closeEditor() }} className="traffic-forwarding-editor-dialog" ariaLabel={editor.id ? '编辑流量转发' : '创建流量转发'}>
+            {editorForm}
+          </MotionDialogPanel>
+        )}
+      </AnimatePresence>
+    </section>
   )
 }
 

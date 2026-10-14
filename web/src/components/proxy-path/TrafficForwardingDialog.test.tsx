@@ -180,6 +180,20 @@ describe('TrafficForwardingDialog', () => {
     expect(container.textContent).toContain('转发配置已保存')
   })
 
+  it('embeds as a page workspace and edits inside a dialog instead of replacing the list', () => {
+    const props = dialogProps()
+    const { onCancel: _onCancel, onOpenTunnel: _onOpenTunnel, ...pageProps } = props
+    act(() => root.render(<TrafficForwardingDialog {...pageProps} embedded initialServerID={1} />))
+
+    expect(container.querySelector('[aria-label="关闭流量转发"]')).toBeNull()
+    expect(container.textContent).not.toContain('服务器隧道')
+    expect(container.textContent).toContain('转发-A')
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="编辑 转发-A"]')?.click())
+    expect(container.textContent).toContain('编辑流量转发')
+    expect(container.textContent).toContain('转发列表')
+  })
+
   it('renders region flags for servers in the left sidebar list', () => {
     const props = dialogProps()
     props.servers = [

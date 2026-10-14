@@ -21,7 +21,6 @@ var knownUIPagePaths = map[string]struct{}{
 	"/notifications":        {},
 	"/outbounds":            {},
 	"/plans":                {},
-	"/port-forwards":        {},
 	"/proxy-paths":          {},
 	"/return-latency":       {},
 	"/routing":              {},
@@ -31,7 +30,7 @@ var knownUIPagePaths = map[string]struct{}{
 	"/settings":             {},
 	"/subscriptions":        {},
 	"/tasks":                {},
-	"/tunnels":              {},
+	"/traffic-forwarding":   {},
 	"/users":                {},
 }
 

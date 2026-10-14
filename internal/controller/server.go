@@ -2696,12 +2696,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err = require(model.RoleOperator); err == nil {
 			err = addMTU()
 		}
-	case "port-forwards":
+	case "traffic-forwarding":
 		if err = require(model.RoleOperator); err == nil {
 			err = addForwards()
 		}
-	case "tunnels":
-		if err = require(model.RoleOperator); err == nil {
+		if err == nil {
 			err = addTunnels()
 		}
 	case "users":
