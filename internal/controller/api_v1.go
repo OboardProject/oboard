@@ -27,6 +27,7 @@ import (
 type apiPrincipalContextKey struct{}
 
 func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/probe-monitors", s.apiAuth(s.apiProbeMonitors, model.RoleOperator))
 	for _, view := range []string{"accounts", "events", "executions"} {
 		mux.HandleFunc("/api/v1/audit/"+view, s.apiAuth(s.apiV1AccountAudit, model.RoleOperator))
 	}

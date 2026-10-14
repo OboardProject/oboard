@@ -22,6 +22,8 @@ type controllerUpdateAutomationInput struct {
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
 	switch capabilityName {
+	case "probe_monitors.list", "probe_monitors.history":
+		return s.queryProbeMonitors(ctx, principal, capabilityName, input)
 	case "device_retirement.read":
 		return s.queryDeviceRetirement(ctx, principal, input)
 	case "audit.policy.get":

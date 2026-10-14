@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Activity, History, Pencil, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
 import { Dialog } from '../ui/dialog'
+import { ProbeMonitors } from './ProbeMonitors'
 import { Select } from '../ui/select'
 import type { LatencyProbeAddress, LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
 import { ReturnLatencySettings, type LatencyProbeTaskAssignmentChange } from './ReturnLatencySettings'
@@ -8,7 +9,7 @@ import { ReturnLatencyTaskForm, targetLabel } from './ReturnLatencyTaskForm'
 import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
 import { useRegisterPageRefresh } from '../../page-refresh-context'
 
-type Client = { request: (path: string, init?: RequestInit) => Promise<any> }
+type Client = { request: (path: string, init?: RequestInit) => Promise<any>; requestV2?: (path: string, init?: RequestInit) => Promise<any> }
 type Notice = { kind: 'success' | 'error'; text: string }
 
 const formatInterval = (seconds: number) => {
@@ -34,7 +35,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   const [editing, setEditing] = useState<{ open: boolean; task: LatencyProbeTask | null }>({ open: false, task: null })
   const [settingsServer, setSettingsServer] = useState<Server | null>(null)
   const [historyID, setHistoryID] = useState<number | null>(null)
-  const [view, setView] = useState<'targets' | 'nodes'>('targets')
+  const [view, setView] = useState<'targets' | 'nodes' | 'routes' | 'quality'>('targets')
   const [taskQuery, setTaskQuery] = useState('')
   const [methodFilter, setMethodFilter] = useState('all')
   const [query, setQuery] = useState('')
@@ -174,22 +175,23 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   })
 
   const visibleTasks = tasks.filter(task => (methodFilter === 'all' || task.method === methodFilter) && `${task.name} ${task.address} ${task.province} ${task.carrier}`.toLowerCase().includes(taskQuery.trim().toLowerCase()))
-  return <section className="panel return-latency-page" aria-label="网络探测">
+  return <section className="panel return-latency-page" aria-label="拨测任务">
     <div className="panel-body">
       <div className="network-probe-header">
-        <div className="network-probe-tabs" role="tablist" aria-label="网络探测视图">
-          {(['targets', 'nodes'] as const).map((tab, index) => <button key={tab} id={`probe-${tab}-tab`} type="button" role="tab" aria-selected={view === tab} aria-controls={`probe-${tab}-panel`} tabIndex={view === tab ? 0 : -1} onClick={() => setView(tab)} onKeyDown={event => {
+        <div className="network-probe-tabs" role="tablist" aria-label="拨测任务视图">
+          {(['targets', 'nodes', 'routes', 'quality'] as const).map((tab, index) => <button key={tab} id={`probe-${tab}-tab`} type="button" role="tab" aria-selected={view === tab} aria-controls={`probe-${tab}-panel`} tabIndex={view === tab ? 0 : -1} onClick={() => setView(tab)} onKeyDown={event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
             event.preventDefault()
-            const next = event.key === 'Home' ? 'targets' : event.key === 'End' ? 'nodes' : index === 0 ? 'nodes' : 'targets'
+            const tabs = ['targets', 'nodes', 'routes', 'quality'] as const
+            const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? 3 : (index + (event.key === 'ArrowRight' ? 1 : 3)) % 4]
             setView(next); document.getElementById(`probe-${next}-tab`)?.focus()
-          }}>{tab === 'targets' ? '目标' : '节点'}<span>{tab === 'targets' ? tasks.length : servers.length}</span></button>)}
+          }}>{{ targets: '连通性', nodes: '服务器', routes: '路由监控', quality: 'IP 质量' }[tab]}</button>)}
         </div>
-        <div className="return-latency-toolbar">
+        {(view === 'targets' || view === 'nodes') && <div className="return-latency-toolbar">
           <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
           <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
           <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
-        </div>
+        </div>}
       </div>
       {notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
       {resource.error && <p className="muted" role="status">预设目标暂不可用，仍可手动创建任务。 <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
@@ -224,6 +226,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         </table></div>}
       </section>}
 
+      {(view === 'routes' || view === 'quality') && <section id={`probe-${view}-panel`} role="tabpanel" aria-labelledby={`probe-${view}-tab`}><ProbeMonitors key={view} client={client} servers={servers} kind={view === 'routes' ? 'route' : 'ip_quality'} canManage={canManage} /></section>}
       {view === 'nodes' && <section id="probe-nodes-panel" role="tabpanel" aria-labelledby="probe-nodes-tab" className="return-latency-servers">
         <div className="return-latency-filters">
           <div className="return-latency-search">

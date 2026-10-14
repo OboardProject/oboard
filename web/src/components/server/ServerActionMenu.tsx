@@ -42,7 +42,7 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
       ...(enrolled && isOnline && (server.authorization_confirmed === false || server.users_confirmed === false) ? [{ label: '重试授权下发', type: 'retry-delivery', icon: RefreshCw, admin: true } satisfies Item] : []),
     ] },
     { label: '监控与诊断', dividerBefore: true, items: [
-      { label: '网络探测', type: 'return-latency', icon: Gauge, admin: true },
+      { label: '拨测任务', type: 'return-latency', icon: Gauge, admin: true },
       { label: '网络工具', type: 'network', icon: Network },
     ] },
     { dividerBefore: true, items: [

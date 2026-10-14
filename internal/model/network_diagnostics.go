@@ -26,6 +26,8 @@ const (
 
 	NetworkDiagnosticProtocolVersion = 1
 	NetworkDiagnosticOriginPlugin    = "plugin"
+	NetworkDiagnosticOriginMonitor   = "monitor"
+	AgentCapabilityRouteMonitor      = "route_monitor_v1"
 
 	NetworkFamilyAuto = "auto"
 	NetworkFamilyIPv4 = "ipv4"
@@ -148,23 +150,38 @@ type NetworkTraceProbe struct {
 }
 
 type NetworkTraceHop struct {
-	Hop       int                 `json:"hop"`
-	Addresses []string            `json:"addresses"`
-	Probes    []NetworkTraceProbe `json:"probes"`
+	Geography []NetworkTraceGeography `json:"geography,omitempty"`
+	Hop       int                     `json:"hop"`
+	Addresses []string                `json:"addresses"`
+	Probes    []NetworkTraceProbe     `json:"probes"`
 }
 
 type NetworkTraceResult struct {
-	OperationID string            `json:"operation_id"`
-	Target      string            `json:"target"`
-	ResolvedIP  string            `json:"resolved_ip"`
-	IPFamily    string            `json:"ip_family"`
-	Mode        string            `json:"mode"`
-	Port        int               `json:"port,omitempty"`
-	StartedAt   time.Time         `json:"started_at"`
-	DurationMS  int64             `json:"duration_ms"`
-	Reached     bool              `json:"reached"`
-	Truncated   bool              `json:"truncated"`
-	Hops        []NetworkTraceHop `json:"hops"`
+	Provider       string            `json:"provider,omitempty"`
+	GeographyError string            `json:"geography_error,omitempty"`
+	OperationID    string            `json:"operation_id"`
+	Target         string            `json:"target"`
+	ResolvedIP     string            `json:"resolved_ip"`
+	IPFamily       string            `json:"ip_family"`
+	Mode           string            `json:"mode"`
+	Port           int               `json:"port,omitempty"`
+	StartedAt      time.Time         `json:"started_at"`
+	DurationMS     int64             `json:"duration_ms"`
+	Reached        bool              `json:"reached"`
+	Truncated      bool              `json:"truncated"`
+	Hops           []NetworkTraceHop `json:"hops"`
+}
+
+type NetworkTraceGeography struct {
+	Address  string              `json:"address"`
+	ASN      string              `json:"asn,omitempty"`
+	Owner    string              `json:"owner,omitempty"`
+	ISP      string              `json:"isp,omitempty"`
+	Country  string              `json:"country,omitempty"`
+	Province string              `json:"province,omitempty"`
+	City     string              `json:"city,omitempty"`
+	Prefix   string              `json:"prefix,omitempty"`
+	Router   map[string][]string `json:"router,omitempty"`
 }
 
 type NetworkTCPProbeResult struct {

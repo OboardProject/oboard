@@ -103,6 +103,7 @@ index idx_plugin_runs_queue on plugin_runs
 index idx_plugin_schedules_due on plugin_schedules
 index idx_plugin_schedules_instance on plugin_schedules
 index idx_port_forwards_source on port_forwards
+index idx_probe_route_versions_monitor on probe_route_versions
 index idx_proxy_credentials_active_scope on proxy_credentials
 index idx_proxy_path_port_allocations_server on proxy_path_port_allocations
 index idx_proxy_path_steps_position on proxy_path_steps
@@ -1755,6 +1756,29 @@ table port_forwards
     enabled INTEGER notnull=1 default=1 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
+table probe_monitors
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    target TEXT notnull=1 default=- pk=0
+    mode TEXT notnull=1 default=- pk=0
+    port INTEGER notnull=1 default=- pk=0
+    interval_seconds INTEGER notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=- pk=0
+    next_at INTEGER notnull=1 default=0 pk=0
+    checked_at TEXT notnull=1 default='' pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    error TEXT notnull=1 default='' pk=0
+    result TEXT notnull=1 default='null' pk=0
+table probe_route_versions
+    id INTEGER notnull=0 default=- pk=1
+    monitor_id INTEGER notnull=1 default=- pk=0
+    checked_at TEXT notnull=1 default=- pk=0
+    last_seen_at TEXT notnull=1 default=- pk=0
+    asn_path TEXT notnull=1 default=- pk=0
+    trace TEXT notnull=1 default=- pk=0
 table proxy_credentials
     id TEXT notnull=0 default=- pk=1
     user_id INTEGER notnull=1 default=- pk=0

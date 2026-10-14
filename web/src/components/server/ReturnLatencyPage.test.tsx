@@ -217,7 +217,7 @@ describe('return latency probe tasks', () => {
     expect(menu.textContent).toContain('资料与设置')
     expect(menu.textContent).toContain('监控与诊断')
     expect(menu.textContent).toContain('运维操作')
-    const item = Array.from(menu.querySelectorAll('button')).find(element => element.textContent === '网络探测')!
+    const item = Array.from(menu.querySelectorAll('button')).find(element => element.textContent === '拨测任务')!
     await click(item)
     expect(action).toHaveBeenCalledWith('return-latency', servers[0])
     expect(document.body.querySelector('[role="menu"]')).toBeNull()

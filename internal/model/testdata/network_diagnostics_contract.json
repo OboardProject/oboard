@@ -1,4 +1,20 @@
 {
+  "monitor.trace": {
+    "protocol_version": 1,
+    "operation_id": "monitor-1",
+    "origin": "monitor",
+    "run_id": "",
+    "plugin_id": "",
+    "instance_id": 0,
+    "issued_at": "2026-09-30T12:00:00Z",
+    "expires_at": "2026-09-30T12:01:00Z",
+    "target": "example.com",
+    "ip_family": "auto",
+    "mode": "icmp",
+    "max_hops": 30,
+    "queries_per_hop": 1,
+    "per_hop_timeout_ms": 1000
+  },
   "probe_network_dns": {
     "protocol_version": 1,
     "operation_id": "op-1",
@@ -108,6 +124,50 @@
       "server_name": "example.com",
       "cert_not_after": "2026-12-30T12:00:00Z"
     }
+  },
+  "result.monitor_trace": {
+    "provider": "NextTrace-API",
+    "operation_id": "monitor-1",
+    "target": "1.1.1.1",
+    "resolved_ip": "1.1.1.1",
+    "ip_family": "ipv4",
+    "mode": "icmp",
+    "started_at": "2026-09-30T12:00:00Z",
+    "duration_ms": 0,
+    "reached": true,
+    "truncated": false,
+    "hops": [
+      {
+        "geography": [
+          {
+            "address": "1.1.1.1",
+            "asn": "AS13335",
+            "owner": "Cloudflare",
+            "isp": "Cloudflare",
+            "country": "United States",
+            "province": "California",
+            "city": "Los Angeles",
+            "prefix": "1.1.1.0/24",
+            "router": {
+              "backbone": [
+                "calibrated"
+              ]
+            }
+          }
+        ],
+        "hop": 1,
+        "addresses": [
+          "1.1.1.1"
+        ],
+        "probes": [
+          {
+            "address": "1.1.1.1",
+            "rtt_ms": 3,
+            "timeout": false
+          }
+        ]
+      }
+    ]
   },
   "result.ping": {
     "operation_id": "op-1",

@@ -483,6 +483,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		}
 	}
 	schema := []string{
+		`create table if not exists probe_monitors (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, kind text not null, target text not null, mode text not null, port integer not null, interval_seconds integer not null, enabled integer not null, revision integer not null, next_at integer not null default 0, checked_at text not null default '', status text not null default 'pending', error text not null default '', result text not null default 'null')`,
+		`create table if not exists probe_route_versions (id integer primary key autoincrement, monitor_id integer not null references probe_monitors(id) on delete cascade, checked_at text not null, last_seen_at text not null, asn_path text not null, trace text not null)`,
+		`create index if not exists idx_probe_route_versions_monitor on probe_route_versions(monitor_id,id desc)`,
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
 		`create table if not exists routing_cache_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists configuration_revision (id integer primary key check(id=1), revision integer not null default 0)`,

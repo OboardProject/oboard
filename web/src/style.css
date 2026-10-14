@@ -29932,3 +29932,7 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
 .proxy-dscp-name { flex: 1; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
 .proxy-dscp-name .muted { font-size: 12px; }
 .proxy-dscp-list button { flex: none; min-height: 30px; padding: 4px 10px; }
+.probe-monitor-form { display: grid; gap: 16px; }
+.probe-monitor-form > label { display: grid; gap: 6px; }
+.probe-quality-results { display: grid; gap: 16px; overflow-wrap: anywhere; }
+.probe-quality-results h4 { margin-bottom: 6px; }

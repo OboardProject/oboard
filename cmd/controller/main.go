@@ -147,6 +147,7 @@ func main() {
 		log.Printf("stealth agent transport: %v", err)
 	}
 	go app.StartMonitor(ctx)
+	go app.StartProbeMonitors(ctx)
 	go app.StartDNSDDNS(ctx)
 	go app.StartCertificateRenewal(ctx)
 	go app.StartControllerUpdates(ctx)
