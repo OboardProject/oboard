@@ -112,6 +112,44 @@ export const ABOVE_SOURCE_COST = 4000
  *  Within this tolerance the edge is drawn as one straight segment instead of
  *  degenerating into a stub, a few-pixel jog and a second stub. */
 export const STRAIGHT_SNAP_TOLERANCE = 6
+/** Minimum distance between two edge ports on the same card side. */
+export const PORT_MIN_GAP = 14
+/** Straight run every fanned edge keeps next to the card it leaves or enters. */
+export const FAN_STUB = 16
+
+type FanItem = { id: string; sourceX: number; targetX: number }
+
+/** Lay positions out in their given order, at least `gap` apart, inside
+ *  [min, max]. Ports that already fit keep their desired coordinate. */
+export function spreadPortCoordinates(desired: number[], min: number, max: number, gap = PORT_MIN_GAP): number[] {
+  if (!desired.length) return []
+  if (max - min < gap * (desired.length - 1)) {
+    if (desired.length === 1) return [routingCoordinate((min + max) / 2)]
+    return desired.map((_, index) => routingCoordinate(min + (index / (desired.length - 1)) * (max - min)))
+  }
+  const out = desired.map(value => Math.min(max, Math.max(min, value)))
+  for (let index = 1; index < out.length; index++) out[index] = Math.max(out[index], out[index - 1] + gap)
+  if (out[out.length - 1] > max) {
+    out[out.length - 1] = max
+    for (let index = out.length - 2; index >= 0; index--) out[index] = Math.min(out[index], out[index + 1] - gap)
+  }
+  return out.map(routingCoordinate)
+}
+
+/**
+ * Track depth for a fan of downward edges that each turn once. Edges moving
+ * right are stacked so the leftmost turns lowest; edges moving left so the
+ * rightmost turns lowest. With ports and targets in the same order this gives
+ * every edge its own horizontal run and no two runs cross or overlap.
+ */
+export function fanTrackDepths(items: FanItem[]): { depths: Map<string, number>; levels: number } {
+  const depths = new Map<string, number>()
+  const right = items.filter(item => item.targetX > item.sourceX).sort((a, b) => a.sourceX - b.sourceX || a.targetX - b.targetX || a.id.localeCompare(b.id))
+  const left = items.filter(item => item.targetX < item.sourceX).sort((a, b) => a.sourceX - b.sourceX || a.targetX - b.targetX || a.id.localeCompare(b.id))
+  right.forEach((item, index) => depths.set(item.id, right.length - 1 - index))
+  left.forEach((item, index) => depths.set(item.id, index))
+  return { depths, levels: Math.max(right.length, left.length) }
+}
 
 function sortedPair(left: string, right: string): [string, string] {
   return left < right ? [left, right] : [right, left]
@@ -342,9 +380,7 @@ function preferredRoute(
   targetPort: GraphRoutePort,
   input: GraphRoutingInput,
   outerLaneIndex: number,
-  belongsTracks?: Map<string, number>,
-  busYByGroup?: Map<string, number>,
-  sharedBusGroups?: Set<string>,
+  fanTracks?: Map<string, number>,
 ): GraphPoint[] {
   const rawSource = sourcePort.point
   const target = targetPort.point
@@ -359,25 +395,16 @@ function preferredRoute(
     return normalizeOrthogonalPoints([source, { x: source.x, y }, { x: target.x, y }, target])
   }
   if (source.x === target.x) return [source, target]
-  if (edge.routingClass === 'belongs') {
-    const trackY = belongsTracks?.get(edge.id)
-      ?? routingCoordinate(source.y + (target.y - source.y) / 2)
+  // Each fanned edge owns one horizontal run; see fanTrackDepths.
+  const trackY = fanTracks?.get(edge.id)
+  if (trackY !== undefined && trackY > source.y && trackY < target.y) {
     return normalizeOrthogonalPoints([source, { x: source.x, y: trackY }, { x: target.x, y: trackY }, target])
   }
-  const stubY = routingCoordinate(source.y + BRANCH_STUB_LENGTH)
-  const groupKey = branchGroupKey(edge)
-  const dropY = busYByGroup?.get(groupKey) ?? stubY
-  // Siblings leaving the same handle must share one bus lane so they can fan
-  // out together. A lone branch has nothing to share with, so its crossover
-  // sits halfway down the gap and reads as a symmetric S instead of a corner
-  // pinned against the source card.
   const midY = routingCoordinate(source.y + (target.y - source.y) / 2)
-  const busY = sharedBusGroups?.has(groupKey) === false && midY > stubY
-    ? midY
-    : Math.max(dropY, stubY)
-  if (busY <= target.y) {
-    return normalizeOrthogonalPoints([source, { x: source.x, y: busY }, { x: target.x, y: busY }, target])
+  if (edge.routingClass === 'belongs' || midY > source.y + FAN_STUB) {
+    if (midY < target.y) return normalizeOrthogonalPoints([source, { x: source.x, y: midY }, { x: target.x, y: midY }, target])
   }
+  const busY = routingCoordinate(source.y + BRANCH_STUB_LENGTH)
   const targetNode = input.nodes.find(node => node.id === edge.target)
   const sideX = targetNode ? primarySideApproachX(source, target, targetNode.rect) : target.x
   return normalizeOrthogonalPoints([
@@ -669,6 +696,123 @@ export function validateGraphRoutes(input: GraphRoutingInput, routes: Record<str
   return { failedEdgeIDs, nodeIntersectionEdgeIDs, overlappingEdgePairs, crossingPrimaryPairs }
 }
 
+function isFanEdge(edge: RoutingEdge) {
+  return edge.routingClass === 'primary' || edge.routingClass === 'belongs'
+}
+
+/**
+ * Turn handle-level ports into one port per edge:
+ * - Edges leaving the same handle get adjacent ports ordered by where they go,
+ *   so siblings run side by side instead of sharing a bus with a branch point.
+ * - An edge enters its target directly below its source whenever the source
+ *   sits over the target, and otherwise at the target's own handle; entering
+ *   ports on one side are then kept apart and in source order.
+ * Target top handles are invisible, so moving them never detaches a dot.
+ */
+function refineFanPorts(
+  edges: RoutingEdge[],
+  nodeByID: Map<string, RoutingNode>,
+  sourcePorts: Map<string, GraphRoutePort>,
+  targetPorts: Map<string, GraphRoutePort>,
+) {
+  const centerX = (nodeID: string) => {
+    const node = nodeByID.get(nodeID)
+    return node ? (node.rect.left + node.rect.right) / 2 : 0
+  }
+  const bySource = new Map<string, RoutingEdge[]>()
+  edges.forEach(edge => {
+    const port = sourcePorts.get(edge.id)
+    const node = nodeByID.get(edge.source)
+    if (!port || !node || edge.routingClass !== 'primary' || port.point.y !== node.rect.bottom) return
+    bySource.set(edge.source, [...(bySource.get(edge.source) || []), edge])
+  })
+  bySource.forEach((nodeEdges, nodeID) => {
+    const node = nodeByID.get(nodeID)!
+    const ordered = nodeEdges.slice().sort((left, right) => (
+      sourcePorts.get(left.id)!.point.x - sourcePorts.get(right.id)!.point.x
+      || centerX(left.target) - centerX(right.target)
+      || left.id.localeCompare(right.id)
+    ))
+    const desired = ordered.map(edge => sourcePorts.get(edge.id)!.point.x)
+    // Siblings on one handle are centred on it.
+    let start = 0
+    while (start < ordered.length) {
+      let end = start
+      while (end + 1 < ordered.length && desired[end + 1] === desired[start]) end++
+      const count = end - start + 1
+      for (let index = start; index <= end; index++) desired[index] += (index - start - (count - 1) / 2) * PORT_MIN_GAP
+      start = end + 1
+    }
+    const xs = spreadPortCoordinates(desired, node.rect.left + PORT_MARGIN, node.rect.right - PORT_MARGIN)
+    ordered.forEach((edge, index) => {
+      const port = sourcePorts.get(edge.id)!
+      sourcePorts.set(edge.id, { ...port, point: { x: xs[index], y: port.point.y } })
+    })
+  })
+
+  const byTarget = new Map<string, RoutingEdge[]>()
+  edges.forEach(edge => {
+    const port = targetPorts.get(edge.id)
+    const node = nodeByID.get(edge.target)
+    if (!port || !node || !isFanEdge(edge) || port.point.y !== node.rect.top || !sourcePorts.has(edge.id)) return
+    byTarget.set(edge.target, [...(byTarget.get(edge.target) || []), edge])
+  })
+  byTarget.forEach((nodeEdges, nodeID) => {
+    const node = nodeByID.get(nodeID)!
+    const min = node.rect.left + PORT_MARGIN
+    const max = node.rect.right - PORT_MARGIN
+    const ordered = nodeEdges.slice().sort((left, right) => (
+      sourcePorts.get(left.id)!.point.x - sourcePorts.get(right.id)!.point.x || left.id.localeCompare(right.id)
+    ))
+    // Straight when the source sits over the card; otherwise keep the card's
+    // own handle (its centre, or the server's evenly spaced inbound handle) so
+    // the edge takes one deliberate step instead of a short jog at the edge.
+    const desired = ordered.map(edge => {
+      const sourceX = sourcePorts.get(edge.id)!.point.x
+      return sourceX >= min && sourceX <= max ? sourceX : targetPorts.get(edge.id)!.point.x
+    })
+    const xs = spreadPortCoordinates(desired, min, max)
+    ordered.forEach((edge, index) => {
+      const port = targetPorts.get(edge.id)!
+      targetPorts.set(edge.id, { ...port, point: { x: xs[index], y: port.point.y } })
+    })
+  })
+}
+
+/** Horizontal run for every edge that has to turn, grouped by the card the fan
+ *  hangs from (primary: source; belongs: target). */
+function assignFanTracks(
+  edges: RoutingEdge[],
+  sourcePorts: Map<string, GraphRoutePort>,
+  targetPorts: Map<string, GraphRoutePort>,
+): Map<string, number> {
+  const groups = new Map<string, RoutingEdge[]>()
+  edges.forEach(edge => {
+    if (!isFanEdge(edge)) return
+    const source = sourcePorts.get(edge.id)?.point
+    const target = targetPorts.get(edge.id)?.point
+    if (!source || !target || Math.abs(source.x - target.x) <= STRAIGHT_SNAP_TOLERANCE || target.y <= source.y) return
+    const key = edge.routingClass === 'belongs' ? `belongs\u001f${edge.target}` : `primary\u001f${edge.source}`
+    groups.set(key, [...(groups.get(key) || []), edge])
+  })
+  const tracks = new Map<string, number>()
+  groups.forEach(groupEdges => {
+    const { depths, levels } = fanTrackDepths(groupEdges.map(edge => ({
+      id: edge.id,
+      sourceX: sourcePorts.get(edge.id)!.point.x,
+      targetX: targetPorts.get(edge.id)!.point.x,
+    })))
+    const top = Math.max(...groupEdges.map(edge => sourcePorts.get(edge.id)!.point.y)) + FAN_STUB
+    const bottom = Math.min(...groupEdges.map(edge => targetPorts.get(edge.id)!.point.y)) - FAN_STUB
+    const room = bottom - top
+    if (room <= 0) return
+    const gap = levels > 1 ? Math.min(ROUTING_TRACK_GAP, room / (levels - 1)) : 0
+    const first = top + (room - (levels - 1) * gap) / 2
+    groupEdges.forEach(edge => tracks.set(edge.id, routingCoordinate(first + (depths.get(edge.id) || 0) * gap)))
+  })
+  return tracks
+}
+
 export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
   const quantizedInput: GraphRoutingInput = {
     ...input,
@@ -696,54 +840,8 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
   const reservations = new EdgeReservationIndex()
   const routes: Record<string, GraphEdgeRoute> = {}
   let auxiliaryIndex = 0
-  const belongsEdges = edges.filter(edge => edge.routingClass === 'belongs')
-  const belongsEdgesByTarget = new Map<string, RoutingEdge[]>()
-  belongsEdges.forEach(edge => {
-    belongsEdgesByTarget.set(edge.target, [...(belongsEdgesByTarget.get(edge.target) || []), edge])
-  })
-  const belongsTracks = new Map<string, number>()
-  belongsEdgesByTarget.forEach((targetEdges, targetNodeID) => {
-    const targetNode = nodeByID.get(targetNodeID)
-    if (!targetNode) return
-    const sorted = targetEdges.slice().sort((left, right) => {
-      const leftSource = nodeByID.get(left.source)
-      const rightSource = nodeByID.get(right.source)
-      const leftX = leftSource ? leftSource.rect.left : 0
-      const rightX = rightSource ? rightSource.rect.left : 0
-      return leftX - rightX || left.id.localeCompare(right.id)
-    })
-    const count = sorted.length
-    sorted.forEach((edge, index) => {
-      const sourceNode = nodeByID.get(edge.source)
-      const sourceY = sourceNode ? sourceNode.rect.bottom : targetNode.rect.top - 120
-      const targetY = targetNode.rect.top
-      const gap = Math.max(ROUTING_TRACK_GAP * 2, targetY - sourceY)
-      const base = sourceY + (gap * 0.4)
-      const offset = (index - (count - 1) / 2) * ROUTING_TRACK_GAP
-      belongsTracks.set(edge.id, routingCoordinate(base + offset))
-    })
-  })
-  const busYByGroup = new Map<string, number>()
-  const primaryByGroup = new Map<string, RoutingEdge[]>()
-  edges.forEach(edge => {
-    if (edge.routingClass !== 'primary') return
-    const key = branchGroupKey(edge)
-    primaryByGroup.set(key, [...(primaryByGroup.get(key) || []), edge])
-  })
-  const sharedBusGroups = new Set(Array.from(primaryByGroup.entries())
-    .filter(([, groupEdges]) => groupEdges.length > 1)
-    .map(([key]) => key))
-  primaryByGroup.forEach((groupEdges, key) => {
-    const sourcePort = sourcePorts.get(groupEdges[0].id)
-    if (!sourcePort) return
-    const channel = routingInput.layerChannels?.find(item => (
-      groupEdges.some(edge => item.sourceRank === edge.sourceRank && item.targetRank === edge.targetRank)
-    ))
-    const trackY = groupEdges
-      .map(edge => channel?.tracks[edge.id])
-      .find((value): value is number => value !== undefined && value > sourcePort.point.y)
-    busYByGroup.set(key, routingCoordinate(Math.max(sourcePort.point.y + BRANCH_STUB_LENGTH, trackY ?? 0)))
-  })
+  refineFanPorts(edges, nodeByID, sourcePorts, targetPorts)
+  const fanTracks = assignFanTracks(edges, sourcePorts, targetPorts)
   edges.forEach(edge => {
     const sourcePort = sourcePorts.get(edge.id)
     const targetPort = targetPorts.get(edge.id)
@@ -752,7 +850,7 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
       return
     }
     const ignored = branchSiblingIDs(edge, edges)
-    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex, belongsTracks, busYByGroup, sharedBusGroups)
+    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex, fanTracks)
     if (edge.routingClass === 'auxiliary') auxiliaryIndex++
     let points: GraphPoint[] | undefined
     let quality: GraphRouteQuality = 'preferred'

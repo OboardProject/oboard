@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/core"
@@ -25,6 +26,27 @@ func (s *Server) buildAccessSnapshot(ctx context.Context, data store.FullRouting
 		ExternalOutbounds: data.ExternalOutbounds,
 		Now:               time.Now(),
 	}), nil
+}
+
+// inboundUserCounts reports, per inbound ID, how many active users the saved
+// assignments authorize: the union of users granted through a plan and users
+// allowed directly, on the inbound itself or on any proxy path rooted at it,
+// minus denied users. It is a count only, so the topology page never needs
+// user rows or credentials to show it.
+func (s *Server) inboundUserCounts(ctx context.Context) (map[string]int, error) {
+	routing, err := s.routingSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := s.buildSubscriptionAccessSnapshot(ctx, routing.data)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(snap.InboundUsers))
+	for inboundID, users := range snap.InboundUsers {
+		counts[strconv.FormatInt(inboundID, 10)] = len(users)
+	}
+	return counts, nil
 }
 
 // Subscription publication follows saved assignments; runtime authorization

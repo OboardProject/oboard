@@ -69,6 +69,7 @@ export const PRIMARY_SUBTREE_GAP = 48
 export const ROUTING_TRACK_GAP = 14
 export const ROUTING_CHANNEL_PADDING = 24
 export const ROUTING_MIN_CHANNEL_HEIGHT = 90
+export const GRAPH_CHANNEL_MAX_TRACKS = 8
 export const GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT = 180
 export const GRAPH_LAYOUT_EXIT_NODE_HEIGHT = 130
 
@@ -133,7 +134,7 @@ export function saveGraphLayoutSignature(rootServerID: number, signature: string
 // spacing. Stored signatures then stop matching and every canvas recomputes
 // once. A purely structural fingerprint cannot notice this on its own: the
 // topology is identical, only the geometry it should produce has changed.
-export const GRAPH_LAYOUT_ALGORITHM_VERSION = 3
+export const GRAPH_LAYOUT_ALGORITHM_VERSION = 4
 
 /** Structural fingerprint of one canvas: which nodes exist and how the primary
  *  chain connects them. Coordinates deliberately do not participate, so moving
@@ -372,9 +373,12 @@ export function layoutProxyGraphTopology(
       const key = sourceKey(edge)
       if (!sourceIndex.has(key)) sourceIndex.set(key, sourceIndex.size)
     })
+    // Every edge that turns gets its own run, and a fan splits into a left and
+    // a right half; beyond a handful of runs the router compresses the pitch.
+    const fanLevels = Math.min(GRAPH_CHANNEL_MAX_TRACKS, Math.ceil(crossingEdges.length / 2))
     const channelHeight = Math.max(
       ROUTING_MIN_CHANNEL_HEIGHT,
-      channelPadding * 2 + Math.max(0, sourceIndex.size - 1) * trackGap,
+      channelPadding * 2 + Math.max(0, fanLevels - 1) * trackGap,
     )
     const currentHeight = Math.max(GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT, ...(nodesByRank.get(sourceRank) || []).map(node => node.height))
     const top = layerY[sourceRank] + currentHeight
@@ -486,15 +490,19 @@ export function minimizeGraphLayerCrossings(
   return ordered
 }
 
-// Every source on a server card owns one slot as wide as the card that hangs
-// under it. That makes the entry card above a handle, the handle itself and the
-// first hop below it share one vertical line; anything narrower forces the
-// router into a jog no layout pass can remove, because the children are wider
-// than the span the handles are squeezed into.
+// Cards above and below a server keep their own pitch (one card plus a gap),
+// but the server card itself no longer grows by a full card per source: a
+// server with many entries would otherwise become wider than the screen. Its
+// handles are spread evenly across a bounded width and the router fans edges
+// in and out of them on separate tracks.
 export const GRAPH_SERVER_SLOT_WIDTH = GRAPH_ENTRY_NODE_WIDTH + PRIMARY_SUBTREE_GAP
+export const GRAPH_SERVER_MIN_WIDTH = 280
+export const GRAPH_SERVER_MAX_WIDTH = 520
+export const GRAPH_SERVER_SOURCE_PITCH = 96
 
 export function graphServerNodeWidth(sourceCount: number) {
-  return Math.max(1, sourceCount) * GRAPH_SERVER_SLOT_WIDTH
+  const sources = Math.max(1, sourceCount)
+  return Math.min(GRAPH_SERVER_MAX_WIDTH, Math.max(GRAPH_SERVER_MIN_WIDTH, GRAPH_ENTRY_NODE_WIDTH + (sources - 1) * GRAPH_SERVER_SOURCE_PITCH))
 }
 
 /** Horizontal centre of one source slot, as a CSS percentage of card width. */
@@ -516,9 +524,13 @@ export function defaultImportedGraphPosition(index: number): GraphPosition {
   return { x: 630, y: 670 + index * 370 }
 }
 
-// An entry card sits centred on its own slot, directly above the handle it
-// feeds, so the belongs-to edge is a straight drop. `slotCount` is the number of
-// sources the card carries — entries plus path continuations — not just entries.
+// Entry cards form one row above their server, a card pitch apart and centred
+// on the server, in the same left-to-right order as its handles. With one entry
+// the belongs-to edge is a straight drop; with more, the router fans the edges
+// into the evenly spread handles without crossing. `slotCount` is the number of
+// cards in the row.
+export const GRAPH_ENTRY_ROW_OFFSET_Y = 220
+
 export function defaultEntryGraphPosition(
   serverPosition: GraphPosition,
   index: number,
@@ -527,8 +539,8 @@ export function defaultEntryGraphPosition(
 ): GraphPosition {
   const slots = Math.max(1, slotCount)
   const slot = Math.max(0, Math.min(index, slots - 1))
-  const centerX = serverPosition.x + ((slot + 0.5) / slots) * serverWidth
-  return { x: Math.round(centerX - GRAPH_ENTRY_NODE_WIDTH / 2), y: serverPosition.y - 170 }
+  const centerX = serverPosition.x + serverWidth / 2 + (slot - (slots - 1) / 2) * GRAPH_SERVER_SLOT_WIDTH
+  return { x: Math.round(centerX - GRAPH_ENTRY_NODE_WIDTH / 2), y: serverPosition.y - GRAPH_ENTRY_ROW_OFFSET_Y }
 }
 
 export type GraphEntryOrderItem = { id: number; port: number }

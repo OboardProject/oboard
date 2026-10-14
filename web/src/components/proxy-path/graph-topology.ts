@@ -154,10 +154,13 @@ function samePathIDs(left: number[], right: number[]) {
   return left.length === right.length && left.every((pathID, index) => pathID === right[index])
 }
 
-/** Labels a route once, then labels it again only where shared membership changes. */
+/** Labels a route once, then labels it again only where shared membership
+ *  changes. `pathTitle` (the full path name) becomes the tooltip; the visible
+ *  text stays short because the cards at both ends already name the servers. */
 export function graphPathEdgeLabels(
   edges: GraphPathMembershipEdge[],
   pathLabel: (pathID: number) => string,
+  pathTitle: (pathID: number) => string = pathLabel,
 ) {
   const incomingByNode = new Map<string, GraphPathMembershipEdge[]>()
   edges.forEach(edge => incomingByNode.set(edge.target, [...(incomingByNode.get(edge.target) || []), edge]))
@@ -171,11 +174,10 @@ export function graphPathEdgeLabels(
     if (continuesSameMembership) return
     if (pathIDs.length === 1) {
       const pathID = pathIDs[0]
-      const label = pathLabel(pathID)
-      labels.set(edge.id, { text: label, title: label, pathID })
+      labels.set(edge.id, { text: pathLabel(pathID), title: pathTitle(pathID), pathID })
       return
     }
-    const names = pathIDs.map(pathLabel)
+    const names = pathIDs.map(pathTitle)
     labels.set(edge.id, {
       text: `${pathIDs.length} 条路径共享`,
       title: names.join('\n'),

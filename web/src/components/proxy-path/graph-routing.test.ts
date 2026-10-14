@@ -54,7 +54,7 @@ describe('global proxy graph routing', () => {
     })
   })
 
-  it('fans sibling branches from one shared stub then left and right', () => {
+  it('fans sibling branches from adjacent ports without a shared bus', () => {
     const input = autoGraph(['root', 'b', 'c'], [
       { id: 'root-b', source: 'root', target: 'b', pathIDs: [1] },
       { id: 'root-c', source: 'root', target: 'c', pathIDs: [2] },
@@ -62,28 +62,69 @@ describe('global proxy graph routing', () => {
     const result = expectClean(input)
     const left = result.routes['root-b']
     const right = result.routes['root-c']
-    expect(left.points[0]).toEqual(right.points[0])
+    expect(left.points[0].y).toBe(right.points[0].y)
+    expect(left.points[0].x).toBeLessThan(right.points[0].x)
     expect(left.points[1].x).toBe(left.points[0].x)
     expect(left.points[1].y).toBeGreaterThan(left.points[0].y)
     expect(right.points[1].x).toBe(right.points[0].x)
     expect(right.points[1].y).toBeGreaterThan(right.points[0].y)
     expect(left.quality).toBe('preferred')
     expect(right.quality).toBe('preferred')
-    expect(routeOverlapLength(left.points, right.points)).toBeGreaterThan(0)
+    expect(routeOverlapLength(left.points, right.points)).toBe(0)
+    expect(routeCrossingCount(left.points, right.points)).toBe(0)
   })
 
-  it.each([8, 20, 47])('routes %i sibling branches from one stub without collisions or crossings', count => {
+  it.each([8, 20, 47])('routes %i sibling branches on their own ports without collisions or crossings', count => {
     const children = Array.from({ length: count }, (_, index) => `child-${String(index).padStart(2, '0')}`)
     const edges = children.map((target, index) => ({ id: `edge-${String(index).padStart(2, '0')}`, source: 'root', target, pathIDs: [index + 1] }))
     const input = autoGraph(['root', ...children], edges)
     const result = expectClean(input)
-    const origin = result.routes[edges[0].id].points[0]
-    edges.forEach(edge => {
-      expect(result.routes[edge.id].quality).toBe('preferred')
-      expect(result.routes[edge.id].points[0]).toEqual(origin)
-      expect(result.routes[edge.id].points[1].x).toBe(origin.x)
-      expect(result.routes[edge.id].points[1].y).toBeGreaterThan(origin.y)
+    const starts = edges.map(edge => result.routes[edge.id].points[0])
+    edges.forEach((edge, index) => {
+      const route = result.routes[edge.id]
+      expect(route.quality).toBe('preferred')
+      expect(route.points[0].y).toBe(starts[0].y)
+      if (index > 0) expect(route.points[0].x).toBeGreaterThan(starts[index - 1].x)
+      expect(route.points[1].x).toBe(route.points[0].x)
+      expect(route.points[1].y).toBeGreaterThan(route.points[0].y)
     })
+  })
+
+  it('drops straight into a card under its source and steps into the centre of any other', () => {
+    const input: GraphRoutingInput = {
+      nodes: [
+        { id: 'server', rect: { left: 0, top: 0, right: 400, bottom: 100 }, handles: { a: { x: 100, y: 100 }, b: { x: 300, y: 100 } } },
+        { id: 'under', rect: { left: 40, top: 240, right: 300, bottom: 340 } },
+        { id: 'aside', rect: { left: 560, top: 240, right: 820, bottom: 340 } },
+      ],
+      edges: [
+        { id: 'to-under', source: 'server', sourceHandle: 'a', target: 'under', routingClass: 'primary', pathIDs: [1] },
+        { id: 'to-aside', source: 'server', sourceHandle: 'b', target: 'aside', routingClass: 'primary', pathIDs: [2] },
+      ],
+    }
+    const result = expectClean(input)
+    expect(result.routes['to-under'].points).toEqual([{ x: 100, y: 100 }, { x: 100, y: 240 }])
+    const aside = result.routes['to-aside'].points
+    expect(aside).toHaveLength(4)
+    expect(aside[aside.length - 1]).toEqual({ x: 690, y: 240 })
+  })
+
+  it('fans many entries into a narrow server on separate, non-crossing tracks', () => {
+    const entries = Array.from({ length: 6 }, (_, index) => ({ id: `entry-${index}`, rect: { left: index * 308, top: 0, right: index * 308 + 260, bottom: 140 } }))
+    const server = { id: 'server', rect: { left: 640, top: 220, right: 1160, bottom: 320 } }
+    const input: GraphRoutingInput = {
+      nodes: [...entries, server],
+      edges: entries.map((entry, index) => ({ id: `belongs-${index}`, source: entry.id, target: 'server', routingClass: 'belongs' as const, pathIDs: [] })),
+    }
+    const result = expectClean(input)
+    const routes = entries.map((_, index) => result.routes[`belongs-${index}`].points)
+    routes.forEach(points => expect(points.length === 2 || points.length === 4).toBe(true))
+    for (let left = 0; left < routes.length; left++) {
+      for (let right = left + 1; right < routes.length; right++) {
+        expect(routeOverlapLength(routes[left], routes[right])).toBe(0)
+        expect(routeCrossingCount(routes[left], routes[right])).toBe(0)
+      }
+    }
   })
 
   it('keeps nested subtrees geometrically independent', () => {
@@ -136,7 +177,7 @@ describe('global proxy graph routing', () => {
     const side = result.routes['to-side']
     expect(side.quality).toBe('preferred')
     expect(Math.min(...side.points.map(point => point.y))).toBeGreaterThanOrEqual(40)
-    expect(side.points[0]).toEqual(result.routes['to-below'].points[0])
+    expect(side.points[0].x).toBeGreaterThan(result.routes['to-below'].points[0].x)
     expect(side.points[1].x).toBe(side.points[0].x)
     expect(side.points[1].y).toBeGreaterThan(side.points[0].y)
     expect(routeIntersectsRect(side.points, input.nodes[0].rect)).toBe(false)

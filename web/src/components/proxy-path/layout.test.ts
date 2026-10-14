@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, GRAPH_LAYOUT_ALGORITHM_VERSION, GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT, GRAPH_SERVER_SLOT_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphHopFallbackPosition, graphLayoutSignature, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, resolveGraphNodeCollisions, snapDraggedGraphPosition, sortServerEntriesForGraph } from './layout'
+import { GRAPH_CHANNEL_MAX_TRACKS, GRAPH_ENTRY_NODE_WIDTH, GRAPH_ENTRY_ROW_OFFSET_Y, GRAPH_LAYOUT_ALGORITHM_VERSION, GRAPH_SERVER_MAX_WIDTH, GRAPH_SERVER_MIN_WIDTH, ROUTING_CHANNEL_PADDING, ROUTING_TRACK_GAP, GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT, GRAPH_SERVER_SLOT_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphHopFallbackPosition, graphLayoutSignature, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, resolveGraphNodeCollisions, snapDraggedGraphPosition, sortServerEntriesForGraph } from './layout'
 
 describe('proxy graph server layout', () => {
-  it('gives every server source one card-wide slot', () => {
-    expect(graphServerNodeWidth(0)).toBe(GRAPH_SERVER_SLOT_WIDTH)
-    expect(graphServerNodeWidth(1)).toBe(GRAPH_SERVER_SLOT_WIDTH)
-    expect(graphServerNodeWidth(3)).toBe(GRAPH_SERVER_SLOT_WIDTH * 3)
-    // A slot has to hold the card that hangs under it plus the sibling gap,
-    // otherwise children cannot line up with their own handle.
-    expect(GRAPH_SERVER_SLOT_WIDTH).toBeGreaterThanOrEqual(GRAPH_ENTRY_NODE_WIDTH)
+  it('keeps server cards within a bounded width however many sources they carry', () => {
+    expect(graphServerNodeWidth(0)).toBe(GRAPH_SERVER_MIN_WIDTH)
+    expect(graphServerNodeWidth(1)).toBe(GRAPH_SERVER_MIN_WIDTH)
+    expect(graphServerNodeWidth(2)).toBeGreaterThan(graphServerNodeWidth(1))
+    expect(graphServerNodeWidth(3)).toBeGreaterThan(graphServerNodeWidth(2))
+    expect(graphServerNodeWidth(4)).toBe(GRAPH_SERVER_MAX_WIDTH)
+    expect(graphServerNodeWidth(40)).toBe(GRAPH_SERVER_MAX_WIDTH)
+    expect(GRAPH_SERVER_MIN_WIDTH).toBeGreaterThanOrEqual(GRAPH_ENTRY_NODE_WIDTH)
   })
 
-  it('centres each entry card on its own slot above the server', () => {
+  it('lays entry cards out one card pitch apart, centred above the server', () => {
     const server = { x: 500, y: 300 }
     const width = graphServerNodeWidth(3)
     const cards = [0, 1, 2].map(index => defaultEntryGraphPosition(server, index, 3, width))
@@ -20,18 +21,14 @@ describe('proxy graph server layout', () => {
     expect(centres[1]).toBe(server.x + width / 2)
     expect(centres[1] - centres[0]).toBe(GRAPH_SERVER_SLOT_WIDTH)
     expect(centres[2] - centres[1]).toBe(GRAPH_SERVER_SLOT_WIDTH)
-    cards.forEach(card => expect(card.y).toBe(130))
+    cards.forEach(card => expect(card.y).toBe(server.y - GRAPH_ENTRY_ROW_OFFSET_Y))
   })
 
-  it('puts each entry card centre exactly over its own handle', () => {
+  it('puts a lone entry card straight over its handle', () => {
     const server = { x: 500, y: 300 }
-    const count = 4
-    const width = graphServerNodeWidth(count)
-    for (let index = 0; index < count; index++) {
-      const handleX = server.x + width * (Number.parseFloat(graphEntryHandleLeft(index, count)) / 100)
-      const cardCentre = defaultEntryGraphPosition(server, index, count, width).x + GRAPH_ENTRY_NODE_WIDTH / 2
-      expect(cardCentre).toBe(handleX)
-    }
+    const width = graphServerNodeWidth(1)
+    const handleX = server.x + width * (Number.parseFloat(graphEntryHandleLeft(0, 1)) / 100)
+    expect(defaultEntryGraphPosition(server, 0, 1, width).x + GRAPH_ENTRY_NODE_WIDTH / 2).toBe(handleX)
   })
 
   it('spaces independent entry handles on slot centres', () => {
@@ -83,7 +80,9 @@ describe('proxy graph server layout', () => {
     const childY = children.map(child => result.positions[child.id].y)
     expect(new Set(childY).size).toBe(1)
     expect(result.bands['child-19'].left).toBeGreaterThan(result.bands['child-0'].right)
-    expect(result.layerChannels[0].bottom - result.layerChannels[0].top).toBe(ROUTING_MIN_CHANNEL_HEIGHT)
+    const channelHeight = result.layerChannels[0].bottom - result.layerChannels[0].top
+    expect(channelHeight).toBeGreaterThanOrEqual(ROUTING_MIN_CHANNEL_HEIGHT)
+    expect(channelHeight).toBeLessThanOrEqual(ROUTING_CHANNEL_PADDING * 2 + (GRAPH_CHANNEL_MAX_TRACKS - 1) * ROUTING_TRACK_GAP)
   })
 
   it('uses longest-path ranks and subtree bands deterministically', () => {

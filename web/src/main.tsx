@@ -14757,6 +14757,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             <div className="inbound-editor-grid">
               <FormField label="服务器" required>
                 <Select value={draft.server_id} onChange={e => changeServer(Number(e.target.value))}><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>
+                <ServerRelatedJumps serverID={Number(draft.server_id || 0)} />
               </FormField>
               <FormField label="入口名称" required hint="用于拓扑图、订阅和任务识别；同协议多个入口会自动加序号。">
                 <input value={draft.name} onChange={e => update({ name: e.target.value })} enterKeyHint="next" />
@@ -15283,9 +15284,18 @@ function planGrantedUserIDsForEntry(data: any, entry: Inbound): Set<number> {
   return ids
 }
 
+// Effective user count: users granted through a plan plus users assigned to
+// the entry directly (on the inbound or any proxy path rooted at it), as one
+// union. Pages without user rows (the topology canvas) receive the count from
+// Controller instead of computing it.
+function inboundUserCount(data: any, entry: Inbound) {
+  const counts = data.inbound_user_counts as Record<string, number> | undefined
+  if (counts) return Number(counts[String(entry.id)] || 0)
+  return planGrantedUserIDsForEntry(data, entry).size
+}
+
 function inboundAccessSummary(data: any, entry: Inbound) {
-  const count = planGrantedUserIDsForEntry(data, entry).size
-  return `用户数：${count}`
+  return `用户数：${inboundUserCount(data, entry)}`
 }
 
 function latestInboundProbeSummary(data: any, inboundID: number) {
@@ -15923,6 +15933,13 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const path = pathByID.get(pathID)
     return path?.name || `路径 ${pathID}`
   }
+  // A path line already runs between two named cards, so its label only needs
+  // to say which entry it carries; the full path name stays in the tooltip.
+  const pathEdgeShortName = (pathID: number) => {
+    const path = pathByID.get(pathID)
+    const inbound = path ? inboundByID.get(path.inbound_id) : undefined
+    return inbound?.name || pathDisplayName(pathID)
+  }
   const pathIDsByEntry = new Map<number, number[]>()
   visiblePaths.forEach(path => pathIDsByEntry.set(path.inbound_id, mergeGraphPathIDs(pathIDsByEntry.get(path.inbound_id), path.id)))
   const pathIDsByServer = new Map<number, number[]>()
@@ -16062,7 +16079,6 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       data: {
         kind: 'direct',
         title: '所属主机',
-        pathLabel: '所属主机',
         routingClass: 'belongs',
         auxiliary: true,
       } satisfies GraphTransportEdgeData,
@@ -16441,6 +16457,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         ? [{ id: edge.id, source: edge.source, target: edge.target, pathIDs: edgeData.pathIDs }]
         : []
     }),
+    pathEdgeShortName,
     pathDisplayName,
   )
   edges.forEach(edge => {

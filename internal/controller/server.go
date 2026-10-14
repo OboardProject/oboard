@@ -2658,6 +2658,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = addServerCreationDefaults()
 		}
+		if err == nil {
+			var counts map[string]int
+			counts, err = s.inboundUserCounts(ctx)
+			if err == nil {
+				out["inbound_user_counts"] = counts
+			}
+		}
 	case "inbounds":
 		if err = require(model.RoleOperator); err == nil {
 			err = addInbounds()
