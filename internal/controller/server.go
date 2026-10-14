@@ -5534,6 +5534,39 @@ func sanitizeTaskForRole(task model.AgentTask, role model.Role) model.AgentTask 
 	return task
 }
 
+// restoreRedactedTunnelSecrets lets a client send back the redacted tunnel it
+// read: every "<redacted>" value whose key path exists in the stored config is
+// replaced by the stored secret, so an update never persists the placeholder.
+func restoreRedactedTunnelSecrets(previousRaw, nextRaw string) string {
+	var previous, next map[string]any
+	if json.Unmarshal([]byte(firstNonEmptyString(previousRaw, "{}")), &previous) != nil || json.Unmarshal([]byte(nextRaw), &next) != nil {
+		return nextRaw
+	}
+	restoreRedactedValues(previous, next)
+	b, err := json.Marshal(next)
+	if err != nil {
+		return nextRaw
+	}
+	return string(b)
+}
+
+func restoreRedactedValues(previous, next map[string]any) {
+	for key, value := range next {
+		switch typed := value.(type) {
+		case string:
+			if typed == "<redacted>" {
+				if stored, ok := previous[key].(string); ok {
+					next[key] = stored
+				}
+			}
+		case map[string]any:
+			if stored, ok := previous[key].(map[string]any); ok {
+				restoreRedactedValues(stored, typed)
+			}
+		}
+	}
+}
+
 func scrubManagedTunnelSecretsJSON(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "{}" {
@@ -12781,6 +12814,12 @@ func (s *Server) tunnels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v.ID = id
+		previous, err := s.store.GetTunnel(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		v.ConfigJSON = restoreRedactedTunnelSecrets(previous.ConfigJSON, v.ConfigJSON)
 		normalizeTunnel(&v)
 		if err := validateTunnel(v); err != nil {
 			fail(w, err, 400)
@@ -12788,11 +12827,6 @@ func (s *Server) tunnels(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.store.ValidateServerExists(r.Context(), v.SourceServerID, v.TargetServerID); err != nil {
 			fail(w, err, 400)
-			return
-		}
-		previous, err := s.store.GetTunnel(r.Context(), id)
-		if err != nil {
-			fail(w, err, 404)
 			return
 		}
 		if err := s.store.UpdateTunnel(r.Context(), &v); err != nil {

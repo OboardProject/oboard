@@ -57,7 +57,7 @@ import type {
 } from './components/proxy-path/types'
 import { TransportDialog } from './components/proxy-path/TransportDialog'
 import { FamilySplitTemplateEditor } from './components/proxy-path/FamilySplitTemplateEditor'
-import { TrafficForwardingDialog, type TrafficForwardDraft } from './components/proxy-path/TrafficForwardingDialog'
+import { TrafficForwardingPage } from './components/traffic-forwarding/TrafficForwardingPage'
 import {
   GRAPH_ENTRY_NODE_WIDTH,
   GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT,
@@ -3119,7 +3119,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
   if (tab === 'mtu') return <MTU data={data} client={client} load={load} notify={notify} />
-  if (tab === 'traffic-forwarding') return <TrafficForwardingPage data={data} client={client} load={load} />
+  if (tab === 'traffic-forwarding') return <TrafficForwardingPage data={data} client={client} load={load} notify={notify} localizeError={localizeErrorMessage} />
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
   if (tab === 'tasks') return <Tasks tasks={data.agent_tasks} servers={data.servers} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} load={load} notify={notify} />
@@ -9934,7 +9934,6 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
 type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; family_split_template_id: number; family_dns_strategy: FamilyDNSStrategy; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean; lock_host?: boolean }
-type TunnelDraft = { name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
 type ProxyInboundFocusRequest = { inboundID: number; requestID: number }
 type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
@@ -12990,25 +12989,6 @@ function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
   return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, dns_resolver: '', match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, family_split_template_id: 0, family_dns_strategy: 'auto', proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true, lock_host: false }
 }
 
-function defaultTunnelDraft(servers: Server[], selected?: Server): TunnelDraft {
-  const source = selected || servers[0]
-  const target = servers.find(server => server.id !== source?.id)
-  return {
-    name: `${source?.name || 'source'}-to-${target?.name || 'target'}-wireguard`,
-    source_server_id: source?.id || 0,
-    target_server_id: target?.id || 0,
-    type: 'wireguard',
-    local_address: '',
-    peer_address: '',
-    listen_port: 0,
-    target_endpoint: '',
-    target_port: 0,
-    priority: 100,
-    config_json: JSON.stringify({ private_key: '', peer_public_key: '', allowed_ips: [], persistent_keepalive: 25 }, null, 2),
-    enabled: true,
-  }
-}
-
 function routingDraftMatch(rule: RoutingRule): { match_kind: RoutingMatchKind; match_value: string } {
   const match = parseConfig(rule.match_json) || {}
   const key = Object.keys(match)[0] as RoutingMatchKind | undefined
@@ -14026,64 +14006,6 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
         </button>
       </div>
     </footer>
-  </MotionDialogPanel>
-}
-
-function TunnelDraftDialog({ draft, setDraft, servers, onCancel, onSubmit }: { draft: TunnelDraft; setDraft: React.Dispatch<React.SetStateAction<TunnelDraft | null>>; servers: Server[]; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  const [saving, setSaving] = useState(false)
-  const update = (patch: Partial<TunnelDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
-  const cfg = parseConfig(draft.config_json) || {}
-  const updateTunnelConfig = (patch: Record<string, any>) => update({ config_json: JSON.stringify({ ...cfg, ...patch }, null, 2) })
-  const setSource = (sourceServerID: number) => update({
-    source_server_id: sourceServerID,
-    target_server_id: draft.target_server_id === sourceServerID ? (servers.find(server => server.id !== sourceServerID)?.id || 0) : draft.target_server_id,
-  })
-  const keepalive = Number(cfg.persistent_keepalive || 0)
-  const privateKey = String(cfg.private_key || '')
-  const peerPublicKey = String(cfg.peer_public_key || '')
-  const portValid = (value: number) => value === 0 || (Number.isInteger(value) && value >= 1 && value <= 65535)
-  const valid = Boolean(
-    draft.name.trim()
-    && draft.source_server_id
-    && draft.target_server_id
-    && draft.source_server_id !== draft.target_server_id
-    && privateKey.trim()
-    && peerPublicKey.trim()
-    && portValid(draft.listen_port)
-    && portValid(draft.target_port)
-    && Number.isInteger(keepalive)
-    && keepalive >= 0
-    && keepalive <= 65535
-  )
-  const submit = async () => {
-    if (!valid || saving) return
-    setSaving(true)
-    try { await onSubmit() } finally { setSaving(false) }
-  }
-  return <MotionDialogPanel onCancel={() => { if (!saving) onCancel() }} className="graph-form-dialog" aria-labelledby="tunnel-dialog-title">
-      <header className="dialog-head">
-        <div><h2 id="tunnel-dialog-title">创建服务器隧道</h2><p className="muted">建立独立 WireGuard 链路；创建后可在隧道页面继续管理。</p></div>
-        <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭服务器隧道" title="关闭"><XIcon /></button>
-      </header>
-      <div className="dialog-body">
-        <div className="form graph-dialog-form">
-          <FormField label="名称" required><input required value={draft.name} onChange={event => update({ name: event.target.value })} aria-label="隧道名称" /></FormField>
-          <FormField label="源服务器" required><Select required value={draft.source_server_id} onChange={event => setSource(Number(event.target.value))} aria-label="隧道源服务器">{servers.map(server => <option value={server.id} key={server.id}>{server.name}</option>)}</Select></FormField>
-          <FormField label="目标服务器" required><Select required value={draft.target_server_id} onChange={event => update({ target_server_id: Number(event.target.value) })} aria-label="隧道目标服务器">{servers.filter(server => server.id !== draft.source_server_id).map(server => <option value={server.id} key={server.id}>{server.name}</option>)}</Select></FormField>
-          <FormField label="隧道类型"><Select variant="segmented" value={draft.type} onChange={() => undefined} aria-label="隧道类型"><option value="wireguard">WireGuard</option></Select></FormField>
-          <FormField label="本机私钥" required hint="仅在创建请求中提交，页面不会回显已保存的私钥。"><input required type="password" autoComplete="off" value={privateKey} onChange={event => updateTunnelConfig({ private_key: event.target.value })} aria-label="WireGuard 本机私钥" /></FormField>
-          <FormField label="对端公钥" required><input required type="password" autoComplete="off" value={peerPublicKey} onChange={event => updateTunnelConfig({ peer_public_key: event.target.value })} aria-label="WireGuard 对端公钥" /></FormField>
-          <FormField label="允许 IP" hint="多个 CIDR 用逗号或换行分隔。"><input value={Array.isArray(cfg.allowed_ips) ? cfg.allowed_ips.join(', ') : ''} onChange={event => updateTunnelConfig({ allowed_ips: event.target.value.split(/[\n,]/).map(value => value.trim()).filter(Boolean) })} aria-label="WireGuard 允许 IP" /></FormField>
-          <FormField label="保活间隔（秒）" hint="0 表示关闭保活。"><input type="number" min={0} max={65535} step={1} value={keepalive} onChange={event => updateTunnelConfig({ persistent_keepalive: Number(event.target.value) })} aria-label="WireGuard 保活间隔" /></FormField>
-          <FormField label="本地地址" hint="可选 CIDR，例如 10.10.0.1/30。"><input value={draft.local_address} onChange={event => update({ local_address: event.target.value })} aria-label="隧道本地地址" /></FormField>
-          <FormField label="对端地址" hint="可选 CIDR，例如 10.10.0.2/30。"><input value={draft.peer_address} onChange={event => update({ peer_address: event.target.value })} aria-label="隧道对端地址" /></FormField>
-          <FormField label="监听端口" hint="0 表示由系统决定。"><input type="number" min={0} max={65535} value={draft.listen_port || ''} placeholder="自动" onChange={event => update({ listen_port: Number(event.target.value) })} aria-label="隧道监听端口" /></FormField>
-          <FormField label="目标端点" hint="可选主机或 IP。"><input value={draft.target_endpoint} onChange={event => update({ target_endpoint: event.target.value })} aria-label="隧道目标端点" /></FormField>
-          <FormField label="目标端口" hint="0 表示由系统决定。"><input type="number" min={0} max={65535} value={draft.target_port || ''} placeholder="自动" onChange={event => update({ target_port: Number(event.target.value) })} aria-label="隧道目标端口" /></FormField>
-          <FormField label="优先级"><input type="number" min={1} step={1} value={draft.priority} onChange={event => update({ priority: Number(event.target.value) })} aria-label="隧道优先级" /></FormField>
-        </div>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={() => void submit()} disabled={!valid || saving}>{saving ? '创建中…' : '创建并启用'}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -19181,104 +19103,6 @@ function MTU({ data, client, load, notify }: any) {
     notify?.(`已创建 ${name} 的 MTU 检测，请在任务中心查看结果`, 'success')
   }
   return <Panel title="MTU 检测"><p className="muted">MTU 检测会交叉校验出口网卡 MTU、系统路由 MTU、tracepath PMTU、DF ping 二分探测和 TCP 可达性。仅检测模式只记录建议值；应用模式会要求 Agent 修改网卡 MTU，通常需要 root/CAP_NET_ADMIN，容器环境建议优先使用仅检测。</p><div className="form signal-resource-form"><FormField label="服务器"><Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField><Select variant="segmented" value={f.mode} onChange={e => setF({ ...f, mode: e.target.value })}>{mtuModes.filter(x => x !== 'disabled').map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select><FormField label="目标主机，空为默认"><input value={f.target_host} onChange={e => setF({ ...f, target_host: e.target.value })} placeholder="目标主机，空为默认" /></FormField><FormField label="目标端口，空为默认"><input type="number" value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口，空为默认" /></FormField><FormField label="网卡名，可选"><input value={f.interface_name} onChange={e => setF({ ...f, interface_name: e.target.value })} placeholder="网卡名，可选" /></FormField><FormField label="额外开销字节"><input type="number" value={f.overhead_bytes} onChange={e => setF({ ...f, overhead_bytes: Number(e.target.value) })} placeholder="额外开销字节" /></FormField><FormField label="目标 MTU，0 为自动"><input type="number" value={f.desired_mtu} onChange={e => setF({ ...f, desired_mtu: Number(e.target.value) })} placeholder="目标 MTU，0 为自动" /></FormField><FormField label="采样次数"><input type="number" value={f.sample_count} onChange={e => setF({ ...f, sample_count: Number(e.target.value) })} placeholder="采样次数" /></FormField><FormField label="超时毫秒"><input type="number" value={f.timeout_ms} onChange={e => setF({ ...f, timeout_ms: Number(e.target.value) })} placeholder="超时毫秒" /></FormField><button onClick={submit}>检测/应用</button></div><Table rows={data.mtu_detections || []} /></Panel>
-}
-
-function TrafficForwardingPage({ data, client, load }: any) {
-  const dialogs = useDialogs()
-  const servers = (data.servers || []) as Server[]
-  const [view, setView] = useState<'forwards' | 'tunnels'>('forwards')
-  const [tunnelDraft, setTunnelDraft] = useState<TunnelDraft | null>(null)
-  const tunnels = (data.tunnels || []) as Tunnel[]
-  const serverName = (id: number) => servers.find(server => server.id === id)?.name || `服务器 ${id}`
-
-  const saveForward = async (draft: TrafficForwardDraft, id?: number) => {
-    try {
-      await client.request(id ? `/port-forwards/${id}` : '/port-forwards', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(draft) })
-    } catch (error: any) {
-      throw new Error(localizeErrorMessage(error?.message || error))
-    }
-    await load()
-  }
-  const deleteForward = (forward: PortForward) => dialogs.confirm({
-    title: '删除流量转发',
-    message: '确认删除「' + forward.name + '」？相关监听会从入口服务器移除，历史检查结果也会一并删除。',
-    tone: 'danger',
-    confirmText: '删除转发',
-    pendingText: '删除中…',
-    onConfirm: async () => {
-      await client.request('/port-forwards/' + forward.id, { method: 'DELETE' })
-      await load()
-    },
-  })
-  const probeForward = async (forward: PortForward) => {
-    try {
-      await client.request(`/port-forwards/${forward.id}/probe`, { method: 'POST', body: '{}' })
-    } catch (error: any) {
-      throw new Error(localizeErrorMessage(error?.message || error))
-    }
-  }
-  const openTunnelCreate = () => {
-    if (servers.length < 2) {
-      void dialogs.alert({ title: '无法创建服务器隧道', message: '至少需要两台服务器。' })
-      return
-    }
-    setTunnelDraft(defaultTunnelDraft(servers))
-  }
-  const submitTunnel = async () => {
-    if (!tunnelDraft) return
-    try {
-      await client.request('/tunnels', { method: 'POST', body: JSON.stringify(tunnelDraft) })
-      setTunnelDraft(null)
-      await load()
-    } catch (error: any) {
-      await dialogs.alert({ title: '创建服务器隧道失败', message: localizeErrorMessage(error?.message || error) })
-    }
-  }
-  const deleteTunnel = (tunnel: Tunnel) => dialogs.confirm({
-    title: '删除服务器隧道',
-    message: '确认删除「' + tunnel.name + '」？依赖它的转发路径需要重新选择传输方式。',
-    tone: 'danger',
-    confirmText: '删除隧道',
-    pendingText: '删除中…',
-    onConfirm: async () => {
-      await client.request('/tunnels/' + tunnel.id, { method: 'DELETE' })
-      await load()
-    },
-  })
-  const tunnelRows = tunnels.map(tunnel => ({
-    name: tunnel.name,
-    route: `${serverName(tunnel.source_server_id)} → ${serverName(tunnel.target_server_id)}`,
-    type: tunnel.type === 'wireguard' ? 'WireGuard' : 'SSH',
-    listen_port: tunnel.listen_port || '自动',
-    target_port: tunnel.target_port || '自动',
-    priority: tunnel.priority,
-    enabled: tunnel.enabled ? '已启用' : '已停用',
-    _raw: tunnel,
-  }))
-
-  return <div className="traffic-forwarding-page">
-    <div className="traffic-forwarding-page-switch">
-      <Select variant="segmented" value={view} onChange={event => setView(event.target.value as 'forwards' | 'tunnels')} aria-label="流量转发类型">
-        <option value="forwards">端口转发 · {(data.port_forwards || []).length}</option>
-        <option value="tunnels">服务器隧道 · {tunnels.length}</option>
-      </Select>
-    </div>
-    {view === 'forwards'
-      ? <TrafficForwardingDialog
-        embedded
-        servers={servers}
-        forwards={(data.port_forwards || []) as PortForward[]}
-        probes={(data.port_forward_probes || []) as PortForwardProbeResult[]}
-        onSave={saveForward}
-        onDelete={deleteForward}
-        onProbe={probeForward}
-      />
-      : <Panel title="服务器隧道" actions={<button type="button" onClick={openTunnelCreate}><Plus size={15} />创建隧道</button>}>
-        <p className="muted">独立隧道使用 WireGuard。代理路径中的 SSH 由系统自动创建专用账户和密钥。</p>
-        <Table rows={tunnelRows} actions={(row: any) => <button type="button" className="ghost danger-text" onClick={() => void deleteTunnel(row._raw)}>删除</button>} />
-      </Panel>}
-    <AnimatePresence>{tunnelDraft && <TunnelDraftDialog draft={tunnelDraft} setDraft={setTunnelDraft} servers={servers} onCancel={() => setTunnelDraft(null)} onSubmit={submitTunnel} />}</AnimatePresence>
-  </div>
 }
 
 const subscriptionClientIcons: Record<string, string> = {

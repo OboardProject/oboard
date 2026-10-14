@@ -1224,6 +1224,7 @@ func (s *Server) tunnelAutomationCandidate(ctx context.Context, principal applic
 		}
 		merged := mergeTunnelPatch(*current, patch, fields)
 		merged.ID = current.ID
+		merged.ConfigJSON = restoreRedactedTunnelSecrets(current.ConfigJSON, merged.ConfigJSON)
 		changed := automationChangedFields(fields)
 		if err := s.validateTunnelAutomationCandidate(ctx, principal, merged); err != nil {
 			return model.Tunnel{}, nil, err

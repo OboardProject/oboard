@@ -627,14 +627,6 @@ button.user-table-compact-button,
 .server-management-toolbar { gap: 8px 12px; }
 .server-management-toolbar .server-list-toolbar { flex: 1 1 340px; }
 
-/* ---------- Traffic forwarding ---------- */
-
-.traffic-forwarding-toolbar { flex-wrap: wrap; gap: 10px 16px; }
-.traffic-forwarding-toolbar h3 { font-size: 15px; font-weight: 600; }
-.traffic-forwarding-toolbar p { font-size: 12px; }
-.traffic-forwarding-toolbar-actions { flex: 1 1 auto; justify-content: flex-end; flex-wrap: nowrap; }
-.traffic-forwarding-toolbar-actions > button { flex: none; white-space: nowrap; }
-
 /* ---------- Network probe ---------- */
 
 .return-latency-search {
