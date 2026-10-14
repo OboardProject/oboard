@@ -8504,6 +8504,34 @@ body:has(.controller-update-immersive-layer) .top-toast-viewport {
   font-size: 13px;
   font-weight: 600;
 }
+.notification-event-chip.notification-event-more {
+  min-height: 0;
+  color: var(--text-strong);
+  background: var(--surface-solid);
+  line-height: inherit;
+  cursor: pointer;
+}
+.notification-event-chip.notification-event-more:where(:hover:not(:disabled)),
+.notification-event-chip.notification-event-more[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.notification-event-popover {
+  position: fixed;
+  z-index: var(--z-popover);
+  display: grid;
+  gap: 8px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-lg);
+}
+.notification-event-popover.is-above { transform: translateY(-100%); }
+.notification-event-popover > strong { font-size: 12px; font-weight: 600; color: var(--muted); }
 .notification-channel-actions {
   display: inline-flex;
   flex-wrap: wrap;

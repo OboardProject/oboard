@@ -19945,6 +19945,80 @@ function notificationPayloadFromDraft(draft: NotificationDraft) {
   }
 }
 
+const notificationEventPreviewCount = 4
+
+function NotificationEventSummary({ labels }: { labels: string[] }) {
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState({ top: 0, left: 0, above: false })
+  const groupRef = useRef<HTMLDivElement>(null)
+  const hideTimer = useRef(0)
+  const popoverID = useId()
+  const hidden = labels.length - notificationEventPreviewCount
+
+  useEffect(() => () => window.clearTimeout(hideTimer.current), [])
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  if (!labels.length) return <div className="notification-event-chips"><span className="muted">未选择事件</span></div>
+  if (hidden <= 0) return <div className="notification-event-chips">{labels.map(label => <span key={label} className="notification-event-chip">{label}</span>)}</div>
+
+  const show = () => {
+    const rect = groupRef.current?.getBoundingClientRect()
+    if (!rect) return
+    window.clearTimeout(hideTimer.current)
+    const width = Math.min(360, window.innerWidth - 16)
+    const below = window.innerHeight - rect.bottom > 220
+    setPosition({
+      top: below ? rect.bottom + 6 : rect.top - 6,
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+      above: !below,
+    })
+    setOpen(true)
+  }
+  const scheduleHide = () => {
+    window.clearTimeout(hideTimer.current)
+    hideTimer.current = window.setTimeout(() => setOpen(false), 120)
+  }
+  return (
+    <div ref={groupRef} className="notification-event-chips" onMouseEnter={show} onMouseLeave={scheduleHide}>
+      {labels.slice(0, notificationEventPreviewCount).map(label => <span key={label} className="notification-event-chip">{label}</span>)}
+      <button
+        type="button"
+        className="notification-event-chip notification-event-more"
+        aria-label={`查看全部 ${labels.length} 项提醒`}
+        aria-expanded={open}
+        aria-describedby={open ? popoverID : undefined}
+        onFocus={show}
+        onBlur={scheduleHide}
+        onClick={() => (open ? setOpen(false) : show())}
+        onKeyDown={event => { if (event.key === 'Escape') setOpen(false) }}
+      >+{hidden}</button>
+      {open && createPopoverPortal(
+        <div
+          id={popoverID}
+          role="tooltip"
+          className={`notification-event-popover${position.above ? ' is-above' : ''}`}
+          style={{ top: position.top, left: position.left }}
+          onMouseEnter={show}
+          onMouseLeave={scheduleHide}
+        >
+          <strong>已选择 {labels.length} 项提醒</strong>
+          <div className="notification-event-chips">{labels.map(label => <span key={label} className="notification-event-chip">{label}</span>)}</div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 function Notifications({ data, client, load, notify, sessionUser }: any) {
   const dialogs = useDialogs()
   const channels: NotificationChannel[] = data.notification_channels || []
@@ -20185,11 +20259,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
                   <span className={`notification-type-pill ${channel.type}`}>{channel.type === 'bark' ? 'Bark' : channel.type === 'test' ? '测试' : 'Telegram'}</span>
                   <span className={`deploy-status-pill ${enabled ? 'ok' : 'warn'}`}>{enabled ? '已启用' : '已停用'}</span>
                 </div>
-                <div className="notification-event-chips">
-                  {events.length ? events.map(event => (
-                    <span key={event} className="notification-event-chip">{eventOptions.find(x => x.value === event)?.label || event}</span>
-                  )) : <span className="muted">未选择事件</span>}
-                </div>
+                <NotificationEventSummary labels={events.map(event => eventOptions.find(x => x.value === event)?.label || event)} />
                 {events.some(event => userScopedNotificationEvents.has(event)) && <small className="notification-target-summary">关注用户：{isAdmin ? (channel.user_ids || []).map(id => users.find(user => user.id === id)?.nickname || users.find(user => user.id === id)?.username || `#${id}`).join('、') || '本人' : '本人'}</small>}
                 {channel.type === 'telegram' && <small className="notification-target-summary">Telegram：{channelBindings.length ? `已绑定 ${channelBindings.length} 个会话` : '尚未绑定账号'}</small>}
               </div>
