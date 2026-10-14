@@ -6395,30 +6395,37 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
   const auditWindowHours = Number(auditOverview.window_hours || 24)
   const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
 
-  const groupedTasks = groupTasksForTimeline(data.agent_tasks || [], labelValue)
-  const recentTasks = groupedTasks.slice(0, 6).map((g: TaskGroup) => {
-    const summaryStatus = serverTaskStatusSummary(g.tasks)
-    const status = deploymentStatusFromSummary(summaryStatus)
-    const isSuccess = status === 'succeeded'
-    const isRunning = status === 'running' || status === 'pending'
-    const createdAt = String(g.tasks.map((t: any) => t.created_at).filter(Boolean).sort()[0] || '')
-    return {
-      id: g.id,
-      title: g.title,
-      subtitle: g.kind === 'single'
-        ? (g.tasks[0]?.server_id ? taskServerLabel(data, g.tasks[0].server_id) : 'Agent 任务')
-        : `共 ${summaryStatus.total} 个任务`,
-      status: isRunning ? 'running' : isSuccess ? 'success' : 'failed',
-      createdAt,
+  const pct = (used: unknown, total: unknown) => {
+    const t = Number(total)
+    return t > 0 ? (Math.max(0, Number(used) || 0) / t) * 100 : 0
+  }
+  const attention: { id: number; name: string; region: string; reasons: { text: string; tone: 'danger' | 'warning' }[] }[] = []
+  for (const server of servers as Server[]) {
+    const reasons: { text: string; tone: 'danger' | 'warning' }[] = []
+    if (server.status !== 'online') reasons.push({ text: '离线', tone: 'danger' })
+    const expiry = server.expires_at ? serverExpiryStatus(server) : null
+    if (expiry && (expiry.tone === 'danger' || expiry.tone === 'warning')) reasons.push({ text: expiry.label, tone: expiry.tone })
+    const cpu = Number(server.cpu_usage_percent) || 0
+    const memory = pct(server.memory_used_bytes, server.memory_total_bytes)
+    const disk = pct(server.disk_bytes, server.disk_total_bytes)
+    if (server.status === 'online') {
+      if (cpu >= 90) reasons.push({ text: `CPU ${cpu.toFixed(0)}%`, tone: 'warning' })
+      if (memory >= 90) reasons.push({ text: `内存 ${memory.toFixed(0)}%`, tone: 'warning' })
+      if (disk >= 90) reasons.push({ text: `磁盘 ${disk.toFixed(0)}%`, tone: 'warning' })
     }
-  })
-
-  const quickActions = [
-    { key: 'servers', title: '管理服务器', desc: '查看状态、安装 Agent 与端口策略', icon: <ServerIcon size={18} /> },
-    { key: 'proxy-paths', title: '代理拓扑', desc: '编排入口、跳点与第三方出口', icon: <Workflow size={18} /> },
-    { key: 'users', title: '用户与分组', desc: '用户与分组', icon: <UsersIcon size={18} /> },
-    { key: 'tasks', title: '任务记录', desc: '查看配置下发与执行回执', icon: <CheckSquare size={18} /> },
-  ]
+    const used = dashboardServerTrafficBytes([server])
+    if (server.traffic_limit_bytes > 0 && used / server.traffic_limit_bytes >= 0.9) {
+      reasons.push({ text: `流量 ${Math.min(999, Math.round((used / server.traffic_limit_bytes) * 100))}%`, tone: used >= server.traffic_limit_bytes ? 'danger' : 'warning' })
+    }
+    if (reasons.length) attention.push({ id: server.id, name: server.name, region: server.region_code || server.detected_region_code, reasons })
+  }
+  attention.sort((x, y) => Number(y.reasons.some(r => r.tone === 'danger')) - Number(x.reasons.some(r => r.tone === 'danger')))
+  const trafficRank = (servers as Server[])
+    .map(server => ({ id: server.id, name: server.name, region: server.region_code || server.detected_region_code, bytes: dashboardServerTrafficBytes([server]), limit: Number(server.traffic_limit_bytes) || 0 }))
+    .filter(item => item.bytes > 0)
+    .sort((x, y) => y.bytes - x.bytes)
+    .slice(0, 6)
+  const rankMax = trafficRank[0]?.bytes || 1
 
   return (
     <div className="dashboard-page">
@@ -6430,7 +6437,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
             <span className="dash-kicker-date">{formatDashDate()}</span>
           </div>
           <h1>欢迎回来，{displayName}</h1>
-          <p>以下是您的服务器、任务和近期活动概览。在几秒内部署配置或管理您的服务器集群。</p>
+          <p>这里汇总服务器状态、需要关注的事项和流量使用情况。</p>
         </div>
         <div className="dash-welcome-actions">
           <button type="button" className="dash-manage-btn" onClick={() => goTab('servers')}>
@@ -6480,51 +6487,58 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
       )}
 
       <section className="dash-lower">
-        <div>
+        <div className="dash-panel">
           <div className="dash-section-head">
             <div>
-              <h2>快捷操作</h2>
-              <p>直达最常用的功能</p>
+              <h2>需要关注</h2>
+              <p>离线、即将到期以及资源或流量吃紧的服务器</p>
             </div>
+            {attention.length > 0 && <span className="dash-count">{attention.length}</span>}
           </div>
-          <div className="quick-grid">
-            {quickActions.map(item => (
-              <button key={item.key} type="button" className={`quick-card quick-card-${item.key}`} onClick={() => goTab(item.key)}>
-                <div className={`quick-card-icon icon-${item.key}`}>{item.icon}</div>
-                <strong>{item.title}</strong>
-                <span>{item.desc}</span>
-                <em>打开 →</em>
-              </button>
-            ))}
-          </div>
+          {attention.length === 0 ? (
+            <div className="dash-empty">{loading && !servers.length ? '正在加载…' : '一切正常，暂时没有需要处理的服务器'}</div>
+          ) : (
+            <ul className="dash-list">
+              {attention.slice(0, 8).map(item => (
+                <li key={item.id}>
+                  <button type="button" className="dash-list-row" onClick={() => goTab('servers')}>
+                    <RegionFlag code={item.region} size={18} />
+                    <strong>{item.name}</strong>
+                    <span className="dash-tags">
+                      {item.reasons.map(reason => <em key={reason.text} className={`dash-tag is-${reason.tone}`}>{reason.text}</em>)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {attention.length > 8 && <button type="button" className="dash-more" onClick={() => goTab('servers')}>还有 {attention.length - 8} 台，查看全部 →</button>}
         </div>
 
-        <div>
+        <div className="dash-panel">
           <div className="dash-section-head">
             <div>
-              <h2>最近活动</h2>
-              <p>您账户上的最新事件</p>
+              <h2>流量排行</h2>
+              <p>当前账期累计流量最高的服务器</p>
             </div>
-            <button type="button" className="linkish" onClick={() => goTab('tasks')}>查看全部 →</button>
+            <span className="dash-total">{totalTraffic}</span>
           </div>
-          <div className="activity-list">
-            {recentTasks.length === 0 ? (
-              <div className="activity-empty">{loading ? '正在加载活动…' : '暂无最近活动'}</div>
-            ) : (
-              recentTasks.map((tsk: any) => (
-                <div className="activity-item" key={tsk.id}>
-                  <div className={`activity-icon is-${tsk.status}`}>
-                    {tsk.status === 'running' ? <RefreshCw size={14} className="spin" /> : tsk.status === 'succeeded' || tsk.status === 'success' ? <Check size={14} /> : <Info size={14} />}
-                  </div>
-                  <div>
-                    <strong>{tsk.title}</strong>
-                    <span>{tsk.subtitle}</span>
-                  </div>
-                  <time>{formatTableTime(tsk.createdAt)}</time>
-                </div>
-              ))
-            )}
-          </div>
+          {trafficRank.length === 0 ? (
+            <div className="dash-empty">{loading && !servers.length ? '正在加载…' : '暂无流量数据'}</div>
+          ) : (
+            <ul className="dash-list">
+              {trafficRank.map(item => (
+                <li key={item.id}>
+                  <button type="button" className="dash-list-row dash-rank-row" onClick={() => goTab('servers')}>
+                    <RegionFlag code={item.region} size={18} />
+                    <strong>{item.name}</strong>
+                    <span className="dash-rank-value">{formatBytes(item.bytes)}{item.limit > 0 ? <small> / {formatBytes(item.limit)}</small> : null}</span>
+                    <span className="dash-rank-bar"><i style={{ width: `${Math.max(2, (item.bytes / rankMax) * 100)}%` }} /></span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </section>
     </div>
