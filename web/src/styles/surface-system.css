@@ -606,3 +606,76 @@ button.user-table-compact-button,
 
 /* A switch in a form field sits at the start of its control column. */
 .form-field-control > .ui-switch { justify-self: start; }
+
+/* ---------- Server list toolbar ---------- */
+
+.server-list-search {
+  flex: 1 1 150px;
+  width: auto;
+  min-width: 150px;
+  max-width: 300px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+}
+.server-toolbar-tools {
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+}
+.server-toolbar-tool { border-radius: calc(var(--radius-sm) - 2px); font-weight: 500; }
+.server-management-toolbar { gap: 8px 12px; }
+.server-management-toolbar .server-list-toolbar { flex: 1 1 340px; }
+
+/* ---------- Traffic forwarding ---------- */
+
+.traffic-forwarding-toolbar { flex-wrap: wrap; gap: 10px 16px; }
+.traffic-forwarding-toolbar h3 { font-size: 15px; font-weight: 600; }
+.traffic-forwarding-toolbar p { font-size: 12px; }
+.traffic-forwarding-toolbar-actions { flex: 1 1 auto; justify-content: flex-end; flex-wrap: nowrap; }
+.traffic-forwarding-toolbar-actions > button { flex: none; white-space: nowrap; }
+
+/* ---------- Network probe ---------- */
+
+.return-latency-search {
+  gap: 8px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+}
+.return-latency-search input { padding-left: 0 !important; }
+
+/* ---------- Users ---------- */
+
+.user-overview-stat { border-radius: var(--radius-lg); box-shadow: var(--shadow-xs); }
+.user-overview-stat.is-active,
+.user-overview-stat.neutral.is-active {
+  border-color: var(--border-strong) !important;
+  background: var(--surface-2) !important;
+  box-shadow: inset 0 0 0 1px var(--border-strong) !important;
+}
+
+/* ---------- Notifications ---------- */
+
+.notification-channel-card { flex-wrap: wrap; align-items: flex-start; }
+.notification-channel-main { flex: 1 1 320px; }
+.notification-channel-actions { flex: 0 1 auto; margin-left: auto; }
+
+/* ---------- Heading hierarchy (Tailwind preflight resets headings to 400) ---------- */
+
+h2, h3, h4 { font-weight: 600; }
+.settings-row-copy strong,
+.settings-row-copy label,
+.settings-row > label { font-size: 14px; font-weight: 500; }
+
+/* Text controls show focus through border colour and ring only, never a second outline. */
+input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])):focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.custom-select-trigger:focus-visible,
+.searchable-multi-select-trigger:focus-visible { outline: none; }
+
+/* Metric bars are data colours, not the accent. */
+.server-metric-fill:not(.memory):not(.disk):not(.traffic):not(.warning):not(.danger) { background: var(--progress-info); }

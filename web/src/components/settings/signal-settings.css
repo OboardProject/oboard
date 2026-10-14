@@ -18,7 +18,7 @@
 .signal-settings-row .settings-row-control > :is(input, textarea, .custom-select) { min-width: 0; }
 .signal-settings-disclosure.settings-disclosure { background: var(--surface-solid); border-radius: var(--radius-sm); }
 .signal-settings-disclosure > summary { min-height: 52px; }
-.signal-settings-disclosure .settings-disclosure-summary { font-size: 12px; }
+.signal-settings-disclosure .settings-disclosure-summary { font-size: 13px; }
 .signal-settings .settings-actions,
 .signal-settings-dialog .settings-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
@@ -76,7 +76,7 @@
 .signal-settings-dialog .subscription-template-editor { min-width: 0; }
 .signal-settings-dialog .subscription-template-editor p { overflow-wrap: anywhere; line-height: 1.6; }
 .signal-settings-dialog .subscription-template-textarea { font-size: 13px; line-height: 1.65; min-height: 320px; resize: vertical; tab-size: 2; }
-.signal-settings-dialog .subscription-template-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.signal-settings-dialog .subscription-template-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
 .settings-loading { display: grid; gap: 12px; padding-block: 16px; color: var(--muted); }
 .settings-loading > div { height: 40px; border-radius: var(--radius-sm); background: var(--surface-2); }
 

@@ -26,7 +26,7 @@ function present(value?: string) {
 function versionLabel(value?: string) {
   const normalized = String(value || '').trim()
   if (!normalized || normalized === 'unknown') return '未提供'
-  return normalized.startsWith('v') ? normalized : `v${normalized}`
+  return /^\d/.test(normalized) ? `v${normalized}` : normalized
 }
 
 function buildLabel(version?: string, build?: string) {

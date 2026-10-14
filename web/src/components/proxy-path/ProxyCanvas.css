@@ -71,7 +71,7 @@
   background: transparent;
 }
 .flow.proxy-flow .rf-node-heading strong { color: var(--text-primary); font-size: 14px; font-weight: 650; line-height: 1.35; }
-.flow.proxy-flow .rf-node-heading small { color: var(--muted); font-size: 10px; font-weight: 500; line-height: 1.2; }
+.flow.proxy-flow .rf-node-heading small { color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.2; }
 .flow.proxy-flow .rf-node-kind-icon { border-color: transparent; background: var(--surface-2); border-radius: var(--radius-md); }
 .flow.proxy-flow .rf-node-status { border-color: transparent; background: transparent; font-weight: 500; }
 .flow.proxy-flow .rf-node-protocol { color: var(--muted); background: var(--surface-2); border-color: transparent; font-weight: 550; }
@@ -201,7 +201,7 @@
   gap: 6px;
   min-width: 0;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -224,7 +224,7 @@
   pointer-events: auto;
 }
 .graph-selection-actions :is(strong, span) { overflow-wrap: anywhere; }
-.graph-selection-actions > strong { padding-inline: 5px; font-size: 11px; }
+.graph-selection-actions > strong { padding-inline: 5px; font-size: 12px; }
 
 .graph-connection-hint,
 .graph-canvas-loading {
@@ -239,7 +239,7 @@
   width: max-content;
   max-width: calc(100% - 32px);
   padding: 9px 12px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
   pointer-events: none;
@@ -256,7 +256,7 @@
 :is(.graph-workbench-bar, .graph-selection-actions) button {
   min-height: 30px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 12px;
   box-shadow: none;
 }
 :is(.graph-toolbox, .graph-workbench-bar, .graph-selection-actions) button:focus-visible,
@@ -319,7 +319,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: 13px;
   }
   .graph-selection-actions button {
     min-width: 0;
