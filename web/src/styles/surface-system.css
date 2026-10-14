@@ -418,8 +418,6 @@ tbody tr:hover td { background: var(--row-hover); }
 
 /* ---------- Dashboard ---------- */
 
-.dash-watermark { display: none; }
-
 .dash-welcome { min-height: 0; margin-bottom: 24px; }
 .dash-welcome h1 {
   font-size: clamp(24px, 2.4vw, 30px);
@@ -689,3 +687,16 @@ textarea:focus-visible,
 .server-metric-head { gap: 6px; }
 .server-metric-head > span { flex: none; white-space: nowrap; }
 .server-metric-head > strong { min-width: 0; font-size: 12px; white-space: nowrap; }
+
+/* ---------- Dashboard: three stats stay side by side until the phone breakpoint ---------- */
+
+.stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stat-cell { padding: clamp(14px, 2vw, 20px) clamp(14px, 2.2vw, 24px); border-top: 0; border-left: 1px solid var(--border); }
+.stat-cell:first-child { border-left: 0; }
+.stat-cell-head { gap: 8px; }
+.stat-cell strong { font-size: clamp(22px, 3vw, 30px); }
+@media (max-width: 560px) {
+  .stat-row { grid-template-columns: minmax(0, 1fr); }
+  .stat-cell { border-left: 0; border-top: 1px solid var(--border); }
+  .stat-cell:first-child { border-top: 0; }
+}
