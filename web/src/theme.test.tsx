@@ -92,12 +92,12 @@ it('updates primary text contrast when the accent color changes', () => {
   expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#ffffff')
 
   applyAccentColorToDocument('#fbbf24')
-  expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#111827')
+  expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#171717')
 })
 
 it('keeps separate light and dark accent colors through theme changes', () => {
-  expect(getAccentColor('light')).toBe('#007aff')
-  expect(getAccentColor('dark')).toBe('#60a5fa')
+  expect(getAccentColor('light')).toBe('#171717')
+  expect(getAccentColor('dark')).toBe('#e5e5e5')
   saveAccentColor('light', '#7c3aed')
   saveAccentColor('dark', '#22d3ee')
 
@@ -107,7 +107,7 @@ it('keeps separate light and dark accent colors through theme changes', () => {
   applyThemeToDocument('dark')
   expect(document.documentElement.style.getPropertyValue('--primary')).toBe('#22d3ee')
   expect(document.documentElement.style.getPropertyValue('--theme-accent-color')).toBe('#22d3ee')
-  expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#111827')
+  expect(document.documentElement.style.getPropertyValue('--primary-contrast')).toBe('#171717')
   applyThemeToDocument('light')
   expect(document.documentElement.style.getPropertyValue('--primary')).toBe('#7c3aed')
 })

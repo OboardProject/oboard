@@ -119,6 +119,7 @@ import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from 
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
 import './components/proxy-path/ProxyCanvas.css'
+import './styles/surface-system.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
 import { ConnectivityDetails } from './components/server/ConnectivityDetails'

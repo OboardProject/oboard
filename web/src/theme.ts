@@ -48,8 +48,8 @@ export function watchSystemTheme(preference: ThemePreference, onChange: (theme: 
 }
 
 export const DEFAULT_ACCENT_COLORS: Record<ThemeName, string> = {
-  light: '#007aff',
-  dark: '#60a5fa',
+  light: '#171717',
+  dark: '#e5e5e5',
 }
 const ACCENT_COLOR_STORAGE_KEYS: Record<ThemeName, string> = {
   light: 'oboard.accent_color',
@@ -58,6 +58,7 @@ const ACCENT_COLOR_STORAGE_KEYS: Record<ThemeName, string> = {
 
 export const ACCENT_COLOR_PRESETS = {
   light: [
+    { name: '石墨黑', color: '#171717' },
     { name: '经典蓝', color: '#007aff' },
     { name: '极光青', color: '#0e7490' },
     { name: '翡翠绿', color: '#047857' },
@@ -67,6 +68,7 @@ export const ACCENT_COLOR_PRESETS = {
     { name: '流光金', color: '#a16207' },
   ],
   dark: [
+    { name: '月光白', color: '#e5e5e5' },
     { name: '拓扑蓝', color: '#60a5fa' },
     { name: '极光青', color: '#22d3ee' },
     { name: '翡翠绿', color: '#34d399' },
@@ -103,7 +105,7 @@ export function saveAccentColor(theme: ThemeName, color: string) {
 
 function applyAccentColorToElement(root: HTMLElement, color: string, theme: ThemeName) {
   const validColor = normalizeAccentColor(color, theme)
-  const hoverColor = `color-mix(in srgb, ${validColor} 85%, ${theme === 'dark' ? '#fff' : '#111827'})`
+  const hoverColor = `color-mix(in srgb, ${validColor} 90%, ${theme === 'dark' ? '#000' : '#fff'})`
   const contrastColor = accentContrastColor(validColor)
   root.style.setProperty('--theme-accent-color', validColor)
   root.style.setProperty('--theme-accent-hover', hoverColor)
@@ -114,19 +116,19 @@ function applyAccentColorToElement(root: HTMLElement, color: string, theme: Them
   root.style.setProperty('--border-focus', validColor)
   root.style.setProperty('--color-primary-hover', hoverColor)
   root.style.setProperty('--primary-2', hoverColor)
-  root.style.setProperty('--color-primary-light', `color-mix(in srgb, ${validColor} 12%, transparent)`)
-  root.style.setProperty('--primary-soft', `color-mix(in srgb, ${validColor} 14%, transparent)`)
-  root.style.setProperty('--primary-softer', `color-mix(in srgb, ${validColor} 6%, transparent)`)
+  root.style.setProperty('--color-primary-light', `color-mix(in srgb, ${validColor} 8%, transparent)`)
+  root.style.setProperty('--primary-soft', `color-mix(in srgb, ${validColor} 10%, transparent)`)
+  root.style.setProperty('--primary-softer', `color-mix(in srgb, ${validColor} 4%, transparent)`)
   root.style.setProperty('--accent-contrast', contrastColor)
   root.style.setProperty('--primary-contrast', contrastColor)
   root.style.setProperty('--accent-color', validColor)
   root.style.setProperty('--accent-color-hover', hoverColor)
-  root.style.setProperty('--accent-color-soft', `color-mix(in srgb, ${validColor} 12%, transparent)`)
+  root.style.setProperty('--accent-color-soft', `color-mix(in srgb, ${validColor} 8%, transparent)`)
   root.style.setProperty('--color-accent', validColor)
   root.style.setProperty('--color-accent-hover', hoverColor)
-  root.style.setProperty('--color-accent-soft', `color-mix(in srgb, ${validColor} 12%, transparent)`)
+  root.style.setProperty('--color-accent-soft', `color-mix(in srgb, ${validColor} 8%, transparent)`)
   root.style.setProperty('--accent', validColor)
-  root.style.setProperty('--accent-soft', `color-mix(in srgb, ${validColor} 12%, transparent)`)
+  root.style.setProperty('--accent-soft', `color-mix(in srgb, ${validColor} 8%, transparent)`)
 }
 
 export function applyAccentColorToDocument(color: string) {
@@ -142,12 +144,12 @@ export function accentContrastColor(color: string): string {
     return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
   }
   const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
-  return (1.05) / (luminance + 0.05) >= 3 ? '#ffffff' : '#111827'
+  return (1.05) / (luminance + 0.05) >= 3 ? '#ffffff' : '#171717'
 }
 
 const THEME_PAGE_BG: Record<ThemeName, string> = {
-  light: '#f8f9fa',
-  dark: '#16181d',
+  light: '#ffffff',
+  dark: '#0a0a0a',
 }
 
 export function applyThemeToDocument(theme: ThemeName) {
