@@ -29932,7 +29932,39 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
 .proxy-dscp-name { flex: 1; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
 .proxy-dscp-name .muted { font-size: 12px; }
 .proxy-dscp-list button { flex: none; min-height: 30px; padding: 4px 10px; }
-.probe-monitor-form { display: grid; gap: 16px; }
-.probe-monitor-form > label { display: grid; gap: 6px; }
-.probe-quality-results { display: grid; gap: 16px; overflow-wrap: anywhere; }
-.probe-quality-results h4 { margin-bottom: 6px; }
+.probe-monitors { display: grid; gap: 12px; }
+.probe-monitors > p { margin: 0; }
+.probe-monitors .return-latency-filters { margin-bottom: 0; }
+.probe-monitor-note code { font-size: 12px; }
+.probe-monitor-form .return-latency-fields { display: grid; gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.probe-monitor-form .return-latency-fields > p { margin: 0; font-size: 13px; }
+.probe-monitor-detail { display: grid; gap: 16px; min-width: 0; overflow-wrap: anywhere; }
+.probe-monitor-detail > p { margin: 0; }
+.probe-monitor-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.probe-monitor-meta dt, .probe-quality-metrics dt { font-size: 12px; color: var(--muted); }
+.probe-monitor-meta dd, .probe-quality-metrics dd { margin: 2px 0 0; font-size: 13px; font-weight: 500; }
+.probe-route-history { display: grid; gap: 10px; min-width: 0; }
+.probe-route-history h4 { margin: 4px 0 0; font-size: 14px; }
+.probe-route-history > p { margin: 0; }
+.probe-route-history > button { justify-self: start; }
+.probe-route-version { border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.probe-route-version.is-pending { border-style: dashed; }
+.probe-route-version > summary { display: grid; gap: 2px; padding: 10px 14px; cursor: pointer; }
+.probe-route-version > summary small { font-size: 12px; }
+.probe-route-version[open] > summary { border-bottom: 1px solid var(--border); }
+.probe-route-version > :not(summary) { margin: 10px 14px; }
+.probe-route-path { font-weight: 600; font-variant-numeric: tabular-nums; }
+.network-probe-table.probe-route-hops { min-width: 640px; }
+.network-probe-table.probe-route-hops td:first-child { min-width: 0; width: 48px; }
+.network-probe-table.probe-route-hops th, .network-probe-table.probe-route-hops td { padding: 10px 12px; }
+.probe-quality-results { display: grid; gap: 12px; min-width: 0; }
+.probe-quality-results > p { margin: 0; }
+.probe-quality-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.probe-quality-card { display: grid; align-content: start; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.probe-quality-card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.probe-quality-card h4, .probe-quality-card p { margin: 0; }
+.probe-quality-card small { font-size: 12px; }
+.probe-quality-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; }
+@media (max-width: 720px) {
+  .probe-monitor-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

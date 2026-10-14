@@ -36,6 +36,8 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   const [settingsServer, setSettingsServer] = useState<Server | null>(null)
   const [historyID, setHistoryID] = useState<number | null>(null)
   const [view, setView] = useState<'targets' | 'nodes' | 'routes' | 'quality'>('targets')
+  const [monitorToolbar, setMonitorToolbar] = useState<HTMLDivElement | null>(null)
+  const monitorView = view === 'routes' || view === 'quality'
   const [taskQuery, setTaskQuery] = useState('')
   const [methodFilter, setMethodFilter] = useState('all')
   const [query, setQuery] = useState('')
@@ -192,9 +194,10 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
           <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
           <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
         </div>}
+        {monitorView && <div className="return-latency-toolbar" ref={setMonitorToolbar} />}
       </div>
-      {notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
-      {resource.error && <p className="muted" role="status">预设目标暂不可用，仍可手动创建任务。 <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
+      {!monitorView && notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
+      {view === 'targets' && resource.error && <p className="muted" role="status">预设目标暂不可用，仍可手动创建任务。 <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
       {view === 'targets' && <section id="probe-targets-panel" role="tabpanel" aria-labelledby="probe-targets-tab" className="return-latency-tasks">
         <div className="return-latency-filters">
           <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索探测任务" placeholder="搜索名称或目标地址" value={taskQuery} onChange={event => setTaskQuery(event.target.value)} /></div>
@@ -226,7 +229,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         </table></div>}
       </section>}
 
-      {(view === 'routes' || view === 'quality') && <section id={`probe-${view}-panel`} role="tabpanel" aria-labelledby={`probe-${view}-tab`}><ProbeMonitors key={view} client={client} servers={servers} kind={view === 'routes' ? 'route' : 'ip_quality'} canManage={canManage} /></section>}
+      {(view === 'routes' || view === 'quality') && <section id={`probe-${view}-panel`} role="tabpanel" aria-labelledby={`probe-${view}-tab`}><ProbeMonitors key={view} client={client} servers={servers} kind={view === 'routes' ? 'route' : 'ip_quality'} canManage={canManage} toolbarSlot={monitorToolbar} /></section>}
       {view === 'nodes' && <section id="probe-nodes-panel" role="tabpanel" aria-labelledby="probe-nodes-tab" className="return-latency-servers">
         <div className="return-latency-filters">
           <div className="return-latency-search">

@@ -29,7 +29,9 @@ it("keeps missing quality data unknown and shows independent provider scores", a
   await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={servers} kind="ip_quality" canManage={false} />))
   expect(button("立即检测").disabled).toBe(true)
   await act(async () => button("结果").click())
-  expect(document.body.textContent).toContain("VPN：未知")
-  expect(document.body.textContent).toContain("风险分：33")
+  const metric = (label: string) => [...document.body.querySelectorAll(".probe-quality-metrics div")].find(item => item.querySelector("dt")?.textContent === label)?.querySelector("dd")?.textContent
+  expect(metric("VPN")).toBe("未知")
+  expect(metric("机房")).toBe("是")
+  expect(metric("风险分")).toBe("33 / 100")
   expect(document.body.textContent).toContain("未配置 API Key")
 })
