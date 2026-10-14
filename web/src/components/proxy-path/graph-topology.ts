@@ -73,19 +73,6 @@ export function canonicalProxyPathStep(topology: SharedProxyPathTopology, step: 
   return topology.canonicalStepByID.get(step.id) || step
 }
 
-export type GraphPathMembershipEdge = {
-  id: string
-  source: string
-  target: string
-  pathIDs: number[]
-}
-
-export type GraphPathEdgeLabel = {
-  text: string
-  title: string
-  pathID?: number
-}
-
 export type GraphPathFocusState = 'active' | 'muted' | 'context'
 
 export type GraphFocusScope =
@@ -148,40 +135,4 @@ export function graphFocusState(item: GraphFocusItem, scope: GraphFocusScope | u
     || item.id === `belongs-${scope.entryID}`
     ? 'active'
     : 'muted'
-}
-
-function samePathIDs(left: number[], right: number[]) {
-  return left.length === right.length && left.every((pathID, index) => pathID === right[index])
-}
-
-/** Labels a route once, then labels it again only where shared membership
- *  changes. `pathTitle` (the full path name) becomes the tooltip; the visible
- *  text stays short because the cards at both ends already name the servers. */
-export function graphPathEdgeLabels(
-  edges: GraphPathMembershipEdge[],
-  pathLabel: (pathID: number) => string,
-  pathTitle: (pathID: number) => string = pathLabel,
-) {
-  const incomingByNode = new Map<string, GraphPathMembershipEdge[]>()
-  edges.forEach(edge => incomingByNode.set(edge.target, [...(incomingByNode.get(edge.target) || []), edge]))
-
-  const labels = new Map<string, GraphPathEdgeLabel>()
-  edges.forEach(edge => {
-    const pathIDs = edge.pathIDs.slice().sort((left, right) => left - right)
-    if (!pathIDs.length) return
-    const continuesSameMembership = (incomingByNode.get(edge.source) || [])
-      .some(incoming => samePathIDs(incoming.pathIDs, pathIDs))
-    if (continuesSameMembership) return
-    if (pathIDs.length === 1) {
-      const pathID = pathIDs[0]
-      labels.set(edge.id, { text: pathLabel(pathID), title: pathTitle(pathID), pathID })
-      return
-    }
-    const names = pathIDs.map(pathTitle)
-    labels.set(edge.id, {
-      text: `${pathIDs.length} 条路径共享`,
-      title: names.join('\n'),
-    })
-  })
-  return labels
 }

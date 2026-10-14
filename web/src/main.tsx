@@ -34,7 +34,7 @@ import {
 } from './theme'
 import { ThemeSelector } from './components/ui/ThemeSelector'
 import { readStoredValue, writeStoredValue } from './browser-storage'
-import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, ConnectionLineType, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, ConnectionLineType, Controls, Edge, EdgeChange, Handle, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type {
@@ -90,7 +90,7 @@ import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphConnectionSourceIntent, graphServerEntrySourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { GraphSourceSelectionDialog, type GraphSourceSelectionRequest } from './components/proxy-path/GraphSourceSelectionDialog'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
 import { curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
@@ -10256,11 +10256,11 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       const target = event.target as HTMLElement | null
       if (target?.closest('.react-flow__handle, .graph-context-menu, a, input, textarea')) return
       const nodeEl = target?.closest('.react-flow__node')
-      const edgeEl = target?.closest('.react-flow__edge, .proxy-edge-label')
+      const edgeEl = target?.closest('.react-flow__edge')
       const paneEl = !nodeEl && !edgeEl ? target?.closest('.react-flow__pane') : null
       if (!nodeEl && !edgeEl && !paneEl) return
       const nodeID = nodeEl?.getAttribute('data-id') || ''
-      const edgeID = edgeEl?.getAttribute('data-id') || edgeEl?.closest('.react-flow__edge')?.getAttribute('data-id') || edgeEl?.getAttribute('data-graph-edge-id') || ''
+      const edgeID = edgeEl?.getAttribute('data-id') || edgeEl?.closest('.react-flow__edge')?.getAttribute('data-id') || ''
       startX = event.clientX
       startY = event.clientY
       opened = false
@@ -10404,7 +10404,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         data: data ? {
           ...data,
           focusState,
-          onFocusPath: setFocusedPathID,
           onContextMenu: data.entity ? (event: React.MouseEvent) => {
             event.preventDefault()
             event.stopPropagation()
@@ -15540,11 +15539,7 @@ type GraphTransportEdgeData = GraphRoutingEdgeData & {
   detail?: string
   unhealthy?: boolean
   pathIDs?: number[]
-  pathLabel?: string
-  pathLabelTitle?: string
-  pathLabelID?: number
   focusState?: GraphPathFocusState
-  onFocusPath?: (pathID: number) => void
   onContextMenu?: (event: React.MouseEvent) => void
 }
 
@@ -15678,8 +15673,6 @@ function ProxyGraphEdge({
     return null
   }
   const path = curvedGraphPath(points, 24)
-  const labelX = data.route?.labelPoint?.x
-  const labelY = data.route?.labelPoint?.y
   let phaseHash = 0
   for (let index = 0; index < id.length; index++) phaseHash = (phaseHash * 31 + id.charCodeAt(index)) >>> 0
   const phase = (phaseHash % 2400) / 1000
@@ -15696,28 +15689,6 @@ function ProxyGraphEdge({
         </circle>
       </g>
     )}
-    {data?.pathLabel && labelX !== undefined && labelY !== undefined && <EdgeLabelRenderer>
-      {data.pathLabelID && data.onFocusPath
-        ? <button
-            type="button"
-            className={`proxy-edge-label nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
-            data-graph-edge-id={id}
-            style={{ transform: `translate(-50%, calc(-100% - 8px)) translate(${labelX}px, ${labelY}px)` }}
-            title={data.pathLabelTitle || data.pathLabel}
-            onContextMenu={data.onContextMenu}
-            onClick={event => {
-              event.stopPropagation()
-              data.onFocusPath?.(data.pathLabelID!)
-            }}
-          >{data.pathLabel}</button>
-        : <span
-            className={`proxy-edge-label shared nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
-            data-graph-edge-id={id}
-            style={{ transform: `translate(-50%, calc(-100% - 8px)) translate(${labelX}px, ${labelY}px)` }}
-            title={data.pathLabelTitle || data.pathLabel}
-            onContextMenu={data.onContextMenu}
-          >{data.pathLabel}</span>}
-    </EdgeLabelRenderer>}
   </>
 }
 
@@ -15932,13 +15903,6 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   const pathDisplayName = (pathID: number) => {
     const path = pathByID.get(pathID)
     return path?.name || `路径 ${pathID}`
-  }
-  // A path line already runs between two named cards, so its label only needs
-  // to say which entry it carries; the full path name stays in the tooltip.
-  const pathEdgeShortName = (pathID: number) => {
-    const path = pathByID.get(pathID)
-    const inbound = path ? inboundByID.get(path.inbound_id) : undefined
-    return inbound?.name || pathDisplayName(pathID)
   }
   const pathIDsByEntry = new Map<number, number[]>()
   visiblePaths.forEach(path => pathIDsByEntry.set(path.inbound_id, mergeGraphPathIDs(pathIDsByEntry.get(path.inbound_id), path.id)))
@@ -16449,26 +16413,6 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       routingClass: 'auxiliary',
       auxiliary: true,
     }, { animated: x.enabled !== false, targetHandle: 'target-top' }))
-  })
-  const pathLabels = graphPathEdgeLabels(
-    edges.flatMap(edge => {
-      const edgeData = edge.data as GraphTransportEdgeData | undefined
-      return edgeData?.pathIDs?.length
-        ? [{ id: edge.id, source: edge.source, target: edge.target, pathIDs: edgeData.pathIDs }]
-        : []
-    }),
-    pathEdgeShortName,
-    pathDisplayName,
-  )
-  edges.forEach(edge => {
-    const label = pathLabels.get(edge.id)
-    if (!label) return
-    edge.data = {
-      ...(edge.data as GraphTransportEdgeData),
-      pathLabel: label.text,
-      pathLabelTitle: label.title,
-      pathLabelID: label.pathID,
-    }
   })
   return {
     nodes: nodes.map(node => ({ ...node, type: 'proxyGraphNode' })),

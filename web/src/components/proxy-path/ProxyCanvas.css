@@ -107,22 +107,6 @@
   stroke-width: 3px !important;
 }
 
-.flow.proxy-flow .proxy-edge-label {
-  border-color: var(--border);
-  background: var(--surface-solid);
-  box-shadow: 0 1px 3px rgb(15 23 42 / 6%);
-  color: var(--text-secondary);
-  font-weight: 600;
-  transition: opacity 140ms ease, border-color 160ms ease, background 160ms ease;
-}
-.flow.proxy-flow .proxy-edge-label.path-focus-muted { opacity: .25; pointer-events: all; }
-.flow.proxy-flow .proxy-edge-label.path-focus-context { opacity: .5; }
-.flow.proxy-flow .proxy-edge-label:is(:hover, :focus-visible, .path-focus-active) {
-  opacity: 1;
-  color: var(--text-strong);
-  border-color: var(--primary);
-}
-
 .flow.proxy-flow .react-flow__edges,
 .flow.proxy-flow .react-flow__connectionline {
   z-index: 2 !important;
@@ -279,7 +263,6 @@
   box-shadow: none;
 }
 :is(.graph-toolbox, .graph-workbench-bar, .graph-selection-actions) button:focus-visible,
-.proxy-flow .proxy-edge-label:focus-visible,
 .proxy-flow .proxy-graph-legend summary:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 3px;
@@ -368,7 +351,6 @@
   .flow.proxy-flow .react-flow__handle,
   .flow.proxy-flow .react-flow__handle::after,
   .flow.proxy-flow .react-flow__edge,
-  .flow.proxy-flow .proxy-edge-label,
   .flow.proxy-flow .rf-node-custom,
   .flow.proxy-flow .react-flow__node.graph-node .graph-node-inner,
   :is(.graph-toolbox, .graph-workbench-bar, .graph-selection-actions) button {
