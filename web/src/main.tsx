@@ -77,12 +77,10 @@ import {
   loadGraphDirectExitInstances,
   loadGraphLayoutSignatures,
   loadGraphPositions,
-  loadGraphToolboxPosition,
   loadPinnedGraphNodes,
   saveGraphPositions,
   saveGraphDirectExitInstances,
   saveGraphLayoutSignature,
-  saveGraphToolboxPosition,
   savePinnedGraphNodes,
   snapDraggedGraphPosition,
   snapGraphPosition,
@@ -9873,7 +9871,6 @@ function inboundEntryAddress(data: any, entry: Inbound) {
 }
 
 type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'family_split_template'
-const proxyToolDragType = 'application/oboard-proxy-tool'
 
 function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData, focusRequest }: any) {
   const [servers, setServers] = useState<Server[]>(data.servers || [])
@@ -10016,16 +10013,11 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   // request from the mutation handler.
   const reconcileTopology = () => undefined
   const [inspectorOpen, setInspectorOpen] = useState(false)
-  const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(() => window.innerWidth <= 820)
   const [entryServerQuery, setEntryServerQuery] = useState('')
   const [entryServerRegion, setEntryServerRegion] = useState('all')
   const [focusedPathID, setFocusedPathID] = useState(0)
   const [hoveredGraphFocus, setHoveredGraphFocus] = useState<GraphFocusScope>()
-  const [toolboxPosition, setToolboxPosition] = useState<GraphPosition>(() => loadGraphToolboxPosition())
-  const [toolboxDragging, setToolboxDragging] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
-  const toolboxRef = useRef<HTMLDivElement>(null)
-  const toolboxWasDragged = useRef(false)
   const hasInitialSafeFit = useRef(false)
   const initialSafeFitTimer = useRef<number | null>(null)
   const pendingServerSafeFit = useRef(0)
@@ -10169,6 +10161,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
   nodesRef.current = nodes
   edgesRef.current = edges
   openGraphContextMenuRef.current = openGraphContextMenu
+  const openCanvasMenuRef = useRef<(clientX: number, clientY: number) => void>(() => undefined)
+  const [coarseGraphPointer] = useState(() => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(pointer: coarse)').matches))
   useLayoutEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
   useLayoutEffect(() => {
     const rootID = selected?.id || 0
@@ -10244,6 +10238,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     let startX = 0
     let startY = 0
     let opened = false
+    const touches = new Set<number>()
     const clearTimer = () => {
       if (timer != null) {
         window.clearTimeout(timer)
@@ -10252,11 +10247,18 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     }
     const onPointerDown = (event: PointerEvent) => {
       if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return
+      touches.add(event.pointerId)
+      // A second finger means pinch or two-finger pan, never a long press.
+      if (touches.size > 1) {
+        clearTimer()
+        return
+      }
       const target = event.target as HTMLElement | null
-      if (target?.closest('.react-flow__handle, .graph-context-menu, .graph-toolbox, a, input, textarea')) return
+      if (target?.closest('.react-flow__handle, .graph-context-menu, a, input, textarea')) return
       const nodeEl = target?.closest('.react-flow__node')
       const edgeEl = target?.closest('.react-flow__edge, .proxy-edge-label')
-      if (!nodeEl && !edgeEl) return
+      const paneEl = !nodeEl && !edgeEl ? target?.closest('.react-flow__pane') : null
+      if (!nodeEl && !edgeEl && !paneEl) return
       const nodeID = nodeEl?.getAttribute('data-id') || ''
       const edgeID = edgeEl?.getAttribute('data-id') || edgeEl?.closest('.react-flow__edge')?.getAttribute('data-id') || edgeEl?.getAttribute('data-graph-edge-id') || ''
       startX = event.clientX
@@ -10267,6 +10269,10 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         timer = null
         opened = true
         suppressGraphClickRef.current = true
+        if (paneEl) {
+          openCanvasMenuRef.current(event.clientX, event.clientY)
+          return
+        }
         const node = nodeID ? nodesRef.current.find(item => item.id === nodeID) : undefined
         const edge = edgeID ? edgesRef.current.find(item => item.id === edgeID) : undefined
         const item = node || edge
@@ -10281,6 +10287,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       if (Math.abs(event.clientX - startX) > moveTolerance || Math.abs(event.clientY - startY) > moveTolerance) clearTimer()
     }
     const onPointerEnd = (event: PointerEvent) => {
+      touches.delete(event.pointerId)
       clearTimer()
       if (!opened) return
       event.preventDefault()
@@ -10427,12 +10434,11 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     if (!selectedServer && servers[0]) setSelectedServer(servers[0].id)
     if (selectedServer && !servers.some(s => s.id === selectedServer) && servers[0]) setSelectedServer(servers[0].id)
   }, [servers.length, selectedServer])
-  // Fit the graph into the free canvas area only — leave room for the floating
-  // left toolbox (and optional right inspector) so nodes are not covered on open.
+  // Fit the graph into the free canvas area only — leave room for the canvas
+  // controls (and optional right inspector) so nodes are not covered on open.
   const fitGraphToSafeArea = (duration = 260, instance = flowInstance) => {
     if (!instance || !builtFlow.nodes.length) return false
     const flowEl = workspaceRef.current?.querySelector('.proxy-flow') as HTMLElement | null
-    const toolbox = toolboxRef.current
     if (!flowEl) {
       instance.fitView({ padding: 0.18, maxZoom: 0.92, duration })
       return true
@@ -10442,19 +10448,11 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     if (width < 40 || height < 40) return false
 
     const pad = 28
-    let leftInset = pad
+    const leftInset = pad
     let rightInset = pad
     const topInset = pad + 48
     const bottomInset = pad + 56 // React Flow controls sit bottom-right
 
-    if (toolbox && !isToolbarCollapsed) {
-      const flowRect = flowEl.getBoundingClientRect()
-      const boxRect = toolbox.getBoundingClientRect()
-      // Only reserve space when the toolbox still overlaps the left side of the canvas.
-      if (boxRect.right > flowRect.left + 8 && boxRect.left < flowRect.left + width * 0.55) {
-        leftInset = Math.max(leftInset, Math.round(boxRect.right - flowRect.left) + 20)
-      }
-    }
     if (inspectorOpen) {
       rightInset = Math.max(rightInset, 24)
     }
@@ -10542,64 +10540,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       }
     }
   }, [flowInstance, selected?.id, builtFlow])
-  const clampToolboxPosition = (position: GraphPosition) => {
-    const workspace = workspaceRef.current
-    const toolbox = toolboxRef.current
-    if (!workspace || !toolbox) return position
-    const maxX = Math.max(8, workspace.clientWidth - toolbox.offsetWidth - 8)
-    const maxY = Math.max(8, workspace.clientHeight - toolbox.offsetHeight - 8)
-    return { x: Math.max(8, Math.min(maxX, position.x)), y: Math.max(8, Math.min(maxY, position.y)) }
-  }
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      setToolboxPosition(current => {
-        const next = clampToolboxPosition(current)
-        saveGraphToolboxPosition(next)
-        return next
-      })
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [isToolbarCollapsed, inspectorOpen])
-  useEffect(() => {
-    const clampOnResize = () => setToolboxPosition(current => {
-      const next = clampToolboxPosition(current)
-      saveGraphToolboxPosition(next)
-      return next
-    })
-    window.addEventListener('resize', clampOnResize)
-    return () => window.removeEventListener('resize', clampOnResize)
-  }, [])
-  const beginToolboxDrag = (event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
-    const start = { x: event.clientX, y: event.clientY, position: toolboxPosition }
-    let latest = toolboxPosition
-    toolboxWasDragged.current = false
-    setToolboxDragging(true)
-    document.body.style.userSelect = 'none'
-    const move = (nextEvent: PointerEvent) => {
-      const dx = nextEvent.clientX - start.x
-      const dy = nextEvent.clientY - start.y
-      if (Math.abs(dx) + Math.abs(dy) > 4) toolboxWasDragged.current = true
-      latest = clampToolboxPosition({ x: start.position.x + dx, y: start.position.y + dy })
-      setToolboxPosition(latest)
-    }
-    const stop = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', stop)
-      window.removeEventListener('pointercancel', stop)
-      document.body.style.userSelect = ''
-      setToolboxDragging(false)
-      saveGraphToolboxPosition(latest)
-      window.setTimeout(() => { toolboxWasDragged.current = false }, 0)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', stop, { once: true })
-    window.addEventListener('pointercancel', stop, { once: true })
-  }
-  const toggleToolbar = () => {
-    if (toolboxWasDragged.current) return
-    setIsToolbarCollapsed(value => !value)
-  }
   const relayoutGraph = (preservePinned: boolean, rootServerID = selected?.id || 0) => {
     const laidOut = autoLayoutProxyGraphPositions(data, rootServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances)
     if (!Object.keys(laidOut).length) return false
@@ -10690,8 +10630,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       const width = node.width || numericNodeStyle(node, 'width') || GRAPH_ENTRY_NODE_WIDTH
       const height = node.height || estimatedGraphNodeHeight(node)
       const end = flowInstance.flowToScreenPosition({ x: node.position.x + width, y: node.position.y + height })
-      const toolbox = !isToolbarCollapsed ? toolboxRef.current?.getBoundingClientRect() : null
-      const left = Math.max(canvas.left + 24, toolbox && toolbox.left < canvas.left + canvas.width / 2 ? toolbox.right + 24 : 0)
+      const left = canvas.left + 24
       if (start.x < left || start.y < canvas.top + 76 || end.x > canvas.right - 24 || end.y > canvas.bottom - 76) {
         const viewport = flowInstance.getViewport()
         const center = { x: node.position.x + width / 2, y: node.position.y + height / 2 }
@@ -10764,9 +10703,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  const canvas = workspaceRef.current?.querySelector('.proxy-flow')
     if (canvas) {
       const rect = canvas.getBoundingClientRect()
-      const toolbox = !isToolbarCollapsed ? toolboxRef.current?.getBoundingClientRect() : null
       bounds = { left: rect.left + 32, top: rect.top + 76, right: rect.right - 32, bottom: rect.bottom - 76 }
-      if (toolbox && toolbox.left < rect.left + rect.width / 2) bounds.left = Math.min(rect.right - 120, Math.max(bounds.left, toolbox.right + 24))
     }
 	  let topLeft = { x: 100, y: 100 }
 	  let bottomRight = { x: 900, y: 600 }
@@ -12053,18 +11990,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     }
     if (action === 'family_split_template') return void setFamilySplitEditor({})
   }
-  const onToolDragOver = (e: React.DragEvent) => {
-    if (!Array.from(e.dataTransfer.types).includes(proxyToolDragType)) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
-  }
-  const onToolDrop = (e: React.DragEvent) => {
-    const rawAction = e.dataTransfer.getData(proxyToolDragType)
-    if (!isProxyToolAction(rawAction)) return
-    e.preventDefault()
-    const position = flowInstance?.screenToFlowPosition({ x: e.clientX, y: e.clientY })
-    runTool(rawAction, position ? snapGraphPosition({ x: position.x - 110, y: position.y - 44 }) : undefined)
-  }
   const onNodeDoubleClick = (_: React.MouseEvent, node: Node) => {
 	  setGraphMenu(null)
 	  const entity = node.data?.entity as GraphEntity | undefined
@@ -12072,7 +11997,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       setSelectedServer(entity.id)
       setRelatedGraphTarget(null)
       setInspectorOpen(true)
-      setIsToolbarCollapsed(true)
     }
 	  if (entity?.type === 'imported') {
       const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === entity.id)
@@ -12151,6 +12075,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    position: flowInstance?.screenToFlowPosition({ x: clientX, y: clientY }),
 	  })
 	}
+	openCanvasMenuRef.current = openCanvasMenu
 	const canvasMenuPosition = (position?: GraphPosition, width = 220, height = 88) => position ? snapGraphPosition({ x: position.x - width / 2, y: position.y - height / 2 }) : undefined
 	const runCanvasMenuTool = (action: ProxyToolAction) => {
 	  const position = canvasMenuPosition(canvasMenu?.position)
@@ -12221,14 +12146,12 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     const next = !inspectorOpen
     if (next) setRelatedGraphTarget(null)
     setInspectorOpen(next)
-    if (next) setIsToolbarCollapsed(true)
   }
 	const openRelatedPaths = (entity: GraphEntity | null | undefined, pathIDs: readonly number[] = []) => {
 	  const relation = relationTargetForEntity(entity, pathIDs)
 	  if (!entity || !relation) return
 	  setRelatedGraphTarget({ entity, relation })
 	  setInspectorOpen(true)
-	  setIsToolbarCollapsed(true)
 	  setGraphMenu(null)
 	}
 	const locateRelatedPath = (related: RelatedProxyPath) => {
@@ -12299,7 +12222,6 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       setSelectedServer(entity.id)
       setRelatedGraphTarget(null)
       setInspectorOpen(true)
-      setIsToolbarCollapsed(true)
     }
     if (entity.type === 'routing') {
       if (entity.path_id) openRouting({ pathID: entity.path_id, stageStepID: entity.stage_step_id, canvasTargetID: '' })
@@ -12381,34 +12303,20 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         </div>,
         topbarTarget,
       )}
-      <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
+      <div ref={workspaceRef} className={`proxy-editor-workspace${inspectorOpen ? ' inspector-open' : ''}`}>
         <div className="proxy-focus-announcement" role="status" aria-live="polite">{inboundFocusAnnouncement}</div>
-        <div ref={toolboxRef} className={`proxy-editor-sidebar${toolboxDragging ? ' is-dragging' : ''}`} style={{ left: toolboxPosition.x, top: toolboxPosition.y }}>
-          <ProxyGraphToolbox
-            collapsed={isToolbarCollapsed}
-            dragging={toolboxDragging}
-            selected={selected}
-            servers={servers}
-            importedNodes={(data.external_outbounds || []).filter((item: ExternalOutbound) => item.enabled !== false && (item.scope === 'global' || !item.server_id || !selected?.id || item.server_id === selected.id))}
-            canAutoArrange={nodes.length > 0}
-            inspectorOpen={inspectorOpen}
-            onToggle={toggleToolbar}
-            onMoveStart={beginToolboxDrag}
-            onAction={action => runTool(action)}
-            onShowServer={putServerOnCanvas}
-            onAddImported={addImportedToCurrentEntry}
-            onShowImported={putImportedOnCanvas}
-            onInspectImported={setConfigNode}
-            onAutoArrange={autoArrangeGraph}
-            onToggleInspector={toggleInspector}
-            nodePickerOpen={nodePickerOpen}
-            onNodePickerOpenChange={open => {
-              if (open) nodePickerPosition.current = null
-              setNodePickerOpen(open)
-            }}
-          />
-        </div>
-        <div className={`flow proxy-flow ${initialViewportReady ? 'initial-viewport-ready' : 'initial-viewport-pending'}`} onDragOver={onToolDragOver} onDrop={onToolDrop}>
+        <ProxyGraphNodePicker
+          selected={selected}
+          servers={servers}
+          importedNodes={(data.external_outbounds || []).filter((item: ExternalOutbound) => item.enabled !== false && (item.scope === 'global' || !item.server_id || !selected?.id || item.server_id === selected.id))}
+          onShowServer={putServerOnCanvas}
+          onAddImported={addImportedToCurrentEntry}
+          onShowImported={putImportedOnCanvas}
+          onInspectImported={setConfigNode}
+          open={nodePickerOpen}
+          onOpenChange={setNodePickerOpen}
+        />
+        <div className={`flow proxy-flow ${initialViewportReady ? 'initial-viewport-ready' : 'initial-viewport-pending'}`}>
         <ReactFlow 
 		  nodes={displayNodes}
 		  edges={displayEdgesWithProvisional}
@@ -12486,8 +12394,9 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
           {provisionalEdges.length > 0 && <span className="graph-workbench-status" role="status" aria-live="polite">
             {transportRequest || sourceSelectionRequest ? '等待确认连接' : '正在保存连接…'}
           </span>}
+          {!provisionalEdges.length && <span className="graph-workbench-hint">{coarseGraphPointer ? '长按空白处新建' : '右键空白处新建'}</span>}
           <button type="button" className="ghost" onClick={() => fitGraphToSafeArea()} disabled={!nodes.length} title="只调整视角，不改变节点位置"><Search size={14} />查看全图</button>
-          <button type="button" className="ghost" onClick={autoArrangeGraph} disabled={!nodes.length || pendingGraphNodeIDs.length > 0} title="整理当前画布并解除当前节点的手动固定"><Sliders size={14} />整理布局</button>
+          <button type="button" className="ghost" onClick={autoArrangeGraph} disabled={!nodes.length || pendingGraphNodeIDs.length > 0} title="按链路拓扑重新排列全部节点，并清除手动摆放的位置"><Sliders size={14} />重置布局</button>
         </div>
         {selectedGraphItem && <div className="graph-selection-actions" aria-label="选中对象操作">
           <strong>{selectedGraphItem.entity.label}</strong>
@@ -12527,7 +12436,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
               <button type="button" role="menuitem" onClick={() => runCanvasMenuTool('family_split_template')}><ProxyToolIcon kind="family_split_template" />双栈模板</button>
               <div className="graph-context-menu-separator" role="separator" />
               <button type="button" role="menuitem" disabled={!nodes.length} onClick={() => { setCanvasMenu(null); fitGraphToSafeArea() }}><Search size={14} />查看全图</button>
-              <button type="button" role="menuitem" disabled={!nodes.length || pendingGraphNodeIDs.length > 0} onClick={() => { setCanvasMenu(null); autoArrangeGraph() }}><Sliders size={14} />整理布局</button>
+              <button type="button" role="menuitem" disabled={!nodes.length || pendingGraphNodeIDs.length > 0} onClick={() => { setCanvasMenu(null); autoArrangeGraph() }}><Sliders size={14} />重置布局</button>
+              <button type="button" role="menuitem" onClick={() => { setCanvasMenu(null); toggleInspector() }}><Workflow size={14} />{inspectorOpen ? '收起链路详情' : '链路详情'}</button>
               {canvasMenu.sheet && <button type="button" role="menuitem" className="graph-context-menu-cancel" onClick={() => setCanvasMenu(null)}>取消</button>}
             </div>
           </>,
@@ -12849,29 +12759,18 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'family_split_template', label: '双栈模板', desc: '独立编排可复用的 IPv4 / IPv6 分支' },
 ]
 
-function isProxyToolAction(value: string): value is ProxyToolAction {
-  return proxyTools.some(x => x.id === value)
-}
 
-function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNodes, canAutoArrange, inspectorOpen, nodePickerOpen, onNodePickerOpenChange: setNodePickerOpen, onToggle, onMoveStart, onAction, onShowServer, onAddImported, onShowImported, onInspectImported, onAutoArrange, onToggleInspector }: {
-  collapsed: boolean
-  dragging: boolean
+// The node picker is reached from the canvas menu (右键 / 长按 → 其他服务器).
+function ProxyGraphNodePicker({ selected, servers, importedNodes, open: nodePickerOpen, onOpenChange: setNodePickerOpen, onShowServer, onAddImported, onShowImported, onInspectImported }: {
   selected?: Server
   servers: Server[]
   importedNodes: ExternalOutbound[]
-  canAutoArrange: boolean
-  inspectorOpen: boolean
-  onToggle: () => void
-  onMoveStart: (event: React.PointerEvent<HTMLElement>) => void
-  onAction: (action: ProxyToolAction) => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
   onShowServer: (server: Server) => void
   onAddImported: (node: ExternalOutbound) => void
   onShowImported: (node: ExternalOutbound) => void
   onInspectImported: (node: ExternalOutbound) => void
-  onAutoArrange: () => void
-  onToggleInspector: () => void
-  nodePickerOpen: boolean
-  onNodePickerOpenChange: (open: boolean) => void
 }) {
   const availableServers = servers.filter(server => server.id !== selected?.id)
   const [nodeQuery, setNodeQuery] = useState('')
@@ -12924,60 +12823,6 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
   const hasActiveFilters = Boolean(nodeQuery.trim() || nodeRegion !== 'all' || nodeTypeFilter !== 'all' || nodeStatusFilter !== 'all')
 
   return <>
-  <aside className={`graph-toolbox${collapsed ? ' collapsed' : ''}${dragging ? ' dragging' : ''}`} aria-label="链路编排工具箱">
-    <div className="graph-toolbox-head" onPointerDown={onMoveStart}>
-      {!collapsed && <div><span className="graph-toolbox-title"><Workflow size={15} />节点与链路</span><small>选择节点后在画布中连接</small></div>}
-      <button className="ghost icon-button graph-toolbox-toggle" onClick={onToggle} title={collapsed ? '展开工具箱' : '收起工具箱'} aria-label={collapsed ? '展开工具箱' : '收起工具箱'}>{collapsed ? <Menu size={17} /> : <X size={15} />}</button>
-    </div>
-    {!collapsed && <>
-      <div className="graph-toolbox-section">
-        <span className="graph-toolbox-label">画布</span>
-        <div className="graph-toolbox-actions">
-          <button type="button" className="ghost" onClick={onAutoArrange} disabled={!canAutoArrange} title="按链路拓扑重新排列全部节点，并清除手动摆放的位置">
-            <Sliders size={14} />
-            <span>重置布局</span>
-          </button>
-          <button type="button" className="ghost" onClick={onToggleInspector} title={inspectorOpen ? '收起链路详情' : '打开链路详情'}>
-            <Workflow size={14} />
-            <span>{inspectorOpen ? '收起详情' : '链路详情'}</span>
-          </button>
-        </div>
-      </div>
-      <div className="graph-toolbox-section">
-        <span className="graph-toolbox-label">新建</span>
-        <div className="graph-tool-list">
-          {proxyTools.map(tool => <button
-            key={tool.id}
-            type="button"
-            className="graph-tool"
-            draggable
-            onClick={() => onAction(tool.id)}
-            onDragStart={event => {
-              event.dataTransfer.effectAllowed = 'copy'
-              event.dataTransfer.setData(proxyToolDragType, tool.id)
-              event.dataTransfer.setData('text/plain', tool.label)
-            }}
-            title={`${tool.label}：${tool.desc}`}
-          >
-            <span className="graph-tool-icon"><ProxyToolIcon kind={tool.id} /></span>
-            <strong>{tool.label}</strong>
-          </button>)}
-          <button
-            type="button"
-            className="graph-tool graph-node-picker-trigger"
-            onClick={() => setNodePickerOpen(true)}
-            disabled={!availableCount}
-            aria-haspopup="dialog"
-            aria-expanded={nodePickerOpen}
-            title={availableCount ? `添加其他服务器或已有节点，共 ${availableCount} 个` : '暂无其他服务器或节点'}
-          >
-            <span className="graph-tool-icon"><ServerIcon size={14} /></span>
-            <strong>其他服务器</strong>
-          </button>
-        </div>
-      </div>
-    </>}
-  </aside>
   <AnimatePresence>{nodePickerOpen && <MotionDialogPanel onCancel={closeNodePicker} className="graph-node-picker-dialog" placement="right" drawerSize="wide" ariaLabel="选择节点">
     <header className="dialog-head">
       <div><h2>添加其他服务器</h2><p className="muted">选择已有服务器或导入节点放入画布；同一服务器可以多次添加。</p></div>

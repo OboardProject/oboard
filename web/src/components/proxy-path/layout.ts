@@ -1,6 +1,6 @@
 // Pure geometry and browser-local persistence for the proxy-path canvas.
-// Nothing here touches server state: node coordinates and the toolbox position
-// are per-browser preferences, so clearing them never changes a stored path.
+// Nothing here touches server state: node coordinates are per-browser
+// preferences, so clearing them never changes a stored path.
 
 import { removeStoredValue, writeStoredJSON } from '../../browser-storage'
 
@@ -85,7 +85,6 @@ const POSITIONS_KEY = 'oboard.proxyGraph.positions.v9'
 const LEGACY_POSITIONS_KEYS = ['oboard.proxyGraph.positions.v6', 'oboard.proxyGraph.positions.v7', 'oboard.proxyGraph.positions.v8']
 const PINNED_KEY = 'oboard.proxyGraph.pinnedNodes.v1'
 const SIGNATURE_KEY = 'oboard.proxyGraph.layoutSignature.v1'
-const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'
 const DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v2'
 const LEGACY_DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v1'
 
@@ -148,19 +147,6 @@ export function graphLayoutSignature(
     Array.from(primaryEdges).map(edge => `${edge.source}${edge.sourceHandle || ''}>${edge.target}`),
   )).sort()
   return `v${GRAPH_LAYOUT_ALGORITHM_VERSION}|${nodes.join(',')}|${edges.join(',')}`
-}
-
-export function loadGraphToolboxPosition(): GraphPosition {
-  try {
-    const value = JSON.parse(localStorage.getItem(TOOLBOX_KEY) || '{}')
-    return { x: Number.isFinite(value.x) ? value.x : 12, y: Number.isFinite(value.y) ? value.y : 12 }
-  } catch {
-    return { x: 12, y: 12 }
-  }
-}
-
-export function saveGraphToolboxPosition(position: GraphPosition) {
-  writeStoredJSON(TOOLBOX_KEY, position)
 }
 
 export function loadGraphDirectExitInstances(): GraphDirectExitInstance[] {

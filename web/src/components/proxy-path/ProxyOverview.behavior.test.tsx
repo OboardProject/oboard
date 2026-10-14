@@ -59,8 +59,11 @@ describe('ProxyOverview canvas behavior', () => {
       </DialogContext.Provider>
     </LazyMotion>))
   }
+  // The node picker is reached from the canvas menu (right click / long press).
   const stage = async (id = 3) => {
-    await act(async () => button('其他服务器').click())
+    const paneMenu = { clientX: 200, clientY: 160, preventDefault: () => undefined, stopPropagation: () => undefined } as unknown as React.MouseEvent
+    await act(async () => flow.props.onPaneContextMenu!(paneMenu))
+    await act(async () => Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="画布操作"] button')).find(item => item.textContent?.trim() === '其他服务器')!.click())
     await act(async () => button(`将 Server ${id} 放入画布`).click())
     return staged().at(-1)!
   }
@@ -75,6 +78,7 @@ describe('ProxyOverview canvas behavior', () => {
 
   beforeEach(() => {
     ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener: () => undefined, removeEventListener: () => undefined }))
     localStorage.clear()
     request.mockClear()
     alert.mockClear()
@@ -108,7 +112,7 @@ describe('ProxyOverview canvas behavior', () => {
     expect(document.body.textContent).not.toContain('独立端口')
     expect(document.body.textContent).not.toContain('预览切换')
     expect(document.querySelector('[aria-describedby="snell-mode-status"]')).toBeNull()
-    await act(async () => button('保存入口协议').click())
+    await act(async () => button('保存').click())
     expect(request.mock.calls.map(call => (call as any[])[0])).toEqual(['/inbounds/10'])
     expect(alert).not.toHaveBeenCalled()
   })
