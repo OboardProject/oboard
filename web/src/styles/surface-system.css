@@ -685,6 +685,7 @@ textarea:focus-visible,
 :root { --sidebar-width: clamp(208px, 19vw, 248px); }
 .main { --main-pad-x: clamp(16px, 3vw, 36px); }
 .panel-body { padding: clamp(14px, 2vw, 20px) clamp(14px, 2.4vw, 24px); }
-.server-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
-.server-card { container-type: inline-size; }
-@container (max-width: 440px) { .server-metric-list { grid-template-columns: minmax(0, 1fr); } }
+.server-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.server-metric-head { gap: 6px; }
+.server-metric-head > span { flex: none; white-space: nowrap; }
+.server-metric-head > strong { min-width: 0; font-size: 12px; white-space: nowrap; }
