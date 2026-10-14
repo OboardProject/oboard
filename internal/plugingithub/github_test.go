@@ -435,3 +435,19 @@ func manifestLimit() int {
 	limit, _ := pluginpackage.FileLimit("manifest.json")
 	return limit
 }
+
+func TestResolveReadsOnlyTheCommit(t *testing.T) {
+	for _, ref := range []string{"", "main"} {
+		f := newFixture(false)
+		source, err := resolve(context.Background(), "https://github.com/owner/repo", ref, f.transport(t))
+		if err != nil || source.Commit != testCommit || source.Ref != "main" || source.URL != "https://github.com/owner/repo" {
+			t.Fatalf("ref %q: %+v %v", ref, source, err)
+		}
+		if len(f.calls) != 2 || f.calls[1] != testBase+"/commits/main" {
+			t.Fatalf("a freshness probe must not read trees or blobs: %v", f.calls)
+		}
+	}
+	if _, err := resolve(context.Background(), "https://github.com/owner/repo/tree/main", "", newFixture(false).transport(t)); !errors.Is(err, ErrRepository) {
+		t.Fatalf("unsafe repository accepted: %v", err)
+	}
+}

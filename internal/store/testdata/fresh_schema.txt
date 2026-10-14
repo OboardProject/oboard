@@ -1657,6 +1657,7 @@ table plugin_packages
     signature_state TEXT notnull=1 default=- pk=0
     source_kind TEXT notnull=1 default=- pk=0
     source_repository TEXT notnull=1 default='' pk=0
+    source_ref TEXT notnull=1 default='' pk=0
     source_commit TEXT notnull=1 default='' pk=0
     created_by_user_id INTEGER notnull=1 default=0 pk=0
     created_at TEXT notnull=1 default=- pk=0

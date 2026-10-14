@@ -116,6 +116,7 @@ export interface Installation {
   signature_state?: string
   source_kind?: string
   source_repository?: string
+  source_ref?: string
   source_commit?: string
   icon?: string
   instances: InstanceSummary[]
@@ -132,6 +133,7 @@ export interface VersionView {
   signature_state: string
   source_kind: string
   source_repository?: string
+  source_ref?: string
   source_commit?: string
   active: boolean
   created_at: string
@@ -225,6 +227,7 @@ export interface PackagePreview {
   signature_state: string
   source_kind: string
   source_repository?: string
+  source_ref?: string
   source_commit?: string
   manifest: Manifest
   permissions: PermissionLine[]
@@ -234,6 +237,19 @@ export interface PackagePreview {
   diff: PermissionDiff
   action: string
   blocked?: string
+}
+
+export type PluginUpdateStatus = 'up_to_date' | 'update_available' | 'blocked' | 'pinned'
+
+export interface PluginUpdateCheck {
+  status: PluginUpdateStatus
+  repository: string
+  ref?: string
+  current_version: string
+  current_commit: string
+  latest_commit?: string
+  checked_at: string
+  preview?: PackagePreview
 }
 
 export interface PackageSource {

@@ -280,3 +280,46 @@ func TestPluginPageSchemaUpgradesPreviousRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestPluginPackageSourceRefUpgradesPreviousPackages(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`alter table plugin_packages drop column source_ref`,
+		`insert into plugin_installations(id,plugin_key,name,publisher_identity,created_at,updated_at) values(1,'acme.demo','Demo','local','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')`,
+		`insert into plugin_packages(id,installation_id,plugin_key,version,sha256,manifest_json,source,publisher_identity,signature_state,source_kind,source_repository,source_commit,created_at) values(1,1,'acme.demo','1.0.0','sha','{}','src','local','unsigned','github','https://github.com/acme/demo','`+strings.Repeat("a", 40)+`','2026-10-01T00:00:00Z')`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 2; pass++ {
+		s, err = Open(path)
+		if err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		pkg, err := s.GetPluginPackage(ctx, 1)
+		wantRef := ""
+		if pass > 0 {
+			wantRef = "main"
+		}
+		if err != nil || pkg.SourceRepository != "https://github.com/acme/demo" || pkg.SourceCommit != strings.Repeat("a", 40) || pkg.SourceRef != wantRef {
+			t.Fatalf("pass %d: previous package was not preserved: %+v %v", pass, pkg, err)
+		}
+		if pass == 0 {
+			if _, err := s.db.ExecContext(ctx, `update plugin_packages set source_ref='main' where id=1`); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

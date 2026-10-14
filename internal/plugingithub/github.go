@@ -98,43 +98,77 @@ func Fetch(ctx context.Context, repositoryURL, ref string) (Result, error) {
 	return fetch(ctx, repositoryURL, ref, transport)
 }
 
-func fetch(parent context.Context, repositoryURL, ref string, transport http.RoundTripper) (Result, error) {
-	source, err := parseRepository(repositoryURL)
-	if err != nil {
-		return Result{}, err
-	}
-	if ref != "" && !validRef(ref) {
-		return Result{}, ErrRef
-	}
+// ValidRef reports whether ref is acceptable as a branch, tag or commit name.
+// The empty string is not a ref; it means the repository's default branch.
+func ValidRef(ref string) bool { return validRef(ref) }
+
+// Resolve pins a public repository ref (empty = default branch) to its current
+// commit without reading any tree or blob. It is the cheap "has it moved" probe
+// used before a full Fetch.
+func Resolve(ctx context.Context, repositoryURL, ref string) (Source, error) {
+	transport := newTransport()
+	defer transport.CloseIdleConnections()
+	return resolve(ctx, repositoryURL, ref, transport)
+}
+
+func newClient(transport http.RoundTripper) *http.Client {
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+func resolve(parent context.Context, repositoryURL, ref string, transport http.RoundTripper) (Source, error) {
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
-	client := &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	source, _, err := resolveCommit(ctx, newClient(transport), repositoryURL, ref)
+	return source, err
+}
+
+// resolveCommit validates the repository, selects the ref and returns the
+// immutable commit it points at together with the API base path.
+func resolveCommit(ctx context.Context, client *http.Client, repositoryURL, ref string) (Source, string, error) {
+	source, err := parseRepository(repositoryURL)
+	if err != nil {
+		return Source{}, "", err
+	}
+	if ref != "" && !validRef(ref) {
+		return Source{}, "", ErrRef
+	}
 	base := "/repos/" + source.Owner + "/" + source.Repo
 	var repository struct {
 		Private       bool   `json:"private"`
 		DefaultBranch string `json:"default_branch"`
 	}
 	if err := getJSON(ctx, client, base, 64<<10, &repository); err != nil {
-		return Result{}, err
+		return Source{}, "", err
 	}
 	if repository.Private {
-		return Result{}, ErrRepository
+		return Source{}, "", ErrRepository
 	}
 	if ref == "" {
 		ref = repository.DefaultBranch
 	}
 	if !validRef(ref) {
-		return Result{}, ErrRef
+		return Source{}, "", ErrRef
 	}
 	source.Ref = ref
 	// Resolve once without diff data, then fetch only immutable Git objects.
 	sha, err := getBody(ctx, client, base+"/commits/"+url.PathEscape(ref), "application/vnd.github.sha", 64)
 	if err != nil {
-		return Result{}, err
+		return Source{}, "", err
 	}
 	source.Commit = strings.TrimSpace(string(sha))
 	if !shaPattern.MatchString(source.Commit) || (shaPattern.MatchString(ref) && ref != source.Commit) {
-		return Result{}, ErrContent
+		return Source{}, "", ErrContent
+	}
+	return source, base, nil
+}
+
+func fetch(parent context.Context, repositoryURL, ref string, transport http.RoundTripper) (Result, error) {
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	defer cancel()
+	client := newClient(transport)
+	source, base, err := resolveCommit(ctx, client, repositoryURL, ref)
+	if err != nil {
+		return Result{}, err
 	}
 	var commit struct {
 		SHA  string `json:"sha"`

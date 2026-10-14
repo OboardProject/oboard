@@ -535,3 +535,52 @@ func TestSchedulesCoalesceAndEventsStayInScope(t *testing.T) {
 		t.Fatalf("overlapping slots must coalesce: runs=%d skip=%q", len(runs), stored.LastSkipReason)
 	}
 }
+
+func TestUpdateSourceIsTheRecordedGitHubOrigin(t *testing.T) {
+	h := newHarness(t)
+	upload := h.candidate(gatewayManifest, model.PluginPublisherLocal)
+	result, err := h.service.InstallPackage(h.ctx, adminPrincipal(), upload, upload.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.ResolveUpdateSource(h.ctx, adminPrincipal(), result.InstallationID); CodeOf(err) != CodeConflict {
+		t.Fatalf("an uploaded package has no online source: %v", err)
+	}
+	if _, err := h.service.ResolveUpdateSource(h.ctx, operatorPrincipal(), result.InstallationID); err == nil {
+		t.Fatal("only interactive administrators may read the update source")
+	}
+
+	commit := strings.Repeat("a", 40)
+	from := func(manifest, ref string) PackageCandidate {
+		c := h.candidate(manifest, model.PluginPublisherLocal)
+		c.SourceKind, c.SourceRepository, c.SourceRef, c.SourceCommit = model.PluginSourceGitHub, "https://github.com/acme/demo", ref, commit
+		return c
+	}
+	next := from(withField(t, gatewayManifest, "version", "1.1.0"), "stable")
+	if _, err := h.service.InstallPackage(h.ctx, adminPrincipal(), next, next.SHA256); err != nil {
+		t.Fatal(err)
+	}
+	origin, err := h.service.ResolveUpdateSource(h.ctx, adminPrincipal(), result.InstallationID)
+	if err != nil || origin.Repository != "https://github.com/acme/demo" || origin.Ref != "stable" || origin.Commit != commit || origin.Version != "1.1.0" || origin.Pinned {
+		t.Fatalf("unexpected origin: %+v %v", origin, err)
+	}
+	detail, err := h.service.GetInstallation(h.ctx, adminPrincipal(), result.InstallationID)
+	if err != nil || detail.SourceRef != "stable" || detail.Versions[0].SourceRef != "stable" {
+		t.Fatalf("the ref must be visible in the installation view: %+v %v", detail.InstallationView, err)
+	}
+
+	pinned := from(withField(t, gatewayManifest, "version", "1.2.0"), commit)
+	if _, err := h.service.InstallPackage(h.ctx, adminPrincipal(), pinned, pinned.SHA256); err != nil {
+		t.Fatal(err)
+	}
+	if origin, err := h.service.ResolveUpdateSource(h.ctx, adminPrincipal(), result.InstallationID); err != nil || !origin.Pinned {
+		t.Fatalf("a commit ref never moves: %+v %v", origin, err)
+	}
+
+	// The same version with different content is refused with an actionable reason.
+	changed := from(withField(t, withField(t, gatewayManifest, "version", "1.2.0"), "description", "changed"), "stable")
+	preview, err := h.service.PreviewPackage(h.ctx, adminPrincipal(), changed)
+	if err != nil || !strings.Contains(preview.Blocked, "提升") {
+		t.Fatalf("reused version with new content must be blocked in preview: %+v %v", preview, err)
+	}
+}

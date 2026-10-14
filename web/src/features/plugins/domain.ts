@@ -131,6 +131,16 @@ export function shortHash(value?: string) {
   return value ? value.slice(0, 12) : ''
 }
 
+// repositoryLabel shortens a canonical GitHub URL to owner/repo.
+export function repositoryLabel(url?: string) {
+  return (url || '').replace(/^https:\/\/github\.com\//, '')
+}
+
+export function sourceRefLabel(ref?: string) {
+  if (!ref) return '默认分支'
+  return /^[0-9a-f]{40}$/.test(ref) ? `提交 ${ref.slice(0, 7)}` : ref
+}
+
 export function publisherLabel(identity?: string, name?: string) {
   if (!identity || identity === 'local') return '本地（未签名）'
   return name ? `${name} · ${identity.slice(0, 22)}…` : `${identity.slice(0, 22)}…`

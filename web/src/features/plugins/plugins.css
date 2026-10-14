@@ -160,6 +160,18 @@
 .plugin-view-table th { color: var(--text-muted); font-weight: 600; background: var(--bg-control); }
 .plugin-view-table td { color: var(--text-primary); border-top: 1px solid var(--border-color); }
 
+.plugin-source { display: grid; gap: var(--space-2); margin: var(--space-3) 0; padding: var(--space-3); border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-control); }
+.plugin-source-head { display: flex; align-items: center; gap: var(--space-2); }
+.plugin-source-head > svg { flex: none; color: var(--text-muted); }
+.plugin-source-head > .min-w-0 { flex: 1; }
+.plugin-source-repo { color: var(--text-primary); font-weight: 600; overflow-wrap: anywhere; }
+.plugin-source-repo:hover { text-decoration: underline; }
+.plugin-source-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-data-size); }
+.plugin-source-status:empty { display: none; }
+.plugin-source-status .plugin-callout { flex: 1 1 100%; margin: 0; }
+.plugin-source-ok { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-success); }
+.plugin-card-source { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+
 @media (max-width: 640px) {
   .plugin-custom-row-head { grid-template-columns: minmax(0, 1fr) auto; }
   .plugin-custom-row-head > :nth-child(2) { grid-column: 1 / -1; grid-row: 2; }

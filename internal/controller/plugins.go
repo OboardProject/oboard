@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/model"
@@ -93,6 +94,9 @@ func (s *Server) resolvePackageCandidate(ctx context.Context, source PackageSour
 		candidate.SourceKind = model.PluginSourceUpload
 	case "github":
 		ref := source.Ref
+		if ref != "" && !plugingithub.ValidRef(ref) {
+			return candidate, plugin.Fail(plugin.CodeInvalidArgument, "分支、标签或提交名称无效")
+		}
 		if install {
 			if len(source.Commit) != 40 {
 				return candidate, plugin.Fail(plugin.CodeInvalidArgument, "install requires the reviewed 40-character commit")
@@ -105,7 +109,7 @@ func (s *Server) resolvePackageCandidate(ctx context.Context, source PackageSour
 		}
 		pkg, err = pluginpackage.Validate(fetched.Files)
 		candidate.SourceKind = model.PluginSourceGitHub
-		candidate.SourceRepository, candidate.SourceCommit = fetched.Repository, fetched.Commit
+		candidate.SourceRepository, candidate.SourceRef, candidate.SourceCommit = fetched.Repository, source.Ref, fetched.Commit
 		if install && fetched.Commit != source.Commit {
 			return candidate, plugin.Fail(plugin.CodeConflict, "仓库提交与预览不一致，请重新预览")
 		}
@@ -122,6 +126,92 @@ func (s *Server) resolvePackageCandidate(ctx context.Context, source PackageSour
 		candidate.PublisherIdentity, candidate.SignatureState = model.PluginPublisherLocal, model.PluginSignatureUnsigned
 	}
 	return candidate, nil
+}
+
+// Update check outcomes for a GitHub-sourced plugin.
+const (
+	pluginUpdateCurrent   = "up_to_date"
+	pluginUpdateAvailable = "update_available"
+	pluginUpdateBlocked   = "blocked"
+	pluginUpdatePinned    = "pinned"
+)
+
+// PluginUpdateCheck is the result of asking the recorded GitHub origin whether
+// a newer version exists. Preview is present only when something differs.
+type PluginUpdateCheck struct {
+	Status         string                 `json:"status"`
+	Repository     string                 `json:"repository"`
+	Ref            string                 `json:"ref,omitempty"`
+	CurrentVersion string                 `json:"current_version"`
+	CurrentCommit  string                 `json:"current_commit"`
+	LatestCommit   string                 `json:"latest_commit,omitempty"`
+	CheckedAt      time.Time              `json:"checked_at"`
+	Preview        *plugin.PackagePreview `json:"preview,omitempty"`
+}
+
+// githubUpdateCandidate reads one commit of the recorded repository. The
+// repository and ref always come from the stored origin of the active version.
+func (s *Server) githubUpdateCandidate(ctx context.Context, origin plugin.UpdateSource, commit string) (plugin.PackageCandidate, error) {
+	return s.resolvePackageCandidate(ctx, PackageSourceInput{Kind: "github", RepositoryURL: origin.Repository, Ref: origin.Ref, Commit: commit}, true)
+}
+
+// checkPluginUpdate asks GitHub whether the installed plugin's ref moved. An
+// unchanged commit costs two small requests and reads no package content.
+func (s *Server) checkPluginUpdate(ctx context.Context, principal application.Principal, installationID int64) (PluginUpdateCheck, error) {
+	origin, err := s.plugins.ResolveUpdateSource(ctx, principal, installationID)
+	if err != nil {
+		return PluginUpdateCheck{}, err
+	}
+	result := PluginUpdateCheck{Repository: origin.Repository, Ref: origin.Ref, CurrentVersion: origin.Version, CurrentCommit: origin.Commit, CheckedAt: time.Now().UTC()}
+	if origin.Pinned {
+		result.Status = pluginUpdatePinned
+		return result, nil
+	}
+	resolved, err := plugingithub.Resolve(ctx, origin.Repository, origin.Ref)
+	if err != nil {
+		return result, plugin.Fail(plugin.CodeInvalidPackage, "GitHub 仓库读取失败："+err.Error())
+	}
+	result.LatestCommit = resolved.Commit
+	if resolved.Commit == origin.Commit {
+		result.Status = pluginUpdateCurrent
+		return result, nil
+	}
+	candidate, err := s.githubUpdateCandidate(ctx, origin, resolved.Commit)
+	if err != nil {
+		return result, err
+	}
+	if candidate.SHA256 == origin.SHA256 {
+		result.Status = pluginUpdateCurrent
+		return result, nil
+	}
+	preview, err := s.plugins.PreviewPackage(ctx, principal, candidate)
+	if err != nil {
+		return result, err
+	}
+	result.Preview = &preview
+	result.Status = pluginUpdateAvailable
+	if preview.Blocked != "" {
+		result.Status = pluginUpdateBlocked
+	}
+	return result, nil
+}
+
+// updatePluginFromSource installs the commit the administrator was shown. The
+// confirmed commit and package digest must still match what GitHub returns, so
+// a ref that moved after the check requires a fresh check.
+func (s *Server) updatePluginFromSource(ctx context.Context, principal application.Principal, installationID int64, commit, expectedSHA256 string) (plugin.InstallResult, error) {
+	origin, err := s.plugins.ResolveUpdateSource(ctx, principal, installationID)
+	if err != nil {
+		return plugin.InstallResult{}, err
+	}
+	if origin.Pinned {
+		return plugin.InstallResult{}, plugin.Fail(plugin.CodeConflict, "该插件固定在某个提交，没有可更新的版本")
+	}
+	candidate, err := s.githubUpdateCandidate(ctx, origin, commit)
+	if err != nil {
+		return plugin.InstallResult{}, err
+	}
+	return s.plugins.InstallPackage(ctx, principal, candidate, expectedSHA256)
 }
 
 // draftCandidate turns an editor draft into a local package candidate.
@@ -288,6 +378,33 @@ func (s *Server) apiV1PluginItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err := s.plugins.Publish(ctx, principal, id, draftCandidate)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		s.publishRealtime("plugins")
+		pluginOK(w, r, http.StatusOK, result)
+	case parts[1] == "source" && len(parts) == 3 && parts[2] == "check" && r.Method == http.MethodPost:
+		result, err := s.checkPluginUpdate(ctx, principal, id)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, result)
+	case parts[1] == "source" && len(parts) == 3 && parts[2] == "update" && r.Method == http.MethodPost:
+		var input struct {
+			Commit         string `json:"commit"`
+			ExpectedSHA256 string `json:"expected_sha256"`
+			Confirm        bool   `json:"confirm"`
+		}
+		if !pluginDecode(w, r, &input, 1<<16) {
+			return
+		}
+		if !input.Confirm {
+			pluginFail(w, r, plugin.Fail(plugin.CodeInvalidArgument, "confirm is required"))
+			return
+		}
+		result, err := s.updatePluginFromSource(ctx, principal, id, input.Commit, input.ExpectedSHA256)
 		if err != nil {
 			pluginFail(w, r, err)
 			return

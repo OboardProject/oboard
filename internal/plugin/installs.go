@@ -24,6 +24,7 @@ type PackageCandidate struct {
 	SignatureState    string
 	SourceKind        string
 	SourceRepository  string
+	SourceRef         string
 	SourceCommit      string
 }
 
@@ -40,6 +41,7 @@ type PackagePreview struct {
 	SignatureState    string                `json:"signature_state"`
 	SourceKind        string                `json:"source_kind"`
 	SourceRepository  string                `json:"source_repository,omitempty"`
+	SourceRef         string                `json:"source_ref,omitempty"`
 	SourceCommit      string                `json:"source_commit,omitempty"`
 	Manifest          Manifest              `json:"manifest"`
 	Permissions       []PermissionLine      `json:"permissions"`
@@ -91,7 +93,7 @@ func (s *Service) preview(ctx context.Context, candidate PackageCandidate) (Pack
 	preview := PackagePreview{
 		PluginID: m.ID, Name: m.Name, Version: m.Version, Description: m.Description, SHA256: candidate.SHA256,
 		PublisherIdentity: candidate.PublisherIdentity, PublisherName: candidate.PublisherName, SignatureState: candidate.SignatureState,
-		SourceKind: candidate.SourceKind, SourceRepository: candidate.SourceRepository, SourceCommit: candidate.SourceCommit,
+		SourceKind: candidate.SourceKind, SourceRepository: candidate.SourceRepository, SourceRef: candidate.SourceRef, SourceCommit: candidate.SourceCommit,
 		Manifest: m, Permissions: permissionLines(m), HTTPHosts: []string{}, Forbidden: ForbiddenCapabilityGroups(), Action: "install",
 	}
 	if m.HTTP != nil {
@@ -116,6 +118,16 @@ func (s *Service) preview(ctx context.Context, candidate PackageCandidate) (Pack
 			}
 			if pkg.SHA256 == candidate.SHA256 {
 				preview.Blocked = "该版本已是当前版本"
+			}
+		}
+	}
+	if preview.Blocked == "" {
+		if stored, err := s.store.ListPluginPackages(ctx, existing.ID); err == nil {
+			for _, pkg := range stored {
+				if pkg.Version == m.Version && pkg.SHA256 != candidate.SHA256 {
+					preview.Blocked = "已安装过版本 " + m.Version + "，但内容与新包不同。请让发布者提升 manifest 中的版本号后再更新。"
+					break
+				}
 			}
 		}
 	}
@@ -159,7 +171,7 @@ func (s *Service) InstallPackage(ctx context.Context, actor application.Principa
 		ManifestJSON: candidate.Manifest.CanonicalJSON(), Source: candidate.Source, IconPNG: candidate.Icon,
 		Readme: candidate.Readme, License: candidate.License, PublisherIdentity: candidate.PublisherIdentity,
 		PublisherName: candidate.PublisherName, SignatureState: candidate.SignatureState, SourceKind: candidate.SourceKind,
-		SourceRepository: candidate.SourceRepository, SourceCommit: candidate.SourceCommit, CreatedByUserID: actorUserID(actor),
+		SourceRepository: candidate.SourceRepository, SourceRef: candidate.SourceRef, SourceCommit: candidate.SourceCommit, CreatedByUserID: actorUserID(actor),
 	}
 	if preview.Existing == nil {
 		installation := model.PluginInstallation{PluginKey: candidate.Manifest.ID, Name: candidate.Manifest.Name, Description: candidate.Manifest.Description, PublisherIdentity: candidate.PublisherIdentity}
@@ -177,6 +189,54 @@ func (s *Service) InstallPackage(ctx context.Context, actor application.Principa
 		return InstallResult{}, err
 	}
 	return InstallResult{InstallationID: preview.Existing.InstallationID, PackageID: pkg.ID, Action: "update", Diff: preview.Diff, ReviewRequired: review}, nil
+}
+
+// UpdateSource is the recorded GitHub origin of the active version. A
+// one-click update reads the repository and ref from here, never from the
+// request, so an update can only come from where the plugin was installed.
+type UpdateSource struct {
+	InstallationID int64
+	Version        string
+	SHA256         string
+	Repository     string
+	Ref            string
+	Commit         string
+	Pinned         bool
+}
+
+// ResolveUpdateSource returns the active version's GitHub origin. A ref that is
+// a full commit ID is pinned: it never moves, so there is nothing to update to.
+func (s *Service) ResolveUpdateSource(ctx context.Context, actor application.Principal, installationID int64) (UpdateSource, error) {
+	if err := s.require(actor, PermInstall); err != nil {
+		return UpdateSource{}, err
+	}
+	installation, err := s.store.GetPluginInstallation(ctx, installationID)
+	if err != nil {
+		return UpdateSource{}, storeError(err)
+	}
+	if installation.ActivePackageID == 0 {
+		return UpdateSource{}, Fail(CodeConflict, "插件还没有已发布的版本")
+	}
+	pkg, err := s.store.GetPluginPackage(ctx, installation.ActivePackageID)
+	if err != nil {
+		return UpdateSource{}, storeError(err)
+	}
+	if pkg.SourceKind != model.PluginSourceGitHub || pkg.SourceRepository == "" {
+		return UpdateSource{}, Fail(CodeConflict, "该插件不是从 GitHub 安装的，无法在线检查更新")
+	}
+	return UpdateSource{
+		InstallationID: installationID, Version: pkg.Version, SHA256: pkg.SHA256, Repository: pkg.SourceRepository,
+		Ref: pkg.SourceRef, Commit: pkg.SourceCommit, Pinned: len(pkg.SourceRef) == 40 && isHexString(pkg.SourceRef),
+	}, nil
+}
+
+func isHexString(value string) bool {
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ActivateVersion switches to an already stored version (rollback or

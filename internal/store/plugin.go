@@ -42,12 +42,12 @@ func scanPluginInstallation(row pluginScanner) (model.PluginInstallation, error)
 	return item, nil
 }
 
-const pluginPackageColumns = `id,installation_id,plugin_key,version,sha256,manifest_json,source,icon_png,readme,license,publisher_identity,publisher_name,signature_state,source_kind,source_repository,source_commit,created_by_user_id,created_at`
+const pluginPackageColumns = `id,installation_id,plugin_key,version,sha256,manifest_json,source,icon_png,readme,license,publisher_identity,publisher_name,signature_state,source_kind,source_repository,source_ref,source_commit,created_by_user_id,created_at`
 
 func scanPluginPackage(row pluginScanner) (model.PluginPackage, error) {
 	var item model.PluginPackage
 	var manifest, created string
-	if err := row.Scan(&item.ID, &item.InstallationID, &item.PluginKey, &item.Version, &item.SHA256, &manifest, &item.Source, &item.IconPNG, &item.Readme, &item.License, &item.PublisherIdentity, &item.PublisherName, &item.SignatureState, &item.SourceKind, &item.SourceRepository, &item.SourceCommit, &item.CreatedByUserID, &created); err != nil {
+	if err := row.Scan(&item.ID, &item.InstallationID, &item.PluginKey, &item.Version, &item.SHA256, &manifest, &item.Source, &item.IconPNG, &item.Readme, &item.License, &item.PublisherIdentity, &item.PublisherName, &item.SignatureState, &item.SourceKind, &item.SourceRepository, &item.SourceRef, &item.SourceCommit, &item.CreatedByUserID, &created); err != nil {
 		return item, err
 	}
 	item.ManifestJSON = json.RawMessage(manifest)
@@ -182,8 +182,8 @@ func (s *Store) CreatePluginDraftInstallation(ctx context.Context, installation 
 }
 
 func insertPluginPackageTx(ctx context.Context, tx *sql.Tx, pkg *model.PluginPackage, ts string) error {
-	res, err := tx.ExecContext(ctx, `insert into plugin_packages(installation_id,plugin_key,version,sha256,manifest_json,source,icon_png,readme,license,publisher_identity,publisher_name,signature_state,source_kind,source_repository,source_commit,created_by_user_id,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		pkg.InstallationID, pkg.PluginKey, pkg.Version, pkg.SHA256, string(pkg.ManifestJSON), pkg.Source, pkg.IconPNG, pkg.Readme, pkg.License, pkg.PublisherIdentity, pkg.PublisherName, pkg.SignatureState, pkg.SourceKind, pkg.SourceRepository, pkg.SourceCommit, pkg.CreatedByUserID, ts)
+	res, err := tx.ExecContext(ctx, `insert into plugin_packages(installation_id,plugin_key,version,sha256,manifest_json,source,icon_png,readme,license,publisher_identity,publisher_name,signature_state,source_kind,source_repository,source_ref,source_commit,created_by_user_id,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		pkg.InstallationID, pkg.PluginKey, pkg.Version, pkg.SHA256, string(pkg.ManifestJSON), pkg.Source, pkg.IconPNG, pkg.Readme, pkg.License, pkg.PublisherIdentity, pkg.PublisherName, pkg.SignatureState, pkg.SourceKind, pkg.SourceRepository, pkg.SourceRef, pkg.SourceCommit, pkg.CreatedByUserID, ts)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrPluginVersionExists

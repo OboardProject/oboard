@@ -1,6 +1,6 @@
 import './plugins.css'
 import React, { useCallback, useEffect, useState } from 'react'
-import { Code2, Cpu, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
+import { Code2, Cpu, GitBranch, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Dialog } from '../../components/ui/dialog'
@@ -17,9 +17,9 @@ import { PluginDetail } from './PluginDetail'
 import { PluginEditor } from './PluginEditor'
 import { RunDialog } from './RunDialog'
 import {
-  describeError, errorMessage, formatTime, instanceStatusLabels, instanceStatusTone, publisherLabel, runStatusLabels, runTone, triggerLabels,
+  describeError, errorMessage, formatTime, instanceStatusLabels, instanceStatusTone, publisherLabel, repositoryLabel, runStatusLabels, runTone, triggerLabels,
 } from './domain'
-import type { Catalog, Installation, InstallationDetail, NotificationChannelOption, PlanOption, PluginsWorkspaceProps, Run, RuntimeStatus, ServerOption, UserOption } from './types'
+import type { Catalog, Installation, InstallationDetail, NotificationChannelOption, PlanOption, PluginsWorkspaceProps, PluginUpdateCheck, Run, RuntimeStatus, ServerOption, UserOption } from './types'
 
 type EditorState = { pluginID?: number; manifest?: string; source?: string } | null
 
@@ -126,6 +126,7 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
                 </div>
                 <Badge variant={item.enabled ? 'success' : 'secondary'}>{item.enabled ? '已启用' : item.published ? '已停用' : '草稿'}</Badge>
               </div>
+              {item.source_kind === 'github' && item.source_repository && <p className="plugin-card-source"><GitBranch size={12} aria-hidden="true" />{repositoryLabel(item.source_repository)}</p>}
               {item.description && <p className="plugin-card-desc">{item.description}</p>}
               <div className="plugin-card-instances">
                 {item.instances.length === 0 ? <span className="plugin-env-help">暂无实例</span> : item.instances.slice(0, 4).map(instance =>
@@ -156,6 +157,20 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
       onToggleEnabled={() => void act(async () => { setDetail(await api.setInstallationEnabled(request, detail.id, !detail.enabled)); void refresh() }, detail.enabled ? '已停用插件' : '已启用插件')}
       onUninstall={() => void act(async () => { await api.uninstall(request, detail.id); setDetail(null); void refresh() }, '已卸载插件')}
       onActivate={packageID => void act(async () => { await api.activateVersion(request, detail.id, packageID); await reloadDetail() }, '已切换版本')}
+      onCheckUpdate={() => api.checkPluginUpdate(request, detail.id)}
+      onApplyUpdate={async (check: PluginUpdateCheck) => {
+        if (!check.latest_commit || !check.preview) return false
+        setBusy(true)
+        try {
+          const result = await api.updatePluginFromSource(request, detail.id, check.latest_commit, check.preview.sha256)
+          notify(result.review_required ? `已更新到 ${check.preview.version}，新增权限需要重新审核授权` : `已更新到 ${check.preview.version}`, result.review_required ? 'warning' : 'success')
+          await reloadDetail()
+          return true
+        } catch (e) {
+          notify(errorMessage(e, '更新失败'), 'error')
+          return false
+        } finally { setBusy(false) }
+      }}
       onEdit={() => setEditor({ pluginID: detail.id, manifest: detail.draft?.manifest || (detail.manifest ? JSON.stringify(detail.manifest, null, 2) : undefined), source: detail.draft?.source ?? detail.source })} />}
 
     {detail && instanceID && <InstanceDialog key={instanceID} instanceID={instanceID} installation={detail} request={request} servers={servers} channels={channels} users={users} plans={plans}

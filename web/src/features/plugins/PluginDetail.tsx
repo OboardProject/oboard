@@ -6,8 +6,9 @@ import { Dialog } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import { PermissionList } from './PackageInstallDialog'
-import { formatTime, instanceStatusLabels, instanceStatusTone, publisherLabel, shortHash } from './domain'
-import type { InstallationDetail } from './types'
+import { PluginSource } from './PluginSource'
+import { formatTime, instanceStatusLabels, instanceStatusTone, publisherLabel, repositoryLabel, shortHash, sourceRefLabel } from './domain'
+import type { InstallationDetail, PluginUpdateCheck } from './types'
 
 export interface PluginDetailProps {
   detail: InstallationDetail
@@ -21,9 +22,11 @@ export interface PluginDetailProps {
   onUninstall: () => void
   onActivate: (packageID: number) => void
   onEdit: () => void
+  onCheckUpdate: () => Promise<PluginUpdateCheck>
+  onApplyUpdate: (check: PluginUpdateCheck) => Promise<boolean>
 }
 
-export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onOpenInstance, onCreateInstance, onToggleEnabled, onUninstall, onActivate, onEdit }: PluginDetailProps) {
+export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onOpenInstance, onCreateInstance, onToggleEnabled, onUninstall, onActivate, onEdit, onCheckUpdate, onApplyUpdate }: PluginDetailProps) {
   const [view, setView] = useState('instances')
   const [newName, setNewName] = useState('')
   const [confirmUninstall, setConfirmUninstall] = useState(false)
@@ -39,6 +42,7 @@ export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onO
     title={<span className="plugin-dialog-title">{detail.name}{detail.version && <span className="plugin-version">{detail.version}</span>}<Badge variant={detail.enabled ? 'success' : 'secondary'}>{detail.enabled ? '已启用' : detail.published ? '已停用' : '草稿'}</Badge></span>}>
     <div className="plugin-detail">
       <p className="plugin-env-help"><code>{detail.plugin_id}</code>{detail.description ? ` · ${detail.description}` : ''}</p>
+      <PluginSource detail={detail} isAdmin={isAdmin} busy={busy} onCheck={onCheckUpdate} onApply={onApplyUpdate} />
       <Tabs value={view} onValueChange={setView}>
         <TabsList className="plugin-tabs">
           <TabsTrigger value="instances">实例</TabsTrigger>
@@ -65,7 +69,7 @@ export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onO
         <TabsContent value="overview">
           <dl className="plugin-facts">
             <div><dt>发布者</dt><dd>{detail.signature_state === 'verified' && <BadgeCheck size={13} className="inline mr-1" aria-label="已签名" />}{publisherLabel(detail.publisher_identity, detail.publisher_name)}</dd></div>
-            <div><dt>来源</dt><dd>{detail.source_kind === 'github' ? `${detail.source_repository} @ ${shortHash(detail.source_commit)}` : detail.source_kind === 'editor' ? '面板编辑器' : '上传的插件包'}</dd></div>
+            <div><dt>来源</dt><dd>{detail.source_kind === 'github' ? `${repositoryLabel(detail.source_repository)} · ${sourceRefLabel(detail.source_ref)} @ ${shortHash(detail.source_commit)}` : detail.source_kind === 'editor' ? '面板编辑器' : '上传的插件包'}</dd></div>
             {detail.manifest && <div><dt>运行时</dt><dd>{detail.manifest.runtime} · {detail.manifest.entry}</dd></div>}
           </dl>
           <h4 className="plugin-subhead">声明的能力</h4>
@@ -77,7 +81,7 @@ export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onO
             {detail.versions.map(version => <li key={version.package_id} className="plugin-record-row">
               <div className="min-w-0">
                 <strong>{version.version}</strong>{version.active && <Badge variant="success" className="ml-2">当前</Badge>}
-                <p className="plugin-env-help">{formatTime(version.created_at)} · <code>{shortHash(version.sha256)}</code> · {version.signature_state === 'verified' ? '已签名' : '未签名'}</p>
+                <p className="plugin-env-help">{formatTime(version.created_at)} · <code>{shortHash(version.sha256)}</code>{version.source_kind === 'github' && version.source_commit ? <> · {repositoryLabel(version.source_repository)}@<code>{shortHash(version.source_commit)}</code></> : null} · {version.signature_state === 'verified' ? '已签名' : '未签名'}</p>
               </div>
               {isAdmin && !version.active && <Button size="sm" variant="outline" disabled={busy} onClick={() => setActivateTarget(version.package_id)}>切换到此版本</Button>}
             </li>)}

@@ -1,6 +1,6 @@
 import type {
   AuditEvent, Catalog, CustomVar, EditorDiagnostics, Grant, Installation, InstallationDetail, InstanceDetail,
-  InstancePage, NotificationChannelOption, PackagePreview, PackageSource, PlanOption, RequestFn, Run, RunLog, RuntimeStatus, Schedule, ServerOption, StateEntry, UserOption,
+  InstancePage, NotificationChannelOption, PackagePreview, PackageSource, PlanOption, PluginUpdateCheck, RequestFn, Run, RunLog, RuntimeStatus, Schedule, ServerOption, StateEntry, UserOption,
 } from './types'
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) })
@@ -23,6 +23,11 @@ export const previewPackage = (request: RequestFn, source: PackageSource) =>
   request<PackagePreview>('/plugins/packages/preview', { method: 'POST', ...json({ source }) })
 export const installPackage = (request: RequestFn, source: PackageSource, expectedSHA256: string) =>
   request<{ installation_id: number; instance_id?: number; review_required: boolean }>('/plugins/packages/install', { method: 'POST', ...json({ source, expected_sha256: expectedSHA256, confirm: true }) })
+
+export const checkPluginUpdate = (request: RequestFn, id: number) =>
+  request<PluginUpdateCheck>(`/plugins/${id}/source/check`, { method: 'POST', ...json({}) })
+export const updatePluginFromSource = (request: RequestFn, id: number, commit: string, expectedSHA256: string) =>
+  request<{ installation_id: number; package_id: number; review_required: boolean }>(`/plugins/${id}/source/update`, { method: 'POST', ...json({ commit, expected_sha256: expectedSHA256, confirm: true }) })
 
 export const diagnoseDraft = (request: RequestFn, manifest: string, source: string) =>
   request<EditorDiagnostics>('/plugins/drafts/diagnose', { method: 'POST', ...json({ manifest, source }) })

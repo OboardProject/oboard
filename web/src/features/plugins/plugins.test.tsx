@@ -4,8 +4,9 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { EnvironmentForm } from './EnvironmentForm'
 import { GrantEditor } from './GrantEditor'
+import { PluginSource } from './PluginSource'
 import { describeError, errorIssues, fieldActive, issuesByField } from './domain'
-import type { EnvField, InstallationDetail, ServerOption } from './types'
+import type { EnvField, InstallationDetail, PluginUpdateCheck, ServerOption } from './types'
 
 beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
 afterEach(() => vi.unstubAllGlobals())
@@ -125,4 +126,58 @@ it('grants server scope from explicit selection and warns about environment serv
   } finally {
     await view.unmount()
   }
+})
+
+const githubDetail = {
+  id: 7, plugin_id: 'acme.demo', name: 'Demo', description: '', enabled: true, published: true, has_draft: false, version: '1.0.0', package_id: 11,
+  publisher_identity: 'local', source_kind: 'github', source_repository: 'https://github.com/acme/demo', source_ref: 'stable', source_commit: 'a'.repeat(40),
+  instances: [], created_at: '', updated_at: '',
+} as unknown as InstallationDetail
+
+const noDiff = { added_capabilities: [], removed_capabilities: [], added_hosts: [], removed_hosts: [], added_methods: [], added_events: [], added_secrets: [], added_environment: [], removed_environment: [], changed_environment: [], new_required: [], added_pages: [], added_actions: [], resources_expanded: false, expanded: false }
+const updateCheck = (diff = noDiff): PluginUpdateCheck => ({
+  status: 'update_available', repository: 'https://github.com/acme/demo', ref: 'stable', current_version: '1.0.0', current_commit: 'a'.repeat(40), latest_commit: 'b'.repeat(40), checked_at: '2026-10-14T00:00:00Z',
+  preview: { plugin_id: 'acme.demo', name: 'Demo', version: '1.1.0', sha256: 'c'.repeat(64), diff, blocked: '' } as unknown as PluginUpdateCheck['preview'],
+})
+const findButton = (text: string) => Array.from(document.querySelectorAll('button')).find(item => item.textContent?.includes(text))
+
+it('records the GitHub origin and updates in one click when no permission was added', async () => {
+  const onApply = vi.fn().mockResolvedValue(true)
+  const view = await render(<PluginSource detail={githubDetail} isAdmin busy={false} onCheck={async () => updateCheck()} onApply={onApply} />)
+  try {
+    const text = view.container.textContent || ''
+    expect(text).toContain('acme/demo')
+    expect(text).toContain('stable')
+    expect(text).toContain('有新版本 1.1.0')
+    await act(async () => findButton('更新到 1.1.0')!.click())
+    expect(onApply).toHaveBeenCalledTimes(1)
+    expect(onApply.mock.calls[0][0].latest_commit).toBe('b'.repeat(40))
+    expect(document.body.textContent).not.toContain('确认更新')
+  } finally { await view.unmount() }
+})
+
+it('asks for a review before an update that expands permissions', async () => {
+  const onApply = vi.fn().mockResolvedValue(true)
+  const view = await render(<PluginSource detail={githubDetail} isAdmin busy={false} onCheck={async () => updateCheck({ ...noDiff, added_capabilities: ['http.request'], expanded: true })} onApply={onApply} />)
+  try {
+    await act(async () => findButton('更新到 1.1.0')!.click())
+    expect(onApply).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('新版本扩大了权限')
+    await act(async () => findButton('确认更新')!.click())
+    expect(onApply).toHaveBeenCalledTimes(1)
+  } finally { await view.unmount() }
+})
+
+it('shows the source to non-administrators without contacting GitHub, and nothing for uploads', async () => {
+  const onCheck = vi.fn()
+  const viewer = await render(<PluginSource detail={githubDetail} isAdmin={false} busy={false} onCheck={onCheck} onApply={vi.fn()} />)
+  try {
+    expect(viewer.container.textContent).toContain('acme/demo')
+    expect(onCheck).not.toHaveBeenCalled()
+  } finally { await viewer.unmount() }
+  const upload = await render(<PluginSource detail={{ ...githubDetail, source_kind: 'upload', source_repository: undefined }} isAdmin busy={false} onCheck={onCheck} onApply={vi.fn()} />)
+  try {
+    expect(upload.container.textContent).toBe('')
+    expect(onCheck).not.toHaveBeenCalled()
+  } finally { await upload.unmount() }
 })

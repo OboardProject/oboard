@@ -43,6 +43,7 @@ type InstallationView struct {
 	SignatureState    string            `json:"signature_state,omitempty"`
 	SourceKind        string            `json:"source_kind,omitempty"`
 	SourceRepository  string            `json:"source_repository,omitempty"`
+	SourceRef         string            `json:"source_ref,omitempty"`
 	SourceCommit      string            `json:"source_commit,omitempty"`
 	Icon              string            `json:"icon,omitempty"`
 	Instances         []InstanceSummary `json:"instances"`
@@ -73,6 +74,7 @@ type VersionView struct {
 	SignatureState    string    `json:"signature_state"`
 	SourceKind        string    `json:"source_kind"`
 	SourceRepository  string    `json:"source_repository,omitempty"`
+	SourceRef         string    `json:"source_ref,omitempty"`
 	SourceCommit      string    `json:"source_commit,omitempty"`
 	Active            bool      `json:"active"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -168,7 +170,7 @@ func (s *Service) installationView(loaded loadedInstallation, instances []Instan
 		p := loaded.pkg
 		view.Published, view.Version, view.PackageID = true, p.Version, p.ID
 		view.PublisherName, view.SignatureState, view.SourceKind = p.PublisherName, p.SignatureState, p.SourceKind
-		view.SourceRepository, view.SourceCommit, view.Icon = p.SourceRepository, p.SourceCommit, IconDataURL(p.IconPNG)
+		view.SourceRepository, view.SourceRef, view.SourceCommit, view.Icon = p.SourceRepository, p.SourceRef, p.SourceCommit, IconDataURL(p.IconPNG)
 	}
 	return view
 }
@@ -295,7 +297,7 @@ func (s *Service) GetInstallation(ctx context.Context, actor application.Princip
 		return InstallationDetail{}, storeError(err)
 	}
 	for _, pkg := range packages {
-		detail.Versions = append(detail.Versions, VersionView{PackageID: pkg.ID, Version: pkg.Version, SHA256: pkg.SHA256, PublisherIdentity: pkg.PublisherIdentity, PublisherName: pkg.PublisherName, SignatureState: pkg.SignatureState, SourceKind: pkg.SourceKind, SourceRepository: pkg.SourceRepository, SourceCommit: pkg.SourceCommit, Active: pkg.ID == loaded.installation.ActivePackageID, CreatedAt: pkg.CreatedAt})
+		detail.Versions = append(detail.Versions, VersionView{PackageID: pkg.ID, Version: pkg.Version, SHA256: pkg.SHA256, PublisherIdentity: pkg.PublisherIdentity, PublisherName: pkg.PublisherName, SignatureState: pkg.SignatureState, SourceKind: pkg.SourceKind, SourceRepository: pkg.SourceRepository, SourceRef: pkg.SourceRef, SourceCommit: pkg.SourceCommit, Active: pkg.ID == loaded.installation.ActivePackageID, CreatedAt: pkg.CreatedAt})
 	}
 	detail.CanDevelop = s.Can(actor, PermDevelop)
 	detail.CanInstall = s.Can(actor, PermInstall)

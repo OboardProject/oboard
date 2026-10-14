@@ -26,7 +26,7 @@ export function PermissionList({ permissions, hosts, forbidden }: { permissions:
   </div>
 }
 
-function DiffList({ diff }: { diff: PermissionDiff }) {
+export function DiffList({ diff }: { diff: PermissionDiff }) {
   const rows: Array<[string, string[]]> = [
     ['新增能力', diff.added_capabilities], ['移除能力', diff.removed_capabilities], ['新增 HTTP 主机', diff.added_hosts],
     ['移除 HTTP 主机', diff.removed_hosts], ['新增 HTTP 方法', diff.added_methods], ['新增事件', diff.added_events],

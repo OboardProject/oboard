@@ -95,6 +95,7 @@ var pluginSchemaStatements = []string{
 		signature_state text not null check(signature_state in ('verified','unsigned')),
 		source_kind text not null check(source_kind in ('upload','github','editor')),
 		source_repository text not null default '',
+		source_ref text not null default '',
 		source_commit text not null default '',
 		created_by_user_id integer not null default 0,
 		created_at text not null,
@@ -251,7 +252,10 @@ func (s *Store) migratePluginSchema(ctx context.Context) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "plugin_packages", "source_ref", `alter table plugin_packages add column source_ref text not null default ''`)
 }
 
 // retireScriptOutboxTx removes pending events from the pre-capability script

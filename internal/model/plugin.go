@@ -94,6 +94,7 @@ type PluginPackage struct {
 	SignatureState    string          `json:"signature_state"`
 	SourceKind        string          `json:"source_kind"`
 	SourceRepository  string          `json:"source_repository,omitempty"`
+	SourceRef         string          `json:"source_ref,omitempty"`
 	SourceCommit      string          `json:"source_commit,omitempty"`
 	CreatedByUserID   int64           `json:"created_by_user_id"`
 	CreatedAt         time.Time       `json:"created_at"`
