@@ -50,4 +50,29 @@ describe('NodeAssignmentsPage reading context', () => {
     expect(container.textContent).toContain('new')
     expect(container.textContent).not.toContain('stale-result')
   })
+  it('shows applied search as a removable chip and a batch bar for selected nodes', async () => {
+    const request = vi.fn(async (path: string) => {
+      const query = new URL(path, 'http://localhost').searchParams.get('query') || ''
+      return { nodes: [{ ...node(`东京${query}`), key: 'inbound:1' }, { ...node('香港'), key: 'inbound:2', id: 2 }], total: 2, page: 1, page_size: 50 }
+    })
+    await act(async () => root.render(<NodeAssignmentsPage data={{ session: { role: 'admin' }, subscription_plans: [] }} client={{ request }} load={vi.fn()} />))
+    await flush()
+    expect(container.querySelector('.nw-batch-bar')).toBeNull()
+    act(() => container.querySelector<HTMLInputElement>('.nw-catalog-table [aria-label="选择 香港"]')!.click())
+    expect(container.querySelector('.nw-batch-bar')?.textContent).toContain('已选 1 个节点')
+
+    const search = container.querySelector<HTMLInputElement>('[aria-label="搜索节点"]')!
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'A')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    const chip = container.querySelector<HTMLButtonElement>('[aria-label="移除搜索 A"]')!
+    expect(chip.textContent).toContain('搜索：A')
+    act(() => chip.click())
+    await flush()
+    expect(container.querySelector('[aria-label="移除搜索 A"]')).toBeNull()
+    expect(new URL(String(request.mock.calls.at(-1)?.[0]), 'http://localhost').searchParams.get('query')).toBeNull()
+  })
+
 })

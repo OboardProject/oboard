@@ -12,6 +12,8 @@ vi.mock('motion/react', async importOriginal => ({
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
+const tabLabel = (tab: Element) => Array.from(tab.childNodes).filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join('')
+
 async function flushEffects() {
   await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 0)) })
 }
@@ -65,11 +67,12 @@ describe('NodeWorkspacePage', () => {
     await flushEffects()
 
     const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
-    expect(tabs.map(tab => tab.textContent)).toEqual(['节点库', '节点组', '组合订阅'])
+    expect(tabs.map(tabLabel)).toEqual(['节点库', '节点组', '组合订阅'])
+    expect(tabs.map(tab => tab.querySelector('.nw-tab-count')?.textContent)).toEqual(['1', '3', '1'])
     expect(tabs[0].getAttribute('aria-selected')).toBe('true')
     expect(document.body.textContent).toContain('香港 01')
-    expect(Array.from(container.querySelectorAll('.node-library-table th'), header => header.textContent)).toEqual(['节点', '协议', '来源', ''])
-    expect(container.querySelector('.node-library-table tbody tr')?.children).toHaveLength(4)
+    expect(Array.from(container.querySelectorAll('.nw-library-table th'), header => header.textContent)).toEqual(['节点', '节点组', '协议', '来源', '操作'])
+    expect(Array.from(container.querySelector('.nw-library-table tbody tr')?.children || [], cell => cell.textContent).slice(0, 4)).toEqual(['香港 01', 'OBoard', 'vless', 'OBoard'])
 
     act(() => (tabs[1] as HTMLButtonElement).click())
     expect(tabs[1].getAttribute('aria-selected')).toBe('true')
@@ -78,11 +81,12 @@ describe('NodeWorkspacePage', () => {
     act(() => (tabs[2] as HTMLButtonElement).click())
     expect(document.body.textContent).toContain('默认组合')
     expect(document.body.textContent).toContain('复制订阅')
-    expect(document.querySelector('.output-group-row')).toBeNull()
+    expect(Array.from(document.querySelectorAll('[aria-label="输出节点组"] li > span'), item => item.textContent)).toEqual(['OBoard', '机场 B', '自建 C'])
+    expect(document.querySelector('.nw-output-group-row')).toBeNull()
     act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('编辑组合')) as HTMLButtonElement).click())
-    expect(Array.from(document.querySelectorAll('.output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 机场 B', '3. 自建 C'])
+    expect(Array.from(document.querySelectorAll('.nw-output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 机场 B', '3. 自建 C'])
     act(() => (document.querySelector('[aria-label="上移 自建 C"]') as HTMLButtonElement).click())
-    expect(Array.from(document.querySelectorAll('.output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 自建 C', '3. 机场 B'])
+    expect(Array.from(document.querySelectorAll('.nw-output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 自建 C', '3. 机场 B'])
   })
 
   it('edits subscription output filters and shows preview filter stats', async () => {
@@ -124,20 +128,20 @@ describe('NodeWorkspacePage', () => {
 
     act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('编辑组合')) as HTMLButtonElement).click())
     expect(document.body.textContent).toContain('过滤规则')
-    expect(document.querySelectorAll('.output-filter-row').length).toBe(1)
-    expect(document.querySelector('.output-filter-row input')?.getAttribute('value')).toBe('广告')
+    expect(document.querySelectorAll('.nw-output-filter-row').length).toBe(1)
+    expect(document.querySelector('.nw-output-filter-row input')?.getAttribute('value')).toBe('广告')
 
-    const valueInput = () => document.querySelector('.output-filter-row input') as HTMLInputElement
+    const valueInput = () => document.querySelector('.nw-output-filter-row input') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(valueInput(), '广告|测试')
       valueInput().dispatchEvent(new window.Event('input', { bubbles: true }))
     })
     act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('添加规则')) as HTMLButtonElement).click())
-    expect(document.querySelectorAll('.output-filter-row').length).toBe(2)
-    act(() => (document.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).value = 'drop_protocol')
-    act(() => (document.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
-    act(() => (document.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).value = 'trojan')
-    act(() => (document.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
+    expect(document.querySelectorAll('.nw-output-filter-row').length).toBe(2)
+    act(() => (document.querySelectorAll('.nw-output-filter-row select')[1] as HTMLSelectElement).value = 'drop_protocol')
+    act(() => (document.querySelectorAll('.nw-output-filter-row select')[1] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
+    act(() => (document.querySelectorAll('.nw-output-filter-row select')[2] as HTMLSelectElement).value = 'trojan')
+    act(() => (document.querySelectorAll('.nw-output-filter-row select')[2] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
     act(() => (Array.from(document.querySelectorAll('.dialog-chrome-foot button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
     await flushEffects()
 
@@ -145,10 +149,12 @@ describe('NodeWorkspacePage', () => {
     expect(patched[0].filters).toEqual([{ type: 'drop_name', value: '广告|测试' }, { type: 'drop_protocol', value: 'trojan' }])
     expect(patched[0].group_ids).toEqual([1, 2])
 
-    act(() => (Array.from(document.querySelectorAll('.output-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
+    expect(Array.from(document.querySelectorAll('[aria-label="过滤规则"] li'), item => item.textContent)).toEqual(['名字正则排除广告'])
+    act(() => (Array.from(document.querySelectorAll('.nw-output-deliver button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
     await flushEffects()
-    expect(document.body.textContent).toContain('规则过滤 1 个')
-    expect(document.querySelector('.filter-stat')?.textContent).toContain('名字正则排除')
+    const stats = Object.fromEntries(Array.from(document.querySelectorAll('.nw-preview-stats > div'), item => [item.querySelector('dt')?.textContent, item.querySelector('dd')?.textContent]))
+    expect(stats).toMatchObject({ 输出节点: '1', 规则过滤: '1', 去重: '0' })
+    expect(document.querySelector('.nw-filter-stat')?.textContent).toContain('名字正则排除')
   })
 
   it('edits a manual node and previews a remote subscription URL', async () => {
@@ -176,24 +182,24 @@ describe('NodeWorkspacePage', () => {
     await flushEffects()
 
     act(() => (document.querySelector('[aria-label="编辑 香港 01"]') as HTMLButtonElement).click())
-    const nameInput = document.querySelector('.node-edit-form input') as HTMLInputElement
+    const nameInput = document.querySelector('.nw-node-edit input') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput, '香港 02')
       nameInput.dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    act(() => (Array.from(document.querySelectorAll('.node-edit-form button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('.nw-node-edit button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
     await flushEffects()
     expect(requests).toContainEqual({ path: '/node-library/private:1', body: JSON.stringify({ name: '香港 02', content: '' }), method: 'PATCH' })
 
     act(() => (Array.from(document.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
-    expect(document.querySelector('.node-group-create')).toBeNull()
+    expect(document.querySelector('.nw-group-create')).toBeNull()
     act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('添加节点组')) as HTMLButtonElement).click())
-    const urlInput = document.querySelector('.node-group-create input[type="url"]') as HTMLInputElement
+    const urlInput = document.querySelector('.nw-group-create input[type="url"]') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(urlInput, 'https://example.com/sub')
       urlInput.dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    act(() => (Array.from(document.querySelectorAll('.node-import-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('.nw-group-create button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
     await flushEffects()
     expect(requests).toContainEqual({ path: '/node-import-preview', body: JSON.stringify({ url: 'https://example.com/sub' }), method: 'POST' })
     expect(document.body.textContent).toContain('可导入 1 个节点')
@@ -222,8 +228,9 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    expect(document.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
-    expect(document.querySelector('[role="tablist"]')).toBeNull()
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('节点目录')
+    expect(Array.from(document.querySelectorAll('[role="tab"]'), tab => tab.textContent)).toEqual(['节点目录', '订阅分发', '用户节点'])
+    expect(request.mock.calls.every(([path]) => !String(path).startsWith('/node-workspace'))).toBe(true)
   })
 
   it('never shows the platform-user layout before the administrator page data arrives', async () => {
@@ -237,7 +244,8 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    expect(document.querySelector('[role="tablist"]')).toBeNull()
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('节点目录')
+    expect(document.body.textContent).not.toContain('节点库')
     expect(request.mock.calls.every(([path]) => !String(path).startsWith('/node-workspace') && !String(path).startsWith('/node-library'))).toBe(true)
 
     await act(async () => {
@@ -245,8 +253,8 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    expect(document.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
-    expect(document.querySelector('[role="tablist"]')).toBeNull()
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('节点目录')
+    expect(request.mock.calls.every(([path]) => !String(path).startsWith('/node-workspace') && !String(path).startsWith('/node-library'))).toBe(true)
   })
 
   it('waits for the role instead of rendering the platform-user layout when it is unknown', async () => {
@@ -291,7 +299,7 @@ describe('NodeWorkspacePage', () => {
 
     expect(document.body.textContent).toContain('DDG')
     act(() => (document.querySelector('[aria-label="编辑 DDG"]') as HTMLButtonElement).click())
-    const remoteForm = document.querySelector('.node-group-edit') as HTMLFormElement
+    const remoteForm = document.querySelector('.nw-group-edit') as HTMLFormElement
     expect(remoteForm).not.toBeNull()
     expect(remoteForm.textContent).toContain('HTTPS 订阅 URL')
     expect(remoteForm.textContent).toContain('当前 https://mweujowynb.rini.ma/...')
@@ -303,10 +311,10 @@ describe('NodeWorkspacePage', () => {
     act(() => (Array.from(remoteForm.querySelectorAll('button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
     await flushEffects()
     expect(patched).toContainEqual({ path: '/node-groups/3', name: 'DDG', url: 'https://new.example.com/sub' })
-    expect(document.querySelector('.node-group-edit')).toBeNull()
+    expect(document.querySelector('.nw-group-edit')).toBeNull()
 
     act(() => (document.querySelector('[aria-label="编辑 机场 B"]') as HTMLButtonElement).click())
-    const manualForm = document.querySelector('.node-group-edit') as HTMLFormElement
+    const manualForm = document.querySelector('.nw-group-edit') as HTMLFormElement
     expect(manualForm.textContent).toContain('新增节点链接')
     expect(manualForm.querySelector('input[type="url"]')).toBeNull()
     const textarea = manualForm.querySelector('textarea') as HTMLTextAreaElement
@@ -319,12 +327,12 @@ describe('NodeWorkspacePage', () => {
     expect(patched).toContainEqual({ path: '/node-groups/2', name: '机场 B', content: 'ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Extra-One' })
 
     act(() => (document.querySelector('[aria-label="编辑 OBoard"]') as HTMLButtonElement).click())
-    const systemForm = document.querySelector('.node-group-edit') as HTMLFormElement
+    const systemForm = document.querySelector('.nw-group-edit') as HTMLFormElement
     expect(systemForm.querySelector('input[type="url"]')).toBeNull()
     expect(systemForm.querySelector('textarea')).toBeNull()
     act(() => (Array.from(systemForm.querySelectorAll('button')).find(button => button.textContent?.includes('取消')) as HTMLButtonElement).click())
     await flushEffects()
-    expect(document.querySelector('.node-group-edit')).toBeNull()
+    expect(document.querySelector('.nw-group-edit')).toBeNull()
     expect(document.querySelectorAll('[aria-label^="编辑 "]').length).toBe(3)
   })
 
@@ -403,15 +411,15 @@ describe('NodeWorkspacePage', () => {
     await act(async () => renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn()} />, dialogs))
     await flushEffects()
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="编辑 节点 A"]')!.click())
-    const name = document.querySelector<HTMLInputElement>('.node-edit-form input')!
+    const name = document.querySelector<HTMLInputElement>('.nw-node-edit input')!
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, '新的名称')
       name.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    act(() => Array.from(document.querySelectorAll('.node-edit-form button')).find(button => button.textContent?.includes('保存'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    act(() => Array.from(document.querySelectorAll('.nw-node-edit button')).find(button => button.textContent?.includes('保存'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     await flushEffects()
-    expect(document.querySelector<HTMLInputElement>('.node-edit-form input')?.value).toBe('新的名称')
-    expect(document.querySelector('.node-edit-form [role="alert"]')?.textContent).toBe('名称不可用')
+    expect(document.querySelector<HTMLInputElement>('.nw-node-edit input')?.value).toBe('新的名称')
+    expect(document.querySelector('.nw-node-edit [role="alert"]')?.textContent).toBe('名称不可用')
   })
 
   it('does not close a node draft typed after submission or duplicate a double click', async () => {
@@ -425,8 +433,8 @@ describe('NodeWorkspacePage', () => {
     await act(async () => renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn()} />, dialogs))
     await flushEffects()
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="编辑 节点 A"]')!.click())
-    const name = document.querySelector<HTMLInputElement>('.node-edit-form input')!
-    const save = Array.from(document.querySelectorAll<HTMLButtonElement>('.node-edit-form button')).find(button => button.textContent?.includes('保存'))!
+    const name = document.querySelector<HTMLInputElement>('.nw-node-edit input')!
+    const save = Array.from(document.querySelectorAll<HTMLButtonElement>('.nw-node-edit button')).find(button => button.textContent?.includes('保存'))!
     act(() => { save.click(); save.click() })
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, '继续输入')
@@ -435,8 +443,63 @@ describe('NodeWorkspacePage', () => {
     await act(async () => { finish(); await pending })
     await flushEffects()
     expect(request.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1)
-    expect(document.querySelector<HTMLInputElement>('.node-edit-form input')?.value).toBe('继续输入')
-    expect(document.querySelector('.node-edit-form [role="status"]')?.textContent).toContain('未保存')
+    expect(document.querySelector<HTMLInputElement>('.nw-node-edit input')?.value).toBe('继续输入')
+    expect(document.querySelector('.nw-node-edit [role="status"]')?.textContent).toContain('未保存')
+  })
+
+  it('scopes the administrator user view to the selected user and keeps distribution separate', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [{ id: 1, kind: 'oboard', system_key: 'oboard', name: 'OBoard', node_count: 1 }],
+      node_sources: [],
+      subscription_outputs: [{ id: 2, name: '默认组合', is_default: true, enabled: true, group_ids: [1] }],
+    }
+    const request = vi.fn(async (path: string) => {
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [], total: 0, page: 1, page_size: 50 }
+      if (path === '/node-workspace?user_id=7') return workspace
+      if (path === '/node-library?user_id=7') return { nodes: [{ id: 'proxy_path:1', group_id: 1, name: '东京 01', protocol: 'vless', source: 'oboard', copyable: true }] }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    const data = { session: { role: 'admin' }, current_user: { id: 1 }, users: [{ id: 1, username: 'admin', status: 'active' }, { id: 7, username: 'alice', status: 'active' }], servers: [], subscription_plans: [] }
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={data} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} legacySubscriptions={<div className="legacy-distribution">分发面板</div>} />, dialogs)
+    })
+    await flushEffects()
+    expect(document.querySelector('.legacy-distribution')).toBeNull()
+
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]')).find(tab => tab.textContent === '订阅分发') as HTMLButtonElement).click())
+    expect(document.querySelector('.legacy-distribution')?.textContent).toBe('分发面板')
+
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]')).find(tab => tab.textContent === '用户节点') as HTMLButtonElement).click())
+    await flushEffects()
+    const picker = document.querySelector('[aria-label="选择用户视角"]') as HTMLSelectElement
+    await act(async () => {
+      picker.value = '7'
+      picker.dispatchEvent(new window.Event('change', { bubbles: true }))
+    })
+    await flushEffects()
+
+    expect(document.body.textContent).toContain('正在代管 alice 的节点')
+    expect(document.body.textContent).toContain('东京 01')
+    expect(document.querySelector('.legacy-distribution')).toBeNull()
+    expect(Array.from(document.querySelectorAll('[aria-label="节点工作台"] [role="tab"]'), tabLabel)).toEqual(['节点库', '节点组', '组合订阅'])
+  })
+
+  it('gives a platform user a dedicated subscription link tab', async () => {
+    const request = vi.fn(async (path: string) => {
+      if (path === '/node-workspace') return { subject: { id: 7, username: 'alice' }, node_groups: [], node_sources: [], subscription_outputs: [] }
+      if (path === '/node-library') return { nodes: [] }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn()} legacySubscriptions={<div className="my-subscription">我的订阅</div>} />, dialogs)
+    })
+    await flushEffects()
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
+    expect(tabs.map(tabLabel)).toEqual(['节点库', '节点组', '组合订阅', '订阅链接'])
+    expect(document.querySelector('.my-subscription')).toBeNull()
+    act(() => (tabs[3] as HTMLButtonElement).click())
+    expect(document.querySelector('.my-subscription')?.textContent).toBe('我的订阅')
   })
 
 })

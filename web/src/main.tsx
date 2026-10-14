@@ -19577,7 +19577,7 @@ function MySubscriptions({ data, client, load, notify }: { data: any; client: Re
     }
   }
 
-  return <Panel title="订阅" className="subscriptions-panel">
+  return <Panel className="subscriptions-panel">
     {!iconsReady ? <div className="subscription-page-loading" role="status" aria-live="polite">
       <RefreshCw aria-hidden="true" />
       <strong>正在加载订阅页面</strong>
@@ -19819,7 +19819,7 @@ function Subscriptions({ data, client, load, notify }: any) {
   }
 
   return <>
-    <Panel title="订阅" className="subscriptions-panel">
+    <Panel className="subscriptions-panel">
       {!iconsReady ? (
         <div className="subscription-page-loading" role="status" aria-live="polite">
           <RefreshCw aria-hidden="true" />
