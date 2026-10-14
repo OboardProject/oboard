@@ -6,8 +6,8 @@
    12px card radius, hairline borders, monochrome icons and soft shadows. */
 
 :root {
-  --sidebar-bg: #fafafa;
-  --sidebar-accent: #f0f0f0;
+  --sidebar-bg: var(--bg-page);
+  --sidebar-accent: #f0f0f1;
   --sidebar-border: var(--border);
   --ring-soft: color-mix(in srgb, var(--focus-ring) 18%, transparent);
   --row-hover: color-mix(in srgb, var(--surface-2) 70%, transparent);

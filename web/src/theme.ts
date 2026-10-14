@@ -148,7 +148,7 @@ export function accentContrastColor(color: string): string {
 }
 
 const THEME_PAGE_BG: Record<ThemeName, string> = {
-  light: '#ffffff',
+  light: '#fafafa',
   dark: '#0a0a0a',
 }
 
