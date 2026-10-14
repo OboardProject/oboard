@@ -25374,21 +25374,189 @@ button.dns-policy-row-main:focus {
 
 .plan-form-dialog-form {
   margin-bottom: 0;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px 12px;
+}
+
+.plan-form-dialog-form > .form-field {
+  grid-column: 1 / -1;
 }
 
 @media (min-width: 640px) {
-  .plan-form-dialog-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .plan-form-dialog-form > .form-field:nth-child(-n+2) {
+    grid-column: span 3;
   }
 
-  .plan-form-dialog-form > .form-field:nth-child(-n+2) {
-    grid-column: 1 / -1;
+  .plan-form-dialog-form > .form-field:nth-child(n+3) {
+    grid-column: span 2;
+  }
+
+  .plan-form-dialog-form > .form-field:nth-child(6) {
+    grid-column: 5 / span 2;
   }
 }
 
-.plan-form-dialog-search {
+/* Plan forms stack every label above its control and attach units inside one field. */
+:is(.plan-form-dialog-form, .signal-plan-form .form) > .form-field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  align-items: stretch;
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) > .form-field .form-field-meta {
+  min-height: 20px;
+  padding-top: 0;
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) > .form-field .form-field-control {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) :is(.input-with-unit, .traffic-limit-input) {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: var(--control-height);
+  box-sizing: border-box;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) :is(.input-with-unit, .traffic-limit-input):focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--ring-soft);
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) :is(.input-with-unit, .traffic-limit-input) input {
+  flex: 1 1 0;
+  align-self: stretch;
+  width: 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm) !important;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) .input-with-unit > span,
+:is(.plan-form-dialog-form, .signal-plan-form .form) .input-with-unit:focus-within > span {
+  align-self: stretch;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) .traffic-limit-input .ui-segmented-select {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 0;
+  margin: 3px;
+  padding: 2px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: var(--surface-2);
+}
+
+:is(.plan-form-dialog-form, .signal-plan-form .form) .traffic-limit-input .ui-segmented-select button {
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  :is(.plan-form-dialog-form, .signal-plan-form .form) :is(.input-with-unit, .traffic-limit-input) {
+    min-height: 44px;
+  }
+
+  :is(.plan-form-dialog-form, .signal-plan-form .form) .traffic-limit-input .ui-segmented-select button {
+    min-height: 34px;
+    min-width: 44px;
+  }
+}
+
+.plan-form-dialog-section {
+  display: grid;
+  gap: 2px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.plan-form-dialog-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.plan-form-dialog-section h3 > span {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.plan-form-dialog-section p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.plan-form-dialog-toolbar {
   display: flex;
   gap: 8px;
+}
+
+.plan-form-dialog-toolbar > .ui-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.plan-node-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--control-height);
+  padding: 0 12px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--muted);
+  cursor: text;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.plan-node-search:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--ring-soft);
+}
+
+.plan-node-search > svg {
+  flex: 0 0 auto;
+}
+
+.plan-node-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-strong);
 }
 
 .plan-form-dialog-chips {
@@ -25402,9 +25570,71 @@ button.dns-policy-row-main:focus {
 .plan-form-dialog-list {
   flex: 1 1 auto;
   min-height: min(180px, 28vh);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+
+.plan-node-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.plan-node-option:hover {
+  background: var(--surface-2);
+}
+
+.plan-node-option.is-checked {
+  background: var(--primary-softer);
+}
+
+.plan-node-option > input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.plan-node-option-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-node-option-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.plan-node-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  .plan-node-option {
+    min-height: 44px;
+  }
 }
 
 @media (max-height: 640px) {

@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3, SlidersHorizontal, History, GripVertical, Save, Users } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3, SlidersHorizontal, History, GripVertical, Save, Users, Search } from 'lucide-react'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -259,6 +259,37 @@ function regionFlagEmoji(code?: string) {
 function PlanDetailShell({ inline, open, onClose, title, status, children }: { inline?: boolean; open: boolean; onClose: () => void; title: string; status?: React.ReactNode; children: React.ReactNode }) {
   if (inline) return open ? <section className="plan-detail-inline" aria-label={title}>{children}</section> : null
   return <Dialog isOpen={open} onClose={onClose} title={<span className="signal-plan-title">{title}{status}</span>} placement="right" drawerSize="wide" className="signal-plan-detail">{children}</Dialog>
+}
+
+function PlanNodeSearchBar({ query, busy, placeholder, onQueryChange, onSearch }: { query: string; busy: boolean; placeholder: string; onQueryChange: (value: string) => void; onSearch: () => void }) {
+  return (
+    <div className="plan-form-dialog-toolbar">
+      <label className="plan-node-search">
+        <Search size={16} aria-hidden="true" />
+        <input value={query} onChange={e => onQueryChange(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSearch() } }} placeholder={placeholder} aria-label="搜索节点" />
+      </label>
+      <Button variant="outline" busy={busy} onClick={onSearch}>搜索</Button>
+    </div>
+  )
+}
+
+function PlanNodePickList({ nodes, selected, busy, emptyText, onToggle }: { nodes: CatalogNode[]; selected: PlanNode[]; busy: boolean; emptyText: string; onToggle: (node: CatalogNode) => void }) {
+  const selectedKeys = new Set(selected.map(nodeKey))
+  return (
+    <div className="plan-form-dialog-list">
+      {nodes.map(n => {
+        const checked = selectedKeys.has(n.key)
+        return (
+          <label key={n.key} className={`plan-node-option${checked ? ' is-checked' : ''}`}>
+            <input type="checkbox" checked={checked} onChange={() => onToggle(n)} />
+            <span className="plan-node-option-name">{n.name}</span>
+            <span className="plan-node-option-meta">{[n.entry_protocol, n.exit_region].filter(Boolean).join(' · ')}</span>
+          </label>
+        )
+      })}
+      {nodes.length === 0 && !busy && <p className="plan-node-empty">{emptyText}</p>}
+    </div>
+  )
 }
 
 export function SubscriptionPlansPage({ data, client, load, notify, embedded = false, selectedPlanID = 0 }: { data: any; client: AnyClient; load: () => Promise<void>; notify?: (message: string, tone?: any) => void; embedded?: boolean; selectedPlanID?: number }) {
@@ -1381,13 +1412,11 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                 </div>
               </FormField>}
             </form>
-            <div className="section-toolbar">
-              <div><h3 style={{ margin: 0 }}>初始节点（{createNodes.length}）</h3><p className="muted">选择该套餐可分配的节点；可留空，创建后继续添加。</p></div>
+            <div className="plan-form-dialog-section">
+              <h3>初始节点<span>{createNodes.length > 0 ? `已选 ${createNodes.length}` : '可留空'}</span></h3>
+              <p>选择该套餐可分配的节点，创建后也可以继续添加。</p>
             </div>
-            <div className="plan-form-dialog-search">
-              <Input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void runPickerSearch(pickerQuery) }} placeholder="搜索节点名称、协议或地区" />
-              <Button variant="outline" size="sm" style={{ whiteSpace: 'nowrap' }} busy={pickerBusy} onClick={() => void runPickerSearch(pickerQuery)}>搜索</Button>
-            </div>
+            <PlanNodeSearchBar query={pickerQuery} busy={pickerBusy} placeholder="搜索节点名称、协议或地区" onQueryChange={setPickerQuery} onSearch={() => void runPickerSearch(pickerQuery)} />
             {createNodes.length > 0 && (
               <div className="plan-form-dialog-chips">
                 {createNodes.map(n => (
@@ -1400,19 +1429,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
             )}
             {message && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{message}</p>}
           </div>
-          <div className="card-custom plan-form-dialog-list">
-            {pickerResults.map(n => {
-              const exists = createNodes.some(x => nodeKey(x) === n.key)
-              return (
-                <label key={n.key} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={exists} onChange={() => togglePickerNode(n)} />
-                  <span style={{ fontWeight: 600 }}>{n.name}</span>
-                  <span className="muted" style={{ fontSize: 12 }}>{n.entry_protocol || ''} {n.exit_region ? `· ${n.exit_region}` : ''}</span>
-                </label>
-              )
-            })}
-            {pickerResults.length === 0 && !pickerBusy && <p className="muted" style={{ padding: 12 }}>没有匹配的节点，可留空稍后添加。</p>}
-          </div>
+          <PlanNodePickList nodes={pickerResults} selected={createNodes} busy={pickerBusy} emptyText="没有匹配的节点，可留空稍后添加。" onToggle={togglePickerNode} />
         </div>
       </Dialog>
 
@@ -1519,25 +1536,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                 <div>{Object.entries(pendingRegionCounts).sort(([a], [b]) => a.localeCompare(b)).map(([region, count]) => <Badge key={region} variant="outline">{region} {count}</Badge>)}</div>
               </div>
             )}
-            <div className="plan-form-dialog-search">
-              <Input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void runPickerSearch(pickerQuery) }} placeholder="搜索节点..." />
-              <Button variant="outline" size="sm" style={{ whiteSpace: 'nowrap' }} busy={pickerBusy} onClick={() => void runPickerSearch(pickerQuery)}>搜索</Button>
-            </div>
+            <PlanNodeSearchBar query={pickerQuery} busy={pickerBusy} placeholder="搜索节点名称、协议或地区" onQueryChange={setPickerQuery} onSearch={() => void runPickerSearch(pickerQuery)} />
           </div>
-          <div className="card-custom plan-form-dialog-list">
-            {pickerResults.map(n => {
-              const targetNodes = pickerPlanMode === 'create' ? createNodes : workingNodes
-              const exists = targetNodes.some(x => nodeKey(x) === n.key)
-              return (
-                <label key={n.key} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={exists} onChange={() => togglePickerNode(n)} />
-                  <span style={{ fontWeight: 600 }}>{n.name}</span>
-                  <span className="muted" style={{ fontSize: 12 }}>{n.entry_protocol || ''} {n.exit_region ? `· ${n.exit_region}` : ''}</span>
-                </label>
-              )
-            })}
-            {pickerResults.length === 0 && !pickerBusy && <p className="muted" style={{ padding: 12 }}>没有匹配的节点。</p>}
-          </div>
+          <PlanNodePickList nodes={pickerResults} selected={pickerPlanMode === 'create' ? createNodes : workingNodes} busy={pickerBusy} emptyText="没有匹配的节点。" onToggle={togglePickerNode} />
         </div>
       </Dialog>
 
