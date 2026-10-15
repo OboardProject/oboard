@@ -14481,7 +14481,7 @@ const inboundProtocolChoices: { protocol: Protocol; label: string; summary: stri
   { protocol: 'hy2', label: 'Hysteria2', summary: 'QUIC / UDP · 需证书' },
   { protocol: 'shadowsocks', label: 'Shadowsocks', summary: 'AEAD 加密 · 免证书' },
   { protocol: 'mieru', label: 'Mieru', summary: '免证书 · 支持多端口' },
-  { protocol: 'snell', label: 'Snell', summary: 'Surge 专用 · PSK' },
+  { protocol: 'snell', label: 'Snell', summary: 'UOT · PSK' },
   { protocol: 'socks', label: 'SOCKS5', summary: '用户名密码 · TCP/UDP' },
   { protocol: 'ssh', label: 'SSH', summary: '密码认证 · 仅端口转发' },
 ]
