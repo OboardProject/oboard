@@ -77,10 +77,9 @@ function exitState(pool: VPNGatePool, state: PoolServer): { tone: string; text: 
   return { tone: "ok", text: "正常" }
 }
 
-export function VPNGatePage({ client, servers, canManage }: { client: Client; servers: ServerRef[]; canManage: boolean }) {
+export function VPNGatePage({ client, servers, canManage, notify }: { client: Client; servers: ServerRef[]; canManage: boolean; notify?: (message: string, tone?: "success" | "error" | "warning" | "info") => void }) {
   const [overview, setOverview] = useState<Overview | null>(null)
   const [error, setError] = useState("")
-  const [notice, setNotice] = useState("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
@@ -100,10 +99,10 @@ export function VPNGatePage({ client, servers, canManage }: { client: Client; se
 
   const mutate = async (action: "save" | "delete" | "reselect", input: any, success: string) => {
     if (busyRef.current) return
-    busyRef.current = true; setBusy(true); setError(""); setNotice("")
+    busyRef.current = true; setBusy(true); setError("")
     try {
       await request("/vpngate", { method: "POST", body: JSON.stringify({ action, request_id: crypto.randomUUID(), input }) })
-      setNotice(success); setEditing(null); setDeleting(null)
+      notify?.(success, "success"); setEditing(null); setDeleting(null)
       await refresh()
     } catch (e: any) { setError(e.message || "操作失败") }
     finally { busyRef.current = false; setBusy(false) }
@@ -147,7 +146,6 @@ export function VPNGatePage({ client, servers, canManage }: { client: Client; se
 
     {ipinfoMissing && <div className="vpngate-callout" role="note"><AlertTriangle size={16} aria-hidden="true" /><span>IPinfo 未填写 Key，出口运营商改用免 Key 接口与备用来源识别，额度较低；识别失败时限定了运营商的出口池会跳过该节点。可在“设置 › 节点 › IP 与路由数据”填写。</span></div>}
     {error && !editing && !deleting && <p className="danger-text" role="alert">{error}</p>}
-    {notice && <p className="muted" role="status">{notice}</p>}
 
     {loading && !overview ? <p className="muted" role="status">正在加载…</p> : !pools.length ? <div className="vpngate-empty">
       <h3>还没有出口池</h3>

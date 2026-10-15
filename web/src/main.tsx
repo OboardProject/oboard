@@ -3125,7 +3125,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
   if (tab === 'mtu') return <MTU data={data} client={client} load={load} notify={notify} />
-  if (tab === 'vpngate') return <VPNGatePage client={client} servers={data.servers || []} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} />
+  if (tab === 'vpngate') return <VPNGatePage client={client} servers={data.servers || []} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} notify={notify} />
   if (tab === 'traffic-forwarding') return <TrafficForwardingPage data={data} client={client} load={load} notify={notify} localizeError={localizeErrorMessage} />
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
   if (tab === 'tasks') return <Tasks tasks={data.agent_tasks} servers={data.servers} client={client} loading={loading} />
