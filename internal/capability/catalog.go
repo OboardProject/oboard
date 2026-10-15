@@ -510,6 +510,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, networkDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, runtimeSecurityDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, probeMonitorDescriptors(positiveID, stringValue, boolValue)...)
+	descriptors = append(descriptors, probeDDNSDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, ipDataDescriptors(stringValue, boolValue)...)
 	descriptors = append(descriptors, vpngateDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, proxyDSCPDescriptors(positiveID, stringValue, boolValue)...)
@@ -802,30 +803,29 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"short_id":         map[string]any{"type": "string", "pattern": "^(?:[0-9a-fA-F]{2}){1,8}$"},
 		})
 		inboundProperties := map[string]any{
-			"server_id":             positiveID,
-			"name":                  map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-			"kind":                  map[string]any{"type": "string", "enum": inboundKinds},
-			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hy2", "anytls", "shadowsocks", "mieru", "snell", "socks", "ssh"}},
-			"listen_ip":             map[string]any{"type": "string", "maxLength": 255},
-			"port":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
-			"advertise_port":        map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "对外端口，0 表示与监听端口一致；启用 NAT 映射时需与监听端口不同。Snell 共享端口可对应一个 NAT 对外端口，每个授权身份使用独立 PSK"},
-			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
-			"external_ip":           map[string]any{"type": "string", "maxLength": 255},
-			"dns_sync_enabled":      map[string]any{"type": "boolean", "description": "默认 false，是否让主控写入并维护入口解析记录。只有双栈入口（entry_ip_mode=auto 且 dns_record_types=both，订阅 Host 用解析域名）可以开启；单栈入口直接用 IP 连接，不创建解析，除非全局设置 dns_always_resolve=true，否则开启会返回 validation_failed。TLS 入口不需要它：证书域名作为 SNI 即可完成握手，订阅 Host 可以直接是服务器 IP。true 时必须有 dns_domain 与 dns_credential_id。租户仅一条凭据或 bootstrap default_dns_credential_id 可由服务端自动填充；否则 validation_failed 返回 missing_dns_credential 与 available_credentials"},
-			"dns_credential_id":     map[string]any{"type": []string{"integer", "null"}, "description": "DNS 凭据。dns_sync_enabled=true 时必填。托管证书入口即使不同步解析也用它走 DNS-01 自动签发；已有覆盖该 SNI 的证书时可以留空。唯一启用凭据或 bootstrap default_dns_credential_id 可省略并由服务端填充；dns_sync_enabled=true 时无法填充的错误带 available_credentials: [{id, name, provider}]"},
-			"dns_domain":            map[string]any{"type": "string", "maxLength": 253, "description": "入口解析域名，只在需要主控维护解析记录时填写；dns_sync_enabled=true 时必填。托管证书若未填 certificate_domain，主控用此域名作为 SNI；修改后会删除旧解析、写入新解析，跟随证书域名，已有覆盖证书则立刻绑定"},
-			"dns_proxy_enabled":     boolValue,
-			"dns_record_types":      map[string]any{"type": "string", "enum": []string{"auto", "a", "aaaa", "both"}, "description": "both 配合 entry_ip_mode=auto 表示双栈入口（A + AAAA），是默认唯一允许 DNS 同步的形态；a/aaaa/auto 为单栈，仅在 dns_always_resolve=true 时可同步"},
-			"ddns_enabled":          boolValue,
-			"ddns_interval_seconds": map[string]any{"type": "integer", "minimum": 300, "maximum": 86400},
-			"tls":                   boolValue,
-			"certificate_mode":      map[string]any{"type": "string", "enum": []string{"external", "auto", "exact", "wildcard", "explicit"}, "description": "TLS 入口默认 auto。auto/exact/wildcard 由主控在部署时匹配或申请证书，创建不要求证书已就绪；explicit 才需要 certificate_id；Reality 必须 external"},
-			"certificate_id":        map[string]any{"type": []string{"integer", "null"}, "description": "仅 certificate_mode=explicit 时需要；auto 不要填，也不要为了绕过签发去改 external"},
-			"certificate_domain":    map[string]any{"type": "string", "maxLength": 253, "description": "SNI 域名，可省略并跟随 dns_domain。托管模式必须最终是有效域名，但不需要证书已经签发完成，也不需要解析到本机——客户端连接服务器 IP 时仍用它完成 TLS"},
-			"config_json":           map[string]any{"type": "string", "maxLength": 65536},
-			"reality":               realityInput,
-			"rotate_reality_key":    boolValue,
-			"enabled":               boolValue,
+			"server_id":          positiveID,
+			"name":               map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+			"kind":               map[string]any{"type": "string", "enum": inboundKinds},
+			"protocol":           map[string]any{"type": "string", "enum": []string{"vless", "hy2", "anytls", "shadowsocks", "mieru", "snell", "socks", "ssh"}},
+			"listen_ip":          map[string]any{"type": "string", "maxLength": 255},
+			"port":               map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+			"advertise_port":     map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "对外端口，0 表示与监听端口一致；启用 NAT 映射时需与监听端口不同。Snell 共享端口可对应一个 NAT 对外端口，每个授权身份使用独立 PSK"},
+			"entry_ip_mode":      map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
+			"external_ip":        map[string]any{"type": "string", "maxLength": 255},
+			"dns_sync_enabled":   map[string]any{"type": "boolean", "description": "默认 false，是否让主控写入并维护入口解析记录。只有双栈入口（entry_ip_mode=auto 且 dns_record_types=both，订阅 Host 用解析域名）可以开启；单栈入口直接用 IP 连接，不创建解析，除非全局设置 dns_always_resolve=true，否则开启会返回 validation_failed。TLS 入口不需要它：证书域名作为 SNI 即可完成握手，订阅 Host 可以直接是服务器 IP。true 时必须有 dns_domain 与 dns_credential_id。租户仅一条凭据或 bootstrap default_dns_credential_id 可由服务端自动填充；否则 validation_failed 返回 missing_dns_credential 与 available_credentials"},
+			"dns_credential_id":  map[string]any{"type": []string{"integer", "null"}, "description": "DNS 凭据。dns_sync_enabled=true 时必填。托管证书入口即使不同步解析也用它走 DNS-01 自动签发；已有覆盖该 SNI 的证书时可以留空。唯一启用凭据或 bootstrap default_dns_credential_id 可省略并由服务端填充；dns_sync_enabled=true 时无法填充的错误带 available_credentials: [{id, name, provider}]"},
+			"dns_domain":         map[string]any{"type": "string", "maxLength": 253, "description": "入口解析域名，只在需要主控维护解析记录时填写；dns_sync_enabled=true 时必填。托管证书若未填 certificate_domain，主控用此域名作为 SNI；修改后会删除旧解析、写入新解析，跟随证书域名，已有覆盖证书则立刻绑定"},
+			"dns_proxy_enabled":  boolValue,
+			"dns_record_types":   map[string]any{"type": "string", "enum": []string{"auto", "a", "aaaa", "both"}, "description": "both 配合 entry_ip_mode=auto 表示双栈入口（A + AAAA），是默认唯一允许 DNS 同步的形态；a/aaaa/auto 为单栈，仅在 dns_always_resolve=true 时可同步"},
+			"ddns_record_id":     map[string]any{"type": []string{"integer", "null"}, "description": "可选。引用同一台服务器上的拨测 DDNS 记录，订阅 Host 使用该记录的域名。不开启 dns_sync_enabled，也不改变证书 SNI。记录在 probe_ddns.save 中创建"},
+			"tls":                boolValue,
+			"certificate_mode":   map[string]any{"type": "string", "enum": []string{"external", "auto", "exact", "wildcard", "explicit"}, "description": "TLS 入口默认 auto。auto/exact/wildcard 由主控在部署时匹配或申请证书，创建不要求证书已就绪；explicit 才需要 certificate_id；Reality 必须 external"},
+			"certificate_id":     map[string]any{"type": []string{"integer", "null"}, "description": "仅 certificate_mode=explicit 时需要；auto 不要填，也不要为了绕过签发去改 external"},
+			"certificate_domain": map[string]any{"type": "string", "maxLength": 253, "description": "SNI 域名，可省略并跟随 dns_domain。托管模式必须最终是有效域名，但不需要证书已经签发完成，也不需要解析到本机——客户端连接服务器 IP 时仍用它完成 TLS"},
+			"config_json":        map[string]any{"type": "string", "maxLength": 65536},
+			"reality":            realityInput,
+			"rotate_reality_key": boolValue,
+			"enabled":            boolValue,
 		}
 		inboundProperties["anytls_padding"] = closedObject(map[string]any{
 			"preset_id": map[string]any{"type": "string", "enum": []string{"balanced_v1", "light_v1"}},
@@ -850,6 +850,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "advertise_port": map[string]any{"type": "integer"},
 			"entry_ip_mode": stringValue, "external_ip": stringValue, "dns_sync_enabled": boolValue,
+			"ddns_record_id": map[string]any{"type": []string{"integer", "null"}}, "ddns_domain": stringValue,
 			"dns_credential_id": map[string]any{"type": []string{"integer", "null"}}, "dns_domain": stringValue, "dns_record_types": stringValue,
 			"tls": boolValue, "certificate_mode": stringValue, "certificate_domain": stringValue, "kind": stringValue, "enabled": boolValue, "advanced_configured": boolValue, "listener_mode": stringValue, "credential_limit": map[string]any{"type": "integer"}, "active_mode": stringValue, "active_port": map[string]any{"type": "integer"},
 		})

@@ -34,8 +34,8 @@ type inboundPaddingUpdateOperation struct {
 var inboundAutomationFields = map[string]bool{
 	"server_id": true, "name": true, "protocol": true, "listen_ip": true, "port": true, "advertise_port": true,
 	"entry_ip_mode": true, "external_ip": true, "dns_sync_enabled": true, "dns_credential_id": true,
-	"dns_domain": true, "dns_proxy_enabled": true, "dns_record_types": true, "ddns_enabled": true,
-	"ddns_interval_seconds": true, "tls": true, "certificate_mode": true, "certificate_id": true,
+	"dns_domain": true, "dns_proxy_enabled": true, "dns_record_types": true, "ddns_record_id": true,
+	"tls": true, "certificate_mode": true, "certificate_id": true,
 	"certificate_domain": true, "config_json": true, "kind": true, "reality": true,
 	"rotate_reality_key": true, "enabled": true,
 	"anytls_padding": true,
@@ -402,6 +402,9 @@ func (s *Server) validateInboundAutomationCandidate(ctx context.Context, princip
 		return err
 	}
 	if err := s.validateInboundDNSPolicy(ctx, *inbound); err != nil {
+		return err
+	}
+	if err := s.validateInboundDDNSRecord(ctx, *inbound); err != nil {
 		return err
 	}
 	if err := s.store.ValidateServerExists(ctx, inbound.ServerID); err != nil {

@@ -491,6 +491,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists vpngate_pool_servers (pool_id integer not null references vpngate_pools(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, state_json text not null default '{}', updated_at text not null, primary key(pool_id, server_id))`,
 		`create table if not exists vpngate_catalog_state (id integer primary key check (id = 1), fetched_at text not null default '', source text not null default '', entries integer not null default 0, skipped integer not null default 0, error text not null default '')`,
 		`create index if not exists idx_probe_route_versions_monitor on probe_route_versions(monitor_id,id desc)`,
+		`create table if not exists probe_ddns_records (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, dns_credential_id integer references dns_credentials(id) on delete set null, domain text not null, record_types text not null default 'a', proxy_enabled integer not null default 0, interval_seconds integer not null default 300, enabled integer not null default 1, interface_name text not null default '', interface_address text not null default '', address_family text not null default '', exclude_private integer not null default 0, revision integer not null default 1, next_at integer not null default 0, status text not null default '', error text not null default '', current_address text not null default '', last_synced_at text, created_at text not null, updated_at text not null)`,
+		`create unique index if not exists idx_probe_ddns_server_domain on probe_ddns_records(server_id, domain)`,
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
 		`create table if not exists routing_cache_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists configuration_revision (id integer primary key check(id=1), revision integer not null default 0)`,
@@ -1126,7 +1128,13 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureProxyCredentials(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "inbounds", "ddns_record_id", `alter table inbounds add column ddns_record_id integer references probe_ddns_records(id) on delete set null`); err != nil {
+		return err
+	}
 	if err := s.migrateConfigurationRevisionTriggers(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateProbeDDNS(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateDeliveryPolicyRevisions(ctx); err != nil {
@@ -3973,10 +3981,7 @@ func (s *Store) CreateInbound(ctx context.Context, v *model.Inbound) error {
 	if v.DNSRecordTypes == "" {
 		v.DNSRecordTypes = "auto"
 	}
-	if v.DDNSInterval == 0 {
-		v.DDNSInterval = 300
-	}
-	res, err := s.db.ExecContext(ctx, `insert into inbounds(server_id,name,protocol,listen_ip,port,advertise_port,entry_ip_mode,external_ip,dns_sync_enabled,dns_credential_id,dns_domain,dns_proxy_enabled,dns_record_types,ddns_enabled,ddns_interval_seconds,dns_sync_status,dns_sync_error,dns_last_synced_at,tls,config_json,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Protocol, v.ListenIP, v.Port, v.AdvertisePort, v.EntryIPMode, v.ExternalIP, boolInt(v.DNSSyncEnabled), v.DNSCredentialID, v.DNSDomain, boolInt(v.DNSProxyEnabled), v.DNSRecordTypes, boolInt(v.DDNSEnabled), v.DDNSInterval, v.DNSSyncStatus, v.DNSSyncError, timePtrString(v.DNSLastSyncedAt), boolInt(v.TLS), v.ConfigJSON, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into inbounds(server_id,name,protocol,listen_ip,port,advertise_port,entry_ip_mode,external_ip,dns_sync_enabled,dns_credential_id,dns_domain,dns_proxy_enabled,dns_record_types,ddns_record_id,dns_sync_status,dns_sync_error,dns_last_synced_at,tls,config_json,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Protocol, v.ListenIP, v.Port, v.AdvertisePort, v.EntryIPMode, v.ExternalIP, boolInt(v.DNSSyncEnabled), v.DNSCredentialID, v.DNSDomain, boolInt(v.DNSProxyEnabled), v.DNSRecordTypes, v.DDNSRecordID, v.DNSSyncStatus, v.DNSSyncError, timePtrString(v.DNSLastSyncedAt), boolInt(v.TLS), v.ConfigJSON, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -3995,14 +4000,11 @@ func (s *Store) UpdateInbound(ctx context.Context, v *model.Inbound) error {
 	if v.DNSRecordTypes == "" {
 		v.DNSRecordTypes = "auto"
 	}
-	if v.DDNSInterval == 0 {
-		v.DDNSInterval = 300
-	}
-	_, err := s.db.ExecContext(ctx, `update inbounds set server_id=?,name=?,protocol=?,listen_ip=?,port=?,advertise_port=?,entry_ip_mode=?,external_ip=?,dns_sync_enabled=?,dns_credential_id=?,dns_domain=?,dns_proxy_enabled=?,dns_record_types=?,ddns_enabled=?,ddns_interval_seconds=?,dns_sync_status=?,dns_sync_error=?,dns_last_synced_at=?,tls=?,config_json=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Protocol, v.ListenIP, v.Port, v.AdvertisePort, v.EntryIPMode, v.ExternalIP, boolInt(v.DNSSyncEnabled), v.DNSCredentialID, v.DNSDomain, boolInt(v.DNSProxyEnabled), v.DNSRecordTypes, boolInt(v.DDNSEnabled), v.DDNSInterval, v.DNSSyncStatus, v.DNSSyncError, timePtrString(v.DNSLastSyncedAt), boolInt(v.TLS), v.ConfigJSON, boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update inbounds set server_id=?,name=?,protocol=?,listen_ip=?,port=?,advertise_port=?,entry_ip_mode=?,external_ip=?,dns_sync_enabled=?,dns_credential_id=?,dns_domain=?,dns_proxy_enabled=?,dns_record_types=?,ddns_record_id=?,dns_sync_status=?,dns_sync_error=?,dns_last_synced_at=?,tls=?,config_json=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Protocol, v.ListenIP, v.Port, v.AdvertisePort, v.EntryIPMode, v.ExternalIP, boolInt(v.DNSSyncEnabled), v.DNSCredentialID, v.DNSDomain, boolInt(v.DNSProxyEnabled), v.DNSRecordTypes, v.DDNSRecordID, v.DNSSyncStatus, v.DNSSyncError, timePtrString(v.DNSLastSyncedAt), boolInt(v.TLS), v.ConfigJSON, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 func (s *Store) ListInbounds(ctx context.Context) ([]model.Inbound, error) {
-	rows, err := s.db.QueryContext(ctx, `select i.id,i.server_id,i.name,i.protocol,i.listen_ip,i.port,coalesce(i.advertise_port,0),coalesce(i.entry_ip_mode,'auto'),coalesce(i.external_ip,''),coalesce(i.dns_sync_enabled,0),i.dns_credential_id,coalesce(i.dns_domain,''),coalesce(i.dns_proxy_enabled,0),coalesce(i.dns_record_types,'auto'),coalesce(i.ddns_enabled,0),coalesce(i.ddns_interval_seconds,300),coalesce(i.dns_sync_status,''),coalesce(i.dns_sync_error,''),i.dns_last_synced_at,i.tls,i.config_json,i.enabled,i.created_at,i.updated_at,coalesce(b.mode,''),b.certificate_id,coalesce(b.server_name,''),coalesce(sr.listener_mode,''),coalesce(sr.port,0),coalesce(sr.protocol_version,0),coalesce(sr.config_version,0) from inbounds i left join inbound_certificate_bindings b on b.inbound_id=i.id left join snell_listener_runtime sr on sr.inbound_id=i.id order by i.id desc`)
+	rows, err := s.db.QueryContext(ctx, `select i.id,i.server_id,i.name,i.protocol,i.listen_ip,i.port,coalesce(i.advertise_port,0),coalesce(i.entry_ip_mode,'auto'),coalesce(i.external_ip,''),coalesce(i.dns_sync_enabled,0),i.dns_credential_id,coalesce(i.dns_domain,''),coalesce(i.dns_proxy_enabled,0),coalesce(i.dns_record_types,'auto'),i.ddns_record_id,coalesce(d.domain,''),coalesce(i.dns_sync_status,''),coalesce(i.dns_sync_error,''),i.dns_last_synced_at,i.tls,i.config_json,i.enabled,i.created_at,i.updated_at,coalesce(b.mode,''),b.certificate_id,coalesce(b.server_name,''),coalesce(sr.listener_mode,''),coalesce(sr.port,0),coalesce(sr.protocol_version,0),coalesce(sr.config_version,0) from inbounds i left join probe_ddns_records d on d.id=i.ddns_record_id left join inbound_certificate_bindings b on b.inbound_id=i.id left join snell_listener_runtime sr on sr.inbound_id=i.id order by i.id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -4010,11 +4012,11 @@ func (s *Store) ListInbounds(ctx context.Context) ([]model.Inbound, error) {
 	var out []model.Inbound
 	for rows.Next() {
 		var v model.Inbound
-		var tls, en, dnsSync, dnsProxy, ddns int
+		var tls, en, dnsSync, dnsProxy int
 		var ca, ua string
-		var dnsCredentialID, certificateID sql.NullInt64
+		var dnsCredentialID, certificateID, ddnsRecordID sql.NullInt64
 		var dnsSynced sql.NullString
-		if err := rows.Scan(&v.ID, &v.ServerID, &v.Name, &v.Protocol, &v.ListenIP, &v.Port, &v.AdvertisePort, &v.EntryIPMode, &v.ExternalIP, &dnsSync, &dnsCredentialID, &v.DNSDomain, &dnsProxy, &v.DNSRecordTypes, &ddns, &v.DDNSInterval, &v.DNSSyncStatus, &v.DNSSyncError, &dnsSynced, &tls, &v.ConfigJSON, &en, &ca, &ua, &v.CertificateMode, &certificateID, &v.CertificateDomain, &v.SnellActiveMode, &v.SnellActivePort, &v.SnellActiveVersion, &v.SnellConfigVersion); err != nil {
+		if err := rows.Scan(&v.ID, &v.ServerID, &v.Name, &v.Protocol, &v.ListenIP, &v.Port, &v.AdvertisePort, &v.EntryIPMode, &v.ExternalIP, &dnsSync, &dnsCredentialID, &v.DNSDomain, &dnsProxy, &v.DNSRecordTypes, &ddnsRecordID, &v.DDNSDomain, &v.DNSSyncStatus, &v.DNSSyncError, &dnsSynced, &tls, &v.ConfigJSON, &en, &ca, &ua, &v.CertificateMode, &certificateID, &v.CertificateDomain, &v.SnellActiveMode, &v.SnellActivePort, &v.SnellActiveVersion, &v.SnellConfigVersion); err != nil {
 			return nil, err
 		}
 		if v.EntryIPMode == "" {
@@ -4031,7 +4033,9 @@ func (s *Store) ListInbounds(ctx context.Context) ([]model.Inbound, error) {
 			v.CertificateID = &certificateID.Int64
 		}
 		v.DNSProxyEnabled = dnsProxy == 1
-		v.DDNSEnabled = ddns == 1
+		if ddnsRecordID.Valid {
+			v.DDNSRecordID = &ddnsRecordID.Int64
+		}
 		if dnsSynced.Valid && dnsSynced.String != "" {
 			t := parseTime(dnsSynced.String)
 			v.DNSLastSyncedAt = &t

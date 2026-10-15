@@ -3,8 +3,8 @@ import { relatedProxyPaths } from './graph-relations'
 import type { Inbound, ProxyPath, ProxyPathStep } from './types'
 
 const inbounds: Inbound[] = [
-  { id: 10, server_id: 1, name: 'entry-a', protocol: 'vless', listen_ip: '::', port: 443, entry_ip_mode: 'auto', external_ip: '', dns_sync_enabled: false, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'auto', ddns_enabled: false, ddns_interval_seconds: 0, dns_sync_status: '', dns_sync_error: '', tls: false, config_json: '{}', enabled: true },
-  { id: 11, server_id: 2, name: 'entry-b', protocol: 'shadowsocks', listen_ip: '::', port: 8443, entry_ip_mode: 'auto', external_ip: '', dns_sync_enabled: false, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'auto', ddns_enabled: false, ddns_interval_seconds: 0, dns_sync_status: '', dns_sync_error: '', tls: false, config_json: '{}', enabled: true },
+  { id: 10, server_id: 1, name: 'entry-a', protocol: 'vless', listen_ip: '::', port: 443, entry_ip_mode: 'auto', external_ip: '', dns_sync_enabled: false, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'auto', dns_sync_status: '', dns_sync_error: '', tls: false, config_json: '{}', enabled: true },
+  { id: 11, server_id: 2, name: 'entry-b', protocol: 'shadowsocks', listen_ip: '::', port: 8443, entry_ip_mode: 'auto', external_ip: '', dns_sync_enabled: false, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'auto', dns_sync_status: '', dns_sync_error: '', tls: false, config_json: '{}', enabled: true },
 ]
 const path = (id: number, enabled = true, kind: 'chain' | 'direct' = 'chain'): ProxyPath => ({ id, kind, name: `path-${id}`, name_mode: 'auto', name_template: [], inbound_id: 10, exit_region_mode: 'auto', exit_region_code: '', enabled })
 const step = (id: number, pathID: number, position: number, patch: Partial<ProxyPathStep> = {}): ProxyPathStep => ({ id, path_id: pathID, position, node_type: 'server_inbound', transport_mode: 'singbox', server_id: 2, config_json: '{}', ...patch })

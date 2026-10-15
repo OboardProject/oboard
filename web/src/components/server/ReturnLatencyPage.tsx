@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Activity, History, Pencil, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
 import { Dialog } from '../ui/dialog'
 import { ProbeMonitors } from './ProbeMonitors'
+import { ProbeDDNS } from './ProbeDDNS'
 import { Select } from '../ui/select'
 import type { LatencyProbeAddress, LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
 import { ReturnLatencySettings, type LatencyProbeTaskAssignmentChange } from './ReturnLatencySettings'
@@ -19,13 +20,17 @@ const formatInterval = (seconds: number) => {
   return `${seconds} 秒`
 }
 
-export function ReturnLatencyPage({ servers, client, loading, canManage, onRefresh, renderHistory }: {
+const probeTabs = ['targets', 'nodes', 'routes', 'quality', 'ddns'] as const
+type ProbeTab = typeof probeTabs[number]
+
+export function ReturnLatencyPage({ servers, client, loading, canManage, onRefresh, renderHistory, credentials = [] }: {
   servers: Server[]
   client: Client
   loading?: boolean
   canManage: boolean
   onRefresh: () => void | Promise<unknown>
   renderHistory: (server: Server, onClose: () => void) => ReactNode
+  credentials?: { id: number; name: string; provider: string; enabled: boolean; verified_at?: string; zones?: { zone_name: string }[] }[]
 }) {
   const [tasks, setTasks] = useState<LatencyProbeTask[]>([])
   const [tasksState, setTasksState] = useState<{ loading: boolean; error: string }>({ loading: true, error: '' })
@@ -35,7 +40,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   const [editing, setEditing] = useState<{ open: boolean; task: LatencyProbeTask | null }>({ open: false, task: null })
   const [settingsServer, setSettingsServer] = useState<Server | null>(null)
   const [historyID, setHistoryID] = useState<number | null>(null)
-  const [view, setView] = useState<'targets' | 'nodes' | 'routes' | 'quality'>('targets')
+  const [view, setView] = useState<ProbeTab>('targets')
   const [monitorToolbar, setMonitorToolbar] = useState<HTMLDivElement | null>(null)
   const monitorView = view === 'routes' || view === 'quality'
   const [taskQuery, setTaskQuery] = useState('')
@@ -181,13 +186,12 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     <div className="panel-body">
       <div className="network-probe-header">
         <div className="network-probe-tabs" role="tablist" aria-label="拨测任务视图">
-          {(['targets', 'nodes', 'routes', 'quality'] as const).map((tab, index) => <button key={tab} id={`probe-${tab}-tab`} type="button" role="tab" aria-selected={view === tab} aria-controls={`probe-${tab}-panel`} tabIndex={view === tab ? 0 : -1} onClick={() => setView(tab)} onKeyDown={event => {
+          {probeTabs.map((tab, index) => <button key={tab} id={`probe-${tab}-tab`} type="button" role="tab" aria-selected={view === tab} aria-controls={`probe-${tab}-panel`} tabIndex={view === tab ? 0 : -1} onClick={() => setView(tab)} onKeyDown={event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
             event.preventDefault()
-            const tabs = ['targets', 'nodes', 'routes', 'quality'] as const
-            const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? 3 : (index + (event.key === 'ArrowRight' ? 1 : 3)) % 4]
+            const next = probeTabs[event.key === 'Home' ? 0 : event.key === 'End' ? probeTabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : probeTabs.length - 1)) % probeTabs.length]
             setView(next); document.getElementById(`probe-${next}-tab`)?.focus()
-          }}>{{ targets: '连通性', nodes: '服务器', routes: '路由监控', quality: 'IP 质量' }[tab]}</button>)}
+          }}>{{ targets: '连通性', nodes: '服务器', routes: '路由监控', quality: 'IP 质量', ddns: 'DDNS' }[tab]}</button>)}
         </div>
         {(view === 'targets' || view === 'nodes') && <div className="return-latency-toolbar">
           <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
@@ -230,6 +234,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
       </section>}
 
       {(view === 'routes' || view === 'quality') && <section id={`probe-${view}-panel`} role="tabpanel" aria-labelledby={`probe-${view}-tab`}><ProbeMonitors key={view} client={client} servers={servers} kind={view === 'routes' ? 'route' : 'ip_quality'} canManage={canManage} toolbarSlot={monitorToolbar} /></section>}
+      {view === 'ddns' && <section id="probe-ddns-panel" role="tabpanel" aria-labelledby="probe-ddns-tab"><ProbeDDNS client={client} servers={servers} credentials={credentials} canManage={canManage} /></section>}
       {view === 'nodes' && <section id="probe-nodes-panel" role="tabpanel" aria-labelledby="probe-nodes-tab" className="return-latency-servers">
         <div className="return-latency-filters">
           <div className="return-latency-search">

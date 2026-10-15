@@ -628,6 +628,11 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 		return "", err
 	}
 	domain := normalizeDomainName(inbound.DNSDomain)
+	if owner, err := s.store.ProbeDDNSByDomain(ctx, inbound.ServerID, domain); err == nil && owner.InterfaceBound() {
+		return "由拨测 DDNS 按网卡地址维护", nil
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
 	zone, err := selectDNSCredentialZone(credential, domain, inbound.ServerID)
 	if err != nil {
 		return "", err
@@ -637,6 +642,10 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 	if err != nil {
 		return "", err
 	}
+	return s.publishDNSTargets(ctx, client, credential.ID, *zone, domain, inbound.DNSProxyEnabled, normalizeDNSComment(fmt.Sprintf("OBoard: 入口 %s / 服务器 %s", inbound.Name, server.Name)), &inbound.ServerID, &inbound.ID, targets)
+}
+
+func (s *Server) publishDNSTargets(ctx context.Context, client dnsProviderClient, credentialID int64, zone model.DNSCredentialZone, domain string, proxied bool, comment string, serverID, inboundID *int64, targets []dnsRecordTarget) (string, error) {
 	records, err := listDNSRecordsForDomain(ctx, client, domain)
 	if err != nil {
 		return "", err
@@ -666,17 +675,17 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 	for _, target := range targets {
 		desired[target.Type] = true
 		record := existing[target.Type]
-		record.CredentialID = credential.ID
+		record.CredentialID = credentialID
 		record.Name = domain
 		record.Type = target.Type
 		record.Content = target.Content
 		record.TTL = 300
-		record.Proxied = inbound.DNSProxyEnabled
+		record.Proxied = proxied
 		record.CredentialZoneID = zone.ID
-		record.Comment = normalizeDNSComment(fmt.Sprintf("OBoard: 入口 %s / 服务器 %s", inbound.Name, server.Name))
-		record.ServerID = &inbound.ServerID
-		record.InboundID = &inbound.ID
-		if old, found := existing[target.Type]; found && strings.EqualFold(strings.TrimSuffix(old.Content, "."), strings.TrimSuffix(target.Content, ".")) && old.Proxied == inbound.DNSProxyEnabled && old.Comment == record.Comment {
+		record.Comment = comment
+		record.ServerID = serverID
+		record.InboundID = inboundID
+		if old, found := existing[target.Type]; found && strings.EqualFold(strings.TrimSuffix(old.Content, "."), strings.TrimSuffix(target.Content, ".")) && old.Proxied == proxied && old.Comment == record.Comment {
 			actions = append(actions, target.Type+" 无变化")
 			continue
 		}
@@ -825,40 +834,43 @@ func (s *Server) StartDNSDDNS(ctx context.Context) {
 func (s *Server) runDNSDDNS(ctx context.Context) {
 	s.dnsDDNSMu.Lock()
 	defer s.dnsDDNSMu.Unlock()
-	servers, err := s.store.ListServers(ctx)
+	records, err := s.store.ListProbeDDNS(ctx)
 	if err != nil {
-		log.Printf("dns ddns: list servers: %v", err)
-		return
-	}
-	inbounds, err := s.store.ListInbounds(ctx)
-	if err != nil {
-		log.Printf("dns ddns: list inbounds: %v", err)
+		log.Printf("dns ddns: list records: %v", err)
 		return
 	}
 	now := time.Now()
 	previousAttempts := s.dnsDDNSNext
 	s.dnsDDNSNext = make(map[int64]time.Time)
-	for _, inbound := range inbounds {
-		if !inbound.Enabled || !inbound.DNSSyncEnabled || !inbound.DDNSEnabled {
+	for _, record := range records {
+		if !record.Enabled {
 			continue
 		}
-		if next := previousAttempts[inbound.ID]; next.After(now) {
-			s.dnsDDNSNext[inbound.ID] = next
+		if next := previousAttempts[record.ID]; next.After(now) {
+			s.dnsDDNSNext[record.ID] = next
 			continue
 		}
-		interval := time.Duration(inbound.DDNSInterval) * time.Second
+		interval := time.Duration(record.IntervalSeconds) * time.Second
 		if interval < 5*time.Minute {
 			interval = 5 * time.Minute
 		}
-		if inbound.DNSLastSyncedAt != nil && now.Sub(*inbound.DNSLastSyncedAt) < interval {
+		if record.LastSyncedAt != nil && now.Sub(*record.LastSyncedAt) < interval {
 			continue
 		}
-		if _, err := s.syncDNSInbounds(ctx, servers, []model.Inbound{inbound}); err != nil {
+		claimed, err := s.store.ClaimProbeDDNS(ctx, record, now)
+		if err != nil {
+			log.Printf("dns ddns: claim record=%d error=%v", record.ID, err)
+			continue
+		}
+		if !claimed {
+			continue
+		}
+		if err := s.syncProbeDDNS(ctx, record); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			s.dnsDDNSNext[inbound.ID] = time.Now().Add(interval)
-			log.Printf("dns ddns: inbound=%d error=%v", inbound.ID, err)
+			s.dnsDDNSNext[record.ID] = time.Now().Add(interval)
+			log.Printf("dns ddns: record=%d error=%v", record.ID, err)
 		}
 	}
 }

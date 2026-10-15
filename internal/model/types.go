@@ -1134,8 +1134,8 @@ type Inbound struct {
 	DNSDomain          string               `json:"dns_domain"`
 	DNSProxyEnabled    bool                 `json:"dns_proxy_enabled"`
 	DNSRecordTypes     string               `json:"dns_record_types"`
-	DDNSEnabled        bool                 `json:"ddns_enabled"`
-	DDNSInterval       int                  `json:"ddns_interval_seconds"`
+	DDNSRecordID       *int64               `json:"ddns_record_id,omitempty"`
+	DDNSDomain         string               `json:"ddns_domain,omitempty"`
 	DNSSyncStatus      string               `json:"dns_sync_status"`
 	DNSSyncError       string               `json:"dns_sync_error"`
 	DNSLastSyncedAt    *time.Time           `json:"dns_last_synced_at,omitempty"`

@@ -175,6 +175,7 @@ import { StealthTransportSettings } from './components/settings/StealthTransport
 import { AppearanceSettingsPanel } from './components/settings/AppearanceSettingsPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
+import { InboundDDNSField } from './components/server/ProbeDDNS'
 import { ServerAboutDialog } from './components/server/ServerAboutDialog'
 import { ServerBasicSettingsDialog } from './components/server/ServerBasicSettingsDialog'
 import { ServerNetworkDialog } from './components/server/ServerNetworkDialog'
@@ -1445,7 +1446,7 @@ const fieldLabels: Record<string, string> = {
   id: 'ID', server_id: '服务器', source_server_id: '源服务器', target_server_id: '目标服务器', next_server_id: '下一跳服务器', user_id: '用户', group_id: '用户组', subject_id: '授权对象', profile_id: '订阅配置', inbound_id: '入口', inbound_users: '入口用户', outbound_id: '出口', external_outbound_id: '导入节点', external_outbound_access_grants: '导入节点授权',
   name: '名称', region: '地区', region_code: '地区代码', region_mode: '地区来源', username: '用户名', nickname: '昵称', password: '密码', role: '角色', status: '状态', enabled: '启用', expose_to_users: '显示到订阅', protocol: '协议', type: '类型', scope: '作用域', action: '动作', priority: '优先级',
   entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', interface_ipv6: '网卡 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_mode: '监听模式', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
-  dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: 'DDNS', ddns_interval_seconds: 'DDNS 检查间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
+  dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_record_id: 'DDNS 记录', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
   ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', stealth_enabled: '安全进程',
   os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
@@ -3111,7 +3112,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       ? <Dashboard data={data} loading={loading} displayName={displayName} client={client} canCleanup={canManageAdministratorAccounts(sessionUser?.role || data.session?.role || 'viewer')} onCleaned={load} />
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
-  if (tab === 'return-latency') return <ReturnLatencyPage servers={data.servers || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
+  if (tab === 'return-latency') return <ReturnLatencyPage servers={data.servers || []} credentials={data.dns_credentials || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} patchPageData={patchPageData} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} focusRequest={proxyInboundFocus} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
@@ -9902,11 +9903,13 @@ function formatHostPort(host: string, port: number) {
   return `${formattedHost}:${port || 0}`
 }
 
-function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?: string; entry_ip_mode?: EntryIPMode; external_ip?: string; dns_record_types?: string; ddns_enabled?: boolean }, server: Server | undefined, alwaysUseDomain = false) {
+function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?: string; entry_ip_mode?: EntryIPMode; external_ip?: string; dns_record_types?: string; ddns_domain?: string }, server: Server | undefined, alwaysUseDomain = false) {
+  const ddnsDomain = String(entry.ddns_domain || '').trim()
+  if (ddnsDomain) return ddnsDomain
   const domain = String(entry.dns_domain || '').trim()
   const literal = entryAddressByMode(server, entry.entry_ip_mode || 'auto', entry.external_ip || '')
   if (!entry.dns_sync_enabled || !domain) return literal
-  if (alwaysUseDomain || entry.ddns_enabled) return domain
+  if (alwaysUseDomain) return domain
   const host = String(literal || '').trim().replace(/^\[|\]$/g, '')
   const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
   const isIPv6 = Boolean(host) && host.includes(':') && !isIPv4
@@ -11585,7 +11588,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     const preset = inboundPreset(defaultInboundPreset('vless'))
     const stored = matchingNodePreset(preset.id, data.node_presets || [])
     const port = nextAvailableInboundPort(data, server, preset.protocol, stored?.default_port || preset.defaultPort)
-    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, server_id: server.id, name: autoInboundName(data, preset.protocol), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', ...newEntryDNSDefaults(data), dns_proxy_enabled: false, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id, data.node_presets), enabled: true })
+    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, server_id: server.id, name: autoInboundName(data, preset.protocol), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', ...newEntryDNSDefaults(data), dns_proxy_enabled: false, ddns_record_id: undefined, ddns_domain: '', tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id, data.node_presets), enabled: true })
   }
   const submitEntryDraft = async () => {
     if (!entryDraft) return
@@ -14664,7 +14667,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const nextZones = (selectedDNSCredential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === serverID)
     const nextZone = nextZones.find(zone => zone.server_id === serverID) || nextZones.find(zone => zone.zone_name === selectedDNSZoneName) || nextZones[0]
     const dnsDomain = draft.dns_sync_enabled ? domainWithZone(dnsPrefix, nextZone?.zone_name || '') : draft.dns_domain
-    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(data, protocol, draft.id) : draft.name, dns_domain: dnsDomain, ...certificatePatchForDomain(dnsDomain) })
+    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(data, protocol, draft.id) : draft.name, dns_domain: dnsDomain, ddns_record_id: undefined, ddns_domain: '', ...certificatePatchForDomain(dnsDomain) })
   }
   const changePort = (nextPort: number, manual = true) => {
     const wasAutoNamed = isAutoInboundName(draft.name, server, protocol, Number(draft.port) || 443)
@@ -14675,7 +14678,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   // switching back to a resolving entry restores it.
   const dnsOffPatch = () => {
     if (String(draft.dns_domain || '').trim()) lastDNSDomain.current = String(draft.dns_domain)
-    return { dns_sync_enabled: false, dns_domain: '', dns_credential_id: undefined, dns_proxy_enabled: false, ddns_enabled: false, dns_record_types: 'auto' as DNSRecordTypes }
+    return { dns_sync_enabled: false, dns_domain: '', dns_credential_id: undefined, dns_proxy_enabled: false, dns_record_types: 'auto' as DNSRecordTypes }
   }
   const dnsOnPatch = (recordTypes: DNSRecordTypes) => {
     const dnsDomain = String(draft.dns_domain || '').trim() || lastDNSDomain.current
@@ -14688,7 +14691,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       return
     }
     const base: Record<string, any> = { entry_ip_mode: choice, dns_record_types: 'auto' }
-    if (choice === 'custom') base.ddns_enabled = false
     // Without the always-resolve switch a single-stack entry is reached by IP
     // and keeps no DNS record at all.
     update(alwaysResolve ? base : { ...base, ...dnsOffPatch() })
@@ -14777,11 +14779,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     {selectedDNSCredential?.provider === 'cloudflare' && <FormField label="Cloudflare 代理" hint="代理入口应保持 DNS only；开启橙云会让非 HTTP 协议无法连接。">
       <Select variant="segmented" value={String(Boolean(draft.dns_proxy_enabled))} onChange={e => update({ dns_proxy_enabled: e.target.value === 'true' })}><option value="false">DNS only</option><option value="true">开启代理</option></Select>
     </FormField>}
-    {entryMode !== 'custom' && <div className="inbound-editor-switch">
-      <span><strong>DDNS</strong><small>服务器公网 IP 变化时自动更新解析</small></span>
-      <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} ariaLabel="DDNS" />
-    </div>}
-    {draft.ddns_enabled && entryMode !== 'custom' && <FormField label="DDNS 检查间隔"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
   </div> : null
   return <MotionDialogPanel onCancel={onCancel} className="inbound-editor-dialog" aria-labelledby="entry-dialog-title">
       <header className="dialog-head">
@@ -14845,6 +14842,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             {entryMode === 'custom' && <FormField label="自定义入口地址" required hint="可填写域名、IPv4 或 IPv6，例如 NAT 网关或中转机地址。">
               <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="1.2.3.4 或 origin.example.net" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="url" />
             </FormField>}
+            <InboundDDNSField serverID={Number(draft.server_id || 0)} recordID={Number(draft.ddns_record_id || 0) || undefined} domain={String(draft.ddns_domain || '')} client={client} credentials={dnsCredentials} onChange={record => update(record ? { ddns_record_id: record.id, ddns_domain: record.domain } : { ddns_record_id: null, ddns_domain: '' })} />
             <div className="inbound-host-preview">
               <div><span>Host（server）</span><strong>{hostDisplay}</strong></div>
               <div><span>DNS 解析</span><strong>{dnsActive && String(draft.dns_domain || '').trim() ? `${recordLabel} · ${draft.dns_domain}` : dnsActive ? `${recordLabel} · 待填写域名` : '不创建'}</strong></div>
@@ -15249,7 +15247,8 @@ function controlledInboundPayload(draft: any) {
   const editing = Boolean(draft.__edit)
   const rotateRealityKey = Boolean(draft.__rotate_reality_key)
   const body: Record<string, any> = { ...draft }
-  for (const field of ['__edit', '__graphPosition', '__port_manual', '__custom_sni', '__nat_open', '__rotate_reality_key', 'kind', 'reality', 'rotate_reality_key']) delete body[field]
+  for (const field of ['__edit', '__graphPosition', '__port_manual', '__custom_sni', '__nat_open', '__rotate_reality_key', 'kind', 'reality', 'rotate_reality_key', 'ddns_domain', 'ddns_enabled', 'ddns_interval_seconds']) delete body[field]
+  if (!body.ddns_record_id) body.ddns_record_id = null
   if (editing) delete body.anytls_padding
   const kind = inferInboundPreset(body.protocol as Protocol, body.config_json || '{}')
   if (inboundPresets.some(item => item.id === kind)) body.kind = kind

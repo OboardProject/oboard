@@ -156,8 +156,8 @@ export type Inbound = {
   dns_domain: string
   dns_proxy_enabled: boolean
   dns_record_types: DNSRecordTypes
-  ddns_enabled: boolean
-  ddns_interval_seconds: number
+  ddns_record_id?: number
+  ddns_domain?: string
   dns_sync_status: string
   dns_sync_error: string
   dns_last_synced_at?: string

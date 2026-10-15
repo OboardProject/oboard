@@ -3171,7 +3171,7 @@ func inboundClientHostUsesDomain(inbound model.Inbound, server model.Server, alw
 	if !inbound.DNSSyncEnabled || domain == "" {
 		return false
 	}
-	if alwaysResolve || inbound.DDNSEnabled {
+	if alwaysResolve {
 		return true
 	}
 	literal := ResolveLiteralEntryAddress(inbound, server)
@@ -3189,6 +3189,9 @@ func inboundClientHostUsesDomain(inbound model.Inbound, server model.Server, alw
 // families are detected. DDNS, custom domain targets, and the always-resolve
 // switch also keep the managed name.
 func ResolveEntryAddressHost(inbound model.Inbound, server model.Server, alwaysResolve bool) string {
+	if inbound.DDNSRecordID != nil && *inbound.DDNSRecordID > 0 && strings.TrimSpace(inbound.DDNSDomain) != "" {
+		return strings.TrimSpace(inbound.DDNSDomain)
+	}
 	if inboundClientHostUsesDomain(inbound, server, alwaysResolve) {
 		return strings.TrimSpace(inbound.DNSDomain)
 	}

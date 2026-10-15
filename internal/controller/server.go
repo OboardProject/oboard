@@ -6424,6 +6424,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.validateInboundDDNSRecord(r.Context(), v); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := s.store.ValidateServerExists(r.Context(), v.ServerID); err != nil {
 			fail(w, err, 400)
 			return
@@ -6531,6 +6535,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.validateInboundDNSPolicy(r.Context(), v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.validateInboundDDNSRecord(r.Context(), v); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -7476,11 +7484,8 @@ func mergeInboundPatch(current model.Inbound, patch model.Inbound, fields map[st
 	if _, ok := fields["dns_record_types"]; ok {
 		merged.DNSRecordTypes = patch.DNSRecordTypes
 	}
-	if _, ok := fields["ddns_enabled"]; ok {
-		merged.DDNSEnabled = patch.DDNSEnabled
-	}
-	if _, ok := fields["ddns_interval_seconds"]; ok {
-		merged.DDNSInterval = patch.DDNSInterval
+	if _, ok := fields["ddns_record_id"]; ok {
+		merged.DDNSRecordID = patch.DDNSRecordID
 	}
 	if _, ok := fields["dns_sync_status"]; ok {
 		merged.DNSSyncStatus = patch.DNSSyncStatus
@@ -7541,9 +7546,6 @@ func normalizeInbound(v model.Inbound) model.Inbound {
 	v.CertificateDomain = normalizeDomainName(v.CertificateDomain)
 	if v.CertificateMode != model.CertificateModeExternal && v.CertificateDomain == "" {
 		v.CertificateDomain = v.DNSDomain
-	}
-	if v.DDNSInterval == 0 {
-		v.DDNSInterval = 300
 	}
 	if strings.TrimSpace(v.ListenIP) == "" {
 		v.ListenIP = "0.0.0.0"
@@ -7836,12 +7838,6 @@ func validateInbound(v model.Inbound) error {
 		}
 		if v.DNSCredentialID == nil || *v.DNSCredentialID <= 0 {
 			return errors.New("启用 DNS 自动解析时需要选择 DNS 凭据")
-		}
-		if v.DDNSEnabled && (v.DDNSInterval < 300 || v.DDNSInterval > 86400) {
-			return errors.New("启用 DDNS 时更新间隔必须为 300 到 86400 秒")
-		}
-		if v.DDNSEnabled && v.EntryIPMode == model.EntryIPModeCustom {
-			return errors.New("自定义入口地址使用固定解析目标，不需要开启 DDNS")
 		}
 	}
 	if inferredInboundKind(v) == "vless-reality" {

@@ -28,6 +28,7 @@ type apiPrincipalContextKey struct{}
 
 func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/probe-monitors", s.apiAuth(s.apiProbeMonitors, model.RoleOperator))
+	mux.HandleFunc("/api/v1/probe-ddns", s.apiAuth(s.apiProbeDDNS, model.RoleOperator))
 	mux.HandleFunc("/api/v1/vpngate", s.apiAuth(s.apiVPNGate, model.RoleOperator))
 	mux.HandleFunc("/api/v1/ip-data/providers", s.apiAuth(s.apiIPData, model.RoleOperator))
 	mux.HandleFunc("/api/v1/ip-data/lookup", s.apiAuth(s.apiIPData, model.RoleOperator))

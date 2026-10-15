@@ -53,3 +53,64 @@ func probeMonitorDescriptors(id, text, boolean map[string]any) []Descriptor {
 	}
 	return out
 }
+
+func probeDDNSDescriptors(id, text, boolean map[string]any) []Descriptor {
+	integer := map[string]any{"type": "integer"}
+	fields := map[string]any{
+		"id": integer, "server_id": id, "revision": integer,
+		"name":              map[string]any{"type": "string", "maxLength": 60},
+		"dns_credential_id": id,
+		"domain":            map[string]any{"type": "string", "maxLength": 253},
+		"record_types":      map[string]any{"type": "string", "enum": []string{"a", "aaaa", "both"}},
+		"proxy_enabled":     boolean,
+		"interval_seconds":  map[string]any{"type": "integer", "minimum": 300, "maximum": 86400},
+		"enabled":           boolean,
+		"interface_name":    map[string]any{"type": "string", "maxLength": 64},
+		"interface_address": map[string]any{"type": "string", "maxLength": 80},
+		"address_family":    map[string]any{"type": "string", "enum": []string{"", "ipv4", "ipv6"}},
+		"exclude_private":   boolean,
+	}
+	outputFields := map[string]any{}
+	for k, v := range fields {
+		outputFields[k] = v
+	}
+	outputFields["status"] = text
+	outputFields["error"] = text
+	outputFields["current_address"] = text
+	outputFields["last_synced_at"] = text
+	record := closedObject(outputFields)
+	out := []Descriptor{}
+	for _, action := range []string{"list", "save", "delete", "run"} {
+		input := schemaObject(map[string]any{})
+		output := schemaObject(map[string]any{"id": id, "revision": integer}, "id", "revision")
+		refs := serverRefFromServerID
+		switch action {
+		case "list":
+			refs = noRefs
+			output = schemaObject(map[string]any{"records": arrayOf(record)}, "records")
+		case "save":
+			input = schemaObject(fields, "server_id", "name", "dns_credential_id", "domain", "record_types", "interval_seconds", "enabled")
+		default:
+			input = schemaObject(map[string]any{"id": id, "server_id": id, "revision": id}, "id", "server_id", "revision")
+		}
+		read := action == "list"
+		d := Descriptor{Name: "probe_ddns." + action, Description: map[string]string{
+			"list":   "列出授权服务器的拨测 DDNS 记录。记录按服务器归属，入口只引用记录作为连接域名",
+			"save":   "创建或更新拨测 DDNS 记录。网卡绑定必须使用该服务器最近一次读取到的地址；排除内网时不会发布内网地址",
+			"delete": "删除拨测 DDNS 记录及其在 DNS 服务商处的 A/AAAA 记录，并解除入口引用",
+			"run":    "立即检查一条已启用的 DDNS 记录并更新解析",
+		}[action], InputSchema: input, OutputSchema: output, RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: read, Idempotent: action != "save", DataClassification: DataInternal, MCPEnabled: true, Executable: !read, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: refs}
+		if !read {
+			d.RequiredScopes = []string{"servers:write"}
+			d.MinimumAccess = mcpauth.AccessOperate
+			d.RiskClass = 2
+			d.ApprovalPolicy = "required"
+			d.RBACPermission = "servers.update"
+		}
+		if action == "delete" {
+			d.Destructive = true
+		}
+		out = append(out, d)
+	}
+	return out
+}

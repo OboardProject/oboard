@@ -592,7 +592,7 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 		"port": "port", "inbound.port": "port", "listen_ip": "listen_ip", "inbound.listen_ip": "listen_ip",
 		"entry_ip_mode": "entry_ip_mode", "external_ip": "external_ip", "dns_sync_enabled": "dns_sync_enabled",
 		"dns_credential_id": "dns_credential_id", "dns_domain": "dns_domain", "dns_proxy_enabled": "dns_proxy_enabled",
-		"dns_record_types": "dns_record_types", "ddns_enabled": "ddns_enabled", "ddns_interval_seconds": "ddns_interval_seconds",
+		"dns_record_types": "dns_record_types", "ddns_record_id": "ddns_record_id",
 		"tls": "tls", "certificate_mode": "certificate_mode", "certificate_id": "certificate_id",
 		"certificate_domain": "certificate_domain", "config_json": "config_json", "inbound.config_json": "config_json",
 		"reality": "reality", "rotate_reality_key": "rotate_reality_key", "enabled": "enabled",

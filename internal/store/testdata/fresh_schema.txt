@@ -103,6 +103,7 @@ index idx_plugin_runs_queue on plugin_runs
 index idx_plugin_schedules_due on plugin_schedules
 index idx_plugin_schedules_instance on plugin_schedules
 index idx_port_forwards_source on port_forwards
+index idx_probe_ddns_server_domain on probe_ddns_records
 index idx_probe_route_versions_monitor on probe_route_versions
 index idx_proxy_credentials_active_scope on proxy_credentials
 index idx_proxy_path_port_allocations_server on proxy_path_port_allocations
@@ -1156,6 +1157,7 @@ table inbounds
     enabled INTEGER notnull=1 default=1 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
+    ddns_record_id INTEGER notnull=0 default=- pk=0
 table latency_legacy_archive
     id INTEGER notnull=0 default=- pk=1
     server_id INTEGER notnull=1 default=- pk=0
@@ -1754,6 +1756,28 @@ table port_forwards
     priority INTEGER notnull=1 default=100 pk=0
     config_json TEXT notnull=1 default='{}' pk=0
     enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table probe_ddns_records
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    dns_credential_id INTEGER notnull=0 default=- pk=0
+    domain TEXT notnull=1 default=- pk=0
+    record_types TEXT notnull=1 default='a' pk=0
+    proxy_enabled INTEGER notnull=1 default=0 pk=0
+    interval_seconds INTEGER notnull=1 default=300 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    interface_name TEXT notnull=1 default='' pk=0
+    interface_address TEXT notnull=1 default='' pk=0
+    address_family TEXT notnull=1 default='' pk=0
+    exclude_private INTEGER notnull=1 default=0 pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+    next_at INTEGER notnull=1 default=0 pk=0
+    status TEXT notnull=1 default='' pk=0
+    error TEXT notnull=1 default='' pk=0
+    current_address TEXT notnull=1 default='' pk=0
+    last_synced_at TEXT notnull=0 default=- pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
 table probe_monitors

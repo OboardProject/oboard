@@ -481,10 +481,10 @@ func TestResolveEntryAddressHostUsesIPForStaticSingleStack(t *testing.T) {
 			want:    "203.0.113.10",
 		},
 		{
-			name:    "ddns uses domain",
-			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "a", DDNSEnabled: true, EntryIPMode: model.EntryIPModeAuto},
+			name:    "ddns record uses its domain",
+			inbound: model.Inbound{DNSRecordTypes: "a", EntryIPMode: model.EntryIPModeAuto, DDNSRecordID: int64Ptr(7), DDNSDomain: "ddns.example.com"},
 			server:  ipv4,
-			want:    domain,
+			want:    "ddns.example.com",
 		},
 		{
 			name:    "always use domain",

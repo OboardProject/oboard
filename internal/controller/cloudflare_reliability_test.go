@@ -148,8 +148,12 @@ func TestDNSDDNSUpdatesAddressAndRejectsAmbiguousRecords(t *testing.T) {
 	if err := db.CreateDNSCredential(ctx, credential); err != nil {
 		t.Fatal(err)
 	}
-	inbound := &model.Inbound{ServerID: node.ID, Name: "entry", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: "{}", Enabled: true, DNSSyncEnabled: true, DDNSEnabled: true, DDNSInterval: 300, DNSCredentialID: &credential.ID, DNSDomain: "edge.example.com", DNSRecordTypes: "a"}
+	inbound := &model.Inbound{ServerID: node.ID, Name: "entry", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: "{}", Enabled: true, DNSSyncEnabled: true, DNSCredentialID: &credential.ID, DNSDomain: "edge.example.com", DNSRecordTypes: "a"}
 	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	ddns := &model.ProbeDDNSRecord{ServerID: node.ID, Name: "edge", DNSCredentialID: &credential.ID, Domain: "edge.example.com", RecordTypes: "a", IntervalSeconds: 300, Enabled: true}
+	if err := db.SaveProbeDDNS(ctx, *node, ddns); err != nil {
 		t.Fatal(err)
 	}
 	record := cloudflareDNSRecord{ID: "record", Type: "A", Name: inbound.DNSDomain, Content: "203.0.113.1", TTL: 300}
@@ -186,19 +190,23 @@ func TestDNSDDNSUpdatesAddressAndRejectsAmbiguousRecords(t *testing.T) {
 	defer endpoint.Close()
 	srv.dnsEndpoints.cloudflare = endpoint.URL
 	srv.runDNSDDNS(ctx)
-	saved, err := db.GetInbound(ctx, inbound.ID)
-	if err != nil || saved.DNSSyncError != "" || saved.DNSLastSyncedAt == nil || reads != 1 || writes != 1 || record.Content != node.PublicIPv4 {
-		t.Fatalf("DDNS failed to update address: saved=%+v reads=%d writes=%d record=%+v err=%v", saved, reads, writes, record, err)
+	updated, err := db.GetProbeDDNS(ctx, ddns.ID)
+	if err != nil || updated.Error != "" || updated.LastSyncedAt == nil || updated.CurrentAddress != "A "+node.PublicIPv4 || reads != 1 || writes != 1 || record.Content != node.PublicIPv4 {
+		t.Fatalf("DDNS failed to update address: saved=%+v reads=%d writes=%d record=%+v err=%v", updated, reads, writes, record, err)
 	}
 	srv.runDNSDDNS(ctx)
 	if reads != 1 {
 		t.Fatal("successful DDNS ignored check interval")
 	}
-	if _, err := srv.syncDNSInbounds(ctx, []model.Server{*node}, []model.Inbound{*saved}); err != nil || writes != 1 {
-		t.Fatalf("unchanged address was rewritten: writes=%d err=%v", writes, err)
+	saved, err := db.GetInbound(ctx, inbound.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.syncDNSInbounds(ctx, []model.Server{*node}, []model.Inbound{*saved}); err != nil || writes != 2 {
+		t.Fatalf("inbound sync should keep its own comment: writes=%d err=%v", writes, err)
 	}
 	ambiguous = true
-	if _, err := srv.syncDNSInbounds(ctx, []model.Server{*node}, []model.Inbound{*saved}); err == nil || !strings.Contains(err.Error(), "存在多条 A 记录") || writes != 1 {
+	if _, err := srv.syncDNSInbounds(ctx, []model.Server{*node}, []model.Inbound{*saved}); err == nil || !strings.Contains(err.Error(), "存在多条 A 记录") || writes != 2 {
 		t.Fatalf("ambiguous records accepted or modified: writes=%d err=%v", writes, err)
 	}
 }
@@ -286,8 +294,20 @@ func TestDNSDDNSFailurePreservesSuccessAndDeduplicates(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
-	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: "{}", Enabled: true, DNSSyncEnabled: true, DDNSEnabled: true, DDNSInterval: 300, DNSDomain: "edge.example.com", DNSRecordTypes: "a"}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: "{}", Enabled: true, DNSSyncEnabled: true, DNSDomain: "edge.example.com", DNSRecordTypes: "a"}
 	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	verified := time.Now().UTC()
+	credential := &model.DNSCredential{Name: "cf", Provider: model.DNSProviderCloudflare, Enabled: true, VerifiedAt: &verified, ConfigEncrypted: "enc", Zones: []model.DNSCredentialZone{{ZoneName: "example.com", ProviderZoneID: "zone"}}}
+	if err := db.CreateDNSCredential(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	ddns := &model.ProbeDDNSRecord{ServerID: server.ID, Name: "entry", DNSCredentialID: &credential.ID, Domain: "edge.example.com", RecordTypes: "a", IntervalSeconds: 300, Enabled: true}
+	if err := db.SaveProbeDDNS(ctx, *server, ddns); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteDNSCredential(ctx, credential.ID); err != nil {
 		t.Fatal(err)
 	}
 	user := &model.User{Username: "admin", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "a", ProxyPassword: "a"}
@@ -304,29 +324,41 @@ func TestDNSDDNSFailurePreservesSuccessAndDeduplicates(t *testing.T) {
 	}
 	srv.runDNSDDNS(ctx)
 	saved, err := db.GetInbound(ctx, inbound.ID)
-	if err != nil || saved.DNSLastSyncedAt == nil || !saved.DNSLastSyncedAt.Equal(success) || saved.DNSSyncError == "" {
-		t.Fatalf("saved=%+v err=%v", saved, err)
+	if err != nil || saved.DNSLastSyncedAt == nil || !saved.DNSLastSyncedAt.Equal(success) || saved.DNSSyncError != "" {
+		t.Fatalf("DDNS failure rewrote inbound DNS status: %+v %v", saved, err)
 	}
-	if err := db.UpdateInboundDNSSyncResult(ctx, inbound.ID, "marker", "failure", nil); err != nil {
+	failed, err := db.GetProbeDDNS(ctx, ddns.ID)
+	if err != nil || failed.Status != "failed" || failed.Error == "" {
+		t.Fatalf("record=%+v %v", failed, err)
+	}
+	if err := db.FinishProbeDDNS(ctx, failed, "marker", "failure", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	srv.runDNSDDNS(ctx)
-	saved, err = db.GetInbound(ctx, inbound.ID)
-	if err != nil || saved.DNSSyncStatus != "marker" {
-		t.Fatalf("cooldown ignored: %+v %v", saved, err)
+	if marked, err := db.GetProbeDDNS(ctx, ddns.ID); err != nil || marked.Status != "marker" {
+		t.Fatalf("cooldown ignored: %+v %v", marked, err)
 	}
-	srv.dnsDDNSNext[inbound.ID] = time.Time{}
+	srv.dnsDDNSNext[ddns.ID] = time.Time{}
+	if err := db.TouchProbeDDNS(ctx, ddns.ID, failed.Revision); err != nil {
+		t.Fatal(err)
+	}
 	srv.runDNSDDNS(ctx)
-	srv.notifyDNSSyncFailure(ctx, *saved, server.Name, context.DeadlineExceeded)
 	pending, err := db.ListPendingNotificationDeliveries(ctx, time.Now().Add(time.Hour), 50)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("duplicate incident alerts: %+v %v", pending, err)
 	}
-	recovered := success.Add(time.Minute)
-	if err := db.UpdateInboundDNSSyncResult(ctx, inbound.ID, "ok", "", &recovered); err != nil {
+	previous := success
+	current, err := db.GetProbeDDNS(ctx, ddns.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	srv.dnsDDNSNext[inbound.ID] = time.Time{}
+	if err := db.FinishProbeDDNS(ctx, current, "ok", "", "", &previous); err != nil {
+		t.Fatal(err)
+	}
+	srv.dnsDDNSNext[ddns.ID] = time.Time{}
+	if err := db.TouchProbeDDNS(ctx, ddns.ID, current.Revision); err != nil {
+		t.Fatal(err)
+	}
 	srv.runDNSDDNS(ctx)
 	pending, err = db.ListPendingNotificationDeliveries(ctx, time.Now().Add(time.Hour), 50)
 	if err != nil || len(pending) != 2 {
