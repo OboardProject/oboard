@@ -38,23 +38,23 @@ func mihomoStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionForma
 		setNonEmpty(out, "flow", proxy.Flow)
 		setNonEmpty(out, "packet-encoding", proxy.PacketEncoding)
 		applyYAMLTransportMap(out, proxy.Transport)
-		applyYAMLTLSMap(out, proxy.TLS)
+		applyYAMLTLSMap(out, proxy.TLS, "servername")
 	case "vmess":
 		out["uuid"] = proxy.UUID
 		out["alterId"] = proxy.AlterID
 		out["cipher"] = defaultString(proxy.Security, "auto")
 		applyYAMLTransportMap(out, proxy.Transport)
-		applyYAMLTLSMap(out, proxy.TLS)
+		applyYAMLTLSMap(out, proxy.TLS, "servername")
 	case "trojan":
 		out["password"] = proxy.Password
 		out["udp"] = true
 		applyYAMLTransportMap(out, proxy.Transport)
-		applyYAMLTLSMap(out, proxy.TLS)
+		applyYAMLTLSMap(out, proxy.TLS, "sni")
 	case "tuic":
 		out["uuid"] = proxy.UUID
 		out["password"] = proxy.Password
 		out["udp"] = true
-		applyYAMLTLSMap(out, proxy.TLS)
+		applyYAMLTLSMap(out, proxy.TLS, "sni")
 		if value := stringFromAny(proxy.Native["congestion_control"]); value != "" {
 			out["congestion-controller"] = value
 		}
@@ -64,7 +64,7 @@ func mihomoStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionForma
 		} else {
 			out["password"] = proxy.Password
 		}
-		applyYAMLTLSMap(out, proxy.TLS)
+		applyYAMLTLSMap(out, proxy.TLS, "sni")
 		out["udp"] = true
 		setNonEmpty(out, "ports", hoppingPorts(proxy))
 		setNonEmpty(out, "hop-interval", proxy.HopInterval)
@@ -88,7 +88,7 @@ func mihomoStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionForma
 	case "anytls":
 		out["password"] = proxy.Password
 		out["udp"] = true
-		applyYAMLTLSMap(out, proxy.TLS)
+		applyYAMLTLSMap(out, proxy.TLS, "sni")
 	case "ss":
 		out["type"] = "ss"
 		out["cipher"] = proxy.Method
@@ -202,11 +202,15 @@ func applyYAMLTransportMap(out map[string]any, transport subscriptionTransport) 
 	}
 }
 
-func applyYAMLTLSMap(out map[string]any, tls subscriptionTLS) {
+// applyYAMLTLSMap writes the TLS fields of one proxy. Mihomo reads the TLS
+// server name from `servername` for VLESS/VMess and from `sni` for Trojan,
+// TUIC, Hysteria2, and AnyTLS; the wrong key is ignored and the client then
+// verifies the certificate against `server`, which fails for IP entries.
+func applyYAMLTLSMap(out map[string]any, tls subscriptionTLS, serverNameKey string) {
 	if tls.Present || tls.Enabled {
 		out["tls"] = tls.Enabled
 	}
-	setNonEmpty(out, "servername", tls.ServerName)
+	setNonEmpty(out, serverNameKey, tls.ServerName)
 	if tls.Insecure {
 		out["skip-cert-verify"] = true
 	}

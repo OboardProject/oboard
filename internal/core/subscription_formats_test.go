@@ -823,3 +823,54 @@ func countINISectionLines(output, section string) int {
 	}
 	return count
 }
+
+func TestYAMLTLSServerNameKeyFollowsProtocol(t *testing.T) {
+	tlsBlock := func() map[string]any {
+		return map[string]any{"enabled": true, "server_name": "edge.example.com"}
+	}
+	nodes := []SubscriptionNode{
+		{Name: "HY2", Raw: map[string]any{"type": "hysteria2", "server": "203.0.113.10", "server_port": 443, "password": "hy2-pass", "tls": tlsBlock()}},
+		{Name: "AnyTLS", Raw: map[string]any{"type": "anytls", "server": "203.0.113.11", "server_port": 443, "password": "anytls-pass", "tls": tlsBlock()}},
+		{Name: "Trojan", Raw: map[string]any{"type": "trojan", "server": "203.0.113.12", "server_port": 443, "password": "trojan-pass", "tls": tlsBlock()}},
+		{Name: "VLESS", Raw: map[string]any{"type": "vless", "server": "203.0.113.13", "server_port": 443, "uuid": "8d4c7d64-2a59-4d3e-9b1d-3f0f2a6f7c11", "tls": tlsBlock()}},
+	}
+	want := map[string]string{"hysteria2": "sni", "anytls": "sni", "trojan": "sni", "vless": "servername"}
+	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatMihomo, model.SubscriptionFormatStash} {
+		t.Run(string(format), func(t *testing.T) {
+			output, err := renderSubscriptionTarget(nodes, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document struct {
+				Proxies []map[string]any `yaml:"proxies"`
+			}
+			if err := yaml.Unmarshal([]byte(output), &document); err != nil {
+				t.Fatal(err)
+			}
+			seen := map[string]bool{}
+			for _, proxy := range document.Proxies {
+				typeName := stringFromAny(proxy["type"])
+				key, ok := want[typeName]
+				if !ok {
+					continue
+				}
+				seen[typeName] = true
+				other := "sni"
+				if key == "sni" {
+					other = "servername"
+				}
+				if proxy[key] != "edge.example.com" {
+					t.Fatalf("%s %s = %#v, want edge.example.com: %#v", typeName, key, proxy[key], proxy)
+				}
+				if _, wrong := proxy[other]; wrong {
+					t.Fatalf("%s unexpectedly carries %s: %#v", typeName, other, proxy)
+				}
+			}
+			for typeName := range want {
+				if !seen[typeName] {
+					t.Fatalf("%s missing from %s output:\n%s", typeName, format, output)
+				}
+			}
+		})
+	}
+}
