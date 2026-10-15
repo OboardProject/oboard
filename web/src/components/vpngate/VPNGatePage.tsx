@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, ListTree, Pencil, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react"
+import { AlertTriangle, ListTree, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react"
 import { Dialog } from "../ui/dialog"
 import { FormField } from "../ui/form-field"
 import { Select } from "../ui/select"
@@ -92,7 +92,7 @@ export function VPNGatePage({ client, servers, canManage, notify }: { client: Cl
   }, [client])
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try { const result = await request("/vpngate", { signal }); if (!signal?.aborted) { setOverview(result); setError("") } }
-    catch (e: any) { if (!signal?.aborted) setError(e.message || "加载失败，请稍后刷新") }
+    catch (e: any) { if (!signal?.aborted) setError(e.message || "加载失败，稍后会自动重试") }
     finally { if (!signal?.aborted) setLoading(false) }
   }, [request])
   useEffect(() => { const abort = new AbortController(); void refresh(abort.signal); const timer = window.setInterval(() => { if (!document.hidden) void refresh(abort.signal) }, 15000); return () => { abort.abort(); window.clearInterval(timer) } }, [refresh])
@@ -121,7 +121,6 @@ export function VPNGatePage({ client, servers, canManage, notify }: { client: Cl
     <header className="vpngate-intro">
       <p>从 VPNGate 公共节点中按地区和运营商挑选链路出口。出口服务器实测延迟，主控结合 IP 质量打分并自动维护热备；当前节点失效时秒级切换，找不到合适节点时暂停出站，不会改走其他线路。</p>
       <div className="vpngate-actions">
-        <button type="button" className="ghost" onClick={() => void refresh()} disabled={loading}><RefreshCw size={15} aria-hidden="true" />刷新</button>
         <button type="button" className="primary" disabled={!canManage || busy} onClick={create}><Plus size={15} aria-hidden="true" />新建出口池</button>
       </div>
     </header>
