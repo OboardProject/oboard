@@ -88,7 +88,6 @@ export function AdvancedSettingsCard({
       <div className="sub-section-head">
         <div>
           <h3>高级设置</h3>
-          <p className="muted">较少使用的账户和代理配置。</p>
         </div>
       </div>
 
