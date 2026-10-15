@@ -14416,9 +14416,11 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
     </EntryFormSection>
   }
 
-  const runOperation = async (payload: Record<string, any>, confirmText: string) => {
-    const confirmed = await dialogs.confirm({ title: confirmText, message: '这会改变入口的 AnyTLS 流量形态并触发配置重新部署。', tone: 'danger', confirmText })
-    if (!confirmed) return
+  const runOperation = async (payload: Record<string, any>, confirmText?: string) => {
+    if (confirmText) {
+      const confirmed = await dialogs.confirm({ title: confirmText, message: '这会改变入口的 AnyTLS 流量形态并触发配置重新部署。', tone: 'danger', confirmText })
+      if (!confirmed) return
+    }
     setBusy(true)
     try {
       const result = await client.request(`/inbounds/${draft.id}/padding`, { method: 'POST', body: JSON.stringify(payload) }) as Record<string, any>
@@ -14431,7 +14433,7 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
   }
   const generatedAt = snapshot.metadata?.generated_at ? new Date(snapshot.metadata.generated_at).toLocaleString('zh-CN') : '—'
   return <EntryFormSection icon={<Fingerprint size={16} aria-hidden="true" />} title="Padding 填充" description="方案已经固化到入口，普通编辑不会改变。">
-    {!snapshot.scheme.length && <div className="access-note warning"><strong>尚未配置 OBoard PaddingScheme</strong><span>现有入口保持原状；管理员可明确应用默认预设。</span></div>}
+    {!snapshot.scheme.length && <div className="access-note warning"><strong>尚未配置 OBoard PaddingScheme</strong><span>现有入口保持原状；管理员在下方选择预设后立即应用。</span></div>}
     <div className="inbound-padding-summary">
       <div><span>当前模式</span><strong>{anyTLSPaddingModeLabel(snapshot.metadata?.mode)}</strong></div>
       <div><span>预设</span><strong>{currentPreset ? `${currentPreset.name} v${snapshot.metadata?.preset_version || currentPreset.version}` : '—'}</strong></div>
@@ -14443,13 +14445,26 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
     {!!snapshot.scheme.length && <details className="advanced-config inbound-padding-scheme"><summary><FileText size={15} aria-hidden="true" /><span>实际 padding_scheme</span><small>{snapshot.scheme.length} 行</small></summary><pre>{snapshot.scheme.join('\n')}</pre></details>}
     {isAdmin ? <div className="entry-form-stack">
       <div className="entry-form-grid">
-        <FormField label="更换预设"><Select value={replacementPresetID} onChange={event => setReplacementPresetID(event.target.value)}>{presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name} v{preset.version}</option>)}</Select></FormField>
-        <div className="switch-setting-row"><span className="switch-setting-label">自动微调新快照</span><Switch checked={replacementAutoTune} onChange={setReplacementAutoTune} ariaLabel="更换预设时自动微调" /></div>
+        <FormField label="切换预设" hint="选择后立即应用并重新部署。">
+          <Select value={snapshot.metadata?.mode === 'custom' || !snapshot.scheme.length ? '' : replacementPresetID} disabled={busy} onChange={event => {
+            const presetID = event.target.value
+            if (!presetID) return
+            setReplacementPresetID(presetID)
+            void runOperation({ operation: 'replace_preset', preset_id: presetID, auto_tune: replacementAutoTune })
+          }}>
+            {(snapshot.metadata?.mode === 'custom' || !snapshot.scheme.length) && <option value="">{snapshot.scheme.length ? '自定义方案' : '选择预设'}</option>}
+            {presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name} v{preset.version}{preset.recommended ? '（推荐）' : ''}</option>)}
+          </Select>
+        </FormField>
+        <FormField label="切换时自动微调" hint="只改变长度区间，不改变 stop、包编号或 c 的结构。">
+          <div className="switch-setting-row switch-inline-control">
+            <Switch checked={replacementAutoTune} onChange={setReplacementAutoTune} ariaLabel="切换预设时自动微调" />
+          </div>
+        </FormField>
       </div>
-      <div className="dialog-actions inline-actions">
-        <button type="button" className="ghost" disabled={busy || snapshot.metadata?.mode === 'custom'} onClick={() => void runOperation({ operation: 'regenerate' }, '重新生成')}>重新生成</button>
-        <button type="button" disabled={busy} onClick={() => void runOperation({ operation: 'replace_preset', preset_id: replacementPresetID, auto_tune: replacementAutoTune }, snapshot.scheme.length ? '更换预设' : '应用默认预设')}>{snapshot.scheme.length ? '更换预设' : '应用 OBoard 默认预设'}</button>
-      </div>
+      {snapshot.metadata?.mode !== 'custom' && !!snapshot.scheme.length && <div className="dialog-actions inline-actions">
+        <button type="button" className="ghost" disabled={busy} onClick={() => void runOperation({ operation: 'regenerate' }, '重新生成')}>重新生成</button>
+      </div>}
       <EntryFormDisclosure icon={<Edit3 size={15} aria-hidden="true" />} title="改为自定义">
         <FormField label="自定义 padding_scheme" required hint="每行一条规则；保存后模式切换为 custom。"><textarea rows={8} value={customText} onChange={event => setCustomText(event.target.value)} spellCheck={false} /></FormField>
         <button type="button" disabled={busy || !customText.trim()} onClick={() => void runOperation({ operation: 'set_custom', padding_scheme: customText.replace(/\r\n/g, '\n').split('\n') }, '保存自定义方案')}>保存自定义方案</button>
@@ -14792,7 +14807,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 {presetOptions.map(option => <button key={option.id} type="button" role="radio" aria-checked={option.id === presetID} className={`inbound-variant-chip${option.id === presetID ? ' is-active' : ''}`} onClick={() => option.id !== presetID && applyPreset(option.id)}>{inboundVariantLabels[option.id] || option.label}</button>)}
               </div>
             </div>}
-            {protocol !== 'ssh' && <InboundNodePresetPicker presetID={presetID} config={cfg} updateConfig={updateConfig} nodePresets={data.node_presets || []} />}
+            {protocol !== 'ssh' && protocol !== 'anytls' && <InboundNodePresetPicker presetID={presetID} config={cfg} updateConfig={updateConfig} nodePresets={data.node_presets || []} />}
             {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>使用代理密码认证，仅允许本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
             {protocol !== 'ssh' && inboundPresetHasFields(presetID) && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
             {protocol === 'snell' && <p id="snell-mode-status" className="field-hint">Snell v{Number(cfg.version || 4)} · {snellReady ? '共享端口，每个授权身份独立 PSK，最多 64 个' : '共享端口等待 Agent / 内核升级'} · {(server as any)?.users_confirmed ? '凭据已确认' : '等待凭据同步'} · {(server as any)?.authorization_confirmed ? '授权已确认' : '等待授权确认'}</p>}
