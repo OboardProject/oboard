@@ -112,3 +112,31 @@
   .signal-settings-dialog .dialog-actions > button { flex: 0 1 auto; width: auto; max-width: 100%; min-height: 44px; }
   .signal-settings.about-settings .about-details > div { grid-template-columns: minmax(0, 1fr); gap: 6px; }
 }
+
+.settings-shell.settings-shell {
+  width: 100%;
+  max-width: 1120px;
+  gap: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.settings-shell .settings-topbar { display: grid; gap: 14px; min-width: 0; }
+.settings-shell .settings-topbar .settings-tabs { margin: 0; padding: 0 0 10px; }
+.settings-shell .settings-subnav {
+  display: inline-flex;
+  justify-self: start;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.settings-shell .settings-subnav::-webkit-scrollbar { display: none; }
+.settings-shell .settings-subnav button { flex: 0 0 auto; white-space: nowrap; }
+.settings-shell .settings-subnav button:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.settings-shell .settings-grid { display: grid; gap: 14px; min-height: 0; }
+
+@media (max-width: 620px) {
+  .settings-shell.settings-shell { padding: 0; }
+  .settings-shell .settings-subnav { justify-self: stretch; }
+}

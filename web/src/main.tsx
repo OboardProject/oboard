@@ -141,7 +141,7 @@ import {
   GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
   ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick,
   Clock, Power, WifiOff, Building2, MapPin, Code,
-  Palette, Sparkles
+  Sparkles, MonitorCog, ServerCog
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -3610,9 +3610,51 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
   </MotionDialogPanel>
 }
 
+type SettingsCategory = 'panel' | 'nodes' | 'subscriptions' | 'notifications'
+
+const settingsCategories: Array<{ key: SettingsCategory; label: string; icon: any; sections: Array<{ key: string; label: string }> }> = [
+  { key: 'panel', label: '面板', icon: MonitorCog, sections: [
+    { key: 'access', label: '访问' },
+    { key: 'security', label: '安全' },
+    { key: 'appearance', label: '外观' },
+    { key: 'maintenance', label: '更新与维护' },
+    { key: 'about', label: '关于' },
+  ] },
+  { key: 'nodes', label: '节点', icon: ServerCog, sections: [
+    { key: 'general', label: '通用' },
+    { key: 'presets', label: '节点预设' },
+    { key: 'certificates', label: '证书' },
+  ] },
+  { key: 'subscriptions', label: '订阅', icon: Shield, sections: [] },
+  { key: 'notifications', label: '通知', icon: Bell, sections: [] },
+]
+
+const SETTINGS_LOCATION_KEY = 'oboard.settings.location'
+
+function storedSettingsLocation(): { category: SettingsCategory; sections: Record<SettingsCategory, string> } {
+  const sections = Object.fromEntries(settingsCategories.map(item => [item.key, item.sections[0]?.key || ''])) as Record<SettingsCategory, string>
+  let stored: any = null
+  try { stored = JSON.parse(readStoredValue(SETTINGS_LOCATION_KEY) || 'null') } catch { stored = null }
+  const category = settingsCategories.find(item => item.key === stored?.category)?.key || 'panel'
+  for (const item of settingsCategories) {
+    const saved = stored?.sections?.[item.key]
+    if (item.sections.some(section => section.key === saved)) sections[item.key] = saved
+  }
+  return { category, sections }
+}
+
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange, theme, onThemeChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'appearance' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>(() => storedSettingsLocation().category)
+  const [activeSections, setActiveSections] = useState<Record<SettingsCategory, string>>(() => storedSettingsLocation().sections)
+  const activeSection = activeSections[activeCategory]
+  const openSettings = (category: SettingsCategory, section?: string) => {
+    const sections = section ? { ...activeSections, [category]: section } : activeSections
+    setActiveCategory(category)
+    setActiveSections(sections)
+    writeStoredValue(SETTINGS_LOCATION_KEY, JSON.stringify({ category, sections }))
+  }
+  const showing = (category: SettingsCategory, section?: string) => activeCategory === category && (!section || activeSection === section)
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3826,38 +3868,33 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       }) })
     }, '通知提醒设置已保存')
   }
-  const settingsNavigation: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> = [
-    { key: 'connection', label: '面板访问', icon: LinkIcon, description: '设置面板地址、用户注册和远程访问权限。' },
-    { key: 'appearance', label: '界面外观', icon: Palette, description: '自定义面板主题风格与视觉显示效果。' },
-    { key: 'servers', label: '服务器', icon: ServerIcon, description: '管理新服务器默认值、下载来源和数据保留时间。' },
-    { key: 'presets', label: '节点预设', icon: Layers, description: '保存常用协议参数，创建入口时直接套用。' },
-    { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
-    { key: 'subscriptions', label: '订阅', icon: Shield, description: '管理订阅加密、连接地址和订阅中继。' },
-    { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
-    { key: 'updates', label: '备份与更新', icon: Download, description: '管理版本更新、数据备份与恢复。' },
-    { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
-    { key: 'about', label: '关于', icon: Info, description: '版本、内核和许可证信息。' },
-  ]
+  const currentCategory = settingsCategories.find(item => item.key === activeCategory) || settingsCategories[0]
   return <section className="settings-shell">
-    <div className="settings-topbar">
-      <nav className="settings-nav" aria-label="设置菜单">
+    <header className="settings-topbar">
+      <nav className="settings-nav" aria-label="设置分类">
         <div className="settings-tabs">
-          {settingsNavigation.map(item => {
+          {settingsCategories.map(item => {
             const Icon = item.icon
-            const active = activeSection === item.key
-            return <button key={item.key} type="button" className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} onClick={() => setActiveSection(item.key)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span></button>
+            const active = activeCategory === item.key
+            return <button key={item.key} type="button" className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} onClick={() => openSettings(item.key)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span></button>
           })}
         </div>
       </nav>
-    </div>
+      {currentCategory.sections.length > 1 && <nav className="settings-subnav ui-tabs-list" aria-label={`${currentCategory.label}设置`}>
+        {currentCategory.sections.map(section => {
+          const active = activeSection === section.key
+          return <button key={section.key} type="button" className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} onClick={() => openSettings(activeCategory, section.key)}>{section.label}</button>
+        })}
+      </nav>}
+    </header>
     <div className="settings-content">
       {!savedURL && <div className="controller-url-warning settings-controller-url-warning" role="status">
         <AlertTriangle size={18} />
-        <div><strong>尚未保存主控公开地址</strong><span>请在“面板访问”中保存服务器可连接的 HTTPS 地址，否则无法安装或更新。</span></div>
-        {activeSection !== 'connection' && <button type="button" onClick={() => setActiveSection('connection')}>前往面板访问</button>}
+        <div><strong>尚未保存主控公开地址</strong><span>请在“面板 › 访问”中保存服务器可连接的 HTTPS 地址，否则无法安装或更新。</span></div>
+        {!showing('panel', 'access') && <button type="button" onClick={() => openSettings('panel', 'access')}>前往设置</button>}
       </div>}
       <div className="settings-grid">
-      {activeSection === 'connection' && <section id="settings-panel-connection" className="settings-card">
+      {showing('panel', 'access') && <section id="settings-panel-access" className="settings-card">
         <SettingsGroup title="节点连接地址" description="Agent 连接面板的地址，留空时自动使用当前地址。">
         <div className="form settings-form single-field">
           <FormField label="面板访问地址" hint="Agent 连接面板的地址，留空自动使用当前地址。">
@@ -3945,8 +3982,8 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
           </div>
         </SettingsGroup>
-        <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />
- <ProxyDSCPSettings data={data} client={client} load={load} notify={notify} />
+      </section>}
+      {showing('panel', 'security') && <section id="settings-panel-security" className="settings-card">
         <SettingsGroup title="用户注册" description="控制登录页注册入口与新用户的初始权限。">
           <SettingsSwitchRow label="开放注册" description="允许访客在登录页自行创建账号。" checked={registrationEnabled} onChange={setRegistrationEnabled} disabled={Boolean(saving)} ariaLabel="开放注册" />
           <SettingsRow label="默认注册用户组" description="未分配用户组的新用户没有面板权限。">
@@ -3957,11 +3994,45 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </SettingsRow>
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </SettingsGroup>
+        <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />
       </section>}
-      {activeSection === 'appearance' && <AppearanceSettingsPanel notify={notify} />}
-      {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={dialogs.confirm} />}
-      {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
-      {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" className="settings-card">
+      {showing('panel', 'appearance') && <AppearanceSettingsPanel notify={notify} />}
+      {showing('panel', 'maintenance') && <>
+        <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
+        <ControllerBackupPanel localizeErrorMessage={localizeErrorMessage} client={client} notify={notify} dialogs={dialogs} />
+        <ControllerLogsPanel
+          client={client}
+          dialogs={dialogs}
+          notify={notify}
+          maxMB={controllerLogMaxMB}
+          backups={controllerLogBackups}
+          setMaxMB={setControllerLogMaxMB}
+          setBackups={setControllerLogBackups}
+          saving={saving === 'controller-logs'}
+          onSave={saveControllerLogs}
+        />
+        <StorageDiagnosticsCard settings={data.settings} />
+      </>}
+      {showing('panel', 'about') && <AboutSettingsPanel version={data.version} />}
+      {showing('nodes', 'general') && <>
+        <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={dialogs.confirm} />
+        <section id="settings-panel-node-network" className="settings-card">
+          <SettingsGroup title="入口 DNS 解析" description="订阅里的 Host（server）字段用 IP 还是解析域名。TLS 的 SNI 始终取证书域名，与这里无关。">
+            <SettingsSwitchRow
+              label="始终解析"
+              description={dnsAlwaysResolve ? '任何入口都可创建 DNS 记录，已解析的入口用域名作为 Host。' : '默认关闭：只有双栈入口创建 A + AAAA 记录；仅 IPv4、仅 IPv6 和跟随服务器的单栈入口直接用 IP，不留 DNS 记录。证书通过 DNS-01 申请，不需要解析到服务器。'}
+              checked={dnsAlwaysResolve}
+              onChange={checked => void saveDNSAlwaysResolve(checked)}
+              disabled={Boolean(saving)}
+              ariaLabel="始终解析"
+            />
+          </SettingsGroup>
+          <ProxyDSCPSettings data={data} client={client} load={load} notify={notify} />
+        </section>
+      </>}
+      {showing('nodes', 'presets') && <NodePresetsPanel data={data} client={client} load={load} notify={notify} />}
+      {showing('nodes', 'certificates') && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
+      {showing('subscriptions') && <><section id="settings-panel-subscriptions" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
           <SettingsRow label="加密策略" description="仅影响 Mihomo 格式。">
             <Select variant="segmented" value={subscriptionAgePolicy} onChange={e => { const next = e.target.value as 'optional' | 'required'; void saveSubscriptionAgePolicy(next) }} disabled={Boolean(saving)} aria-label="Age 加密策略">
@@ -3971,18 +4042,8 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="subscription-security-note"><Shield size={18} /><div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div></div>
         </SettingsGroup>
         <SubscriptionTemplatesPanel client={client} notify={notify} />
-        <SettingsGroup title="入口 DNS 解析" description="订阅里的 Host（server）字段用 IP 还是解析域名。TLS 的 SNI 始终取证书域名，与这里无关。">
-          <SettingsSwitchRow
-            label="始终解析"
-            description={dnsAlwaysResolve ? '任何入口都可创建 DNS 记录，已解析的入口用域名作为 Host。' : '默认关闭：只有双栈入口创建 A + AAAA 记录；仅 IPv4、仅 IPv6 和跟随服务器的单栈入口直接用 IP，不留 DNS 记录。证书通过 DNS-01 申请，不需要解析到服务器。'}
-            checked={dnsAlwaysResolve}
-            onChange={checked => void saveDNSAlwaysResolve(checked)}
-            disabled={Boolean(saving)}
-            ariaLabel="始终解析"
-          />
-        </SettingsGroup>
       </section><SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
-      {activeSection === 'notifications' && <section id="settings-panel-notifications" className="settings-card">
+      {showing('notifications') && <section id="settings-panel-notifications" className="settings-card">
         <SettingsGroup collapsible title="服务器离线与恢复提醒" description="设置离线与恢复提醒时间，可为单台服务器单独调整。">
           <SettingsRow label="默认离线判断时间（秒）" description="服务器超过此时间未响应时提醒。">
             <input
@@ -4032,24 +4093,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </SettingsGroup>
       </section>}
-      {activeSection === 'updates' && <>
-        <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
-        <StorageDiagnosticsCard settings={data.settings} />
-        <ControllerBackupPanel localizeErrorMessage={localizeErrorMessage} client={client} notify={notify} dialogs={dialogs} />
-      </>}
-      {activeSection === 'logs' && <ControllerLogsPanel
-        client={client}
-        dialogs={dialogs}
-        notify={notify}
-        maxMB={controllerLogMaxMB}
-        backups={controllerLogBackups}
-        setMaxMB={setControllerLogMaxMB}
-        setBackups={setControllerLogBackups}
-        saving={saving === 'controller-logs'}
-        onSave={saveControllerLogs}
-      />}
-      {activeSection === 'about' && <AboutSettingsPanel version={data.version} />}
-      {activeSection === 'presets' && <NodePresetsPanel data={data} client={client} load={load} notify={notify} />}
       </div>
     </div>
   </section>
