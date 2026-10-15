@@ -95,3 +95,10 @@
   .vpngate-history li { grid-template-columns: 1fr; gap: 0; }
 }
 @media (pointer: coarse) { .vpngate-presets button { min-height: 44px; } }
+
+
+.dialog.vpngate-pool-dialog .dialog-chrome-body {
+  margin-right: -14px;
+  padding-right: 14px;
+  scrollbar-gutter: stable;
+}

@@ -197,8 +197,11 @@ export function VPNGatePage({ client, servers, canManage }: { client: Client; se
       </article>)}
     </div>}
 
-    <Dialog isOpen={Boolean(editing)} onClose={() => { if (!busy) setEditing(null) }} title={editing?.id ? "编辑出口池" : "新建出口池"} size="lg" busy={busy}>
-      {editing && <PoolForm pool={editing} busy={busy} error={error} onChange={setEditing} onCancel={() => setEditing(null)} onSubmit={() => void mutate("save", editing, editing.id ? "已保存，将按新条件重新挑选节点" : "出口池已创建，在代理拓扑中添加「VPNGate 出口」即可使用")} />}
+    <Dialog isOpen={Boolean(editing)} onClose={() => { if (!busy) setEditing(null) }} title={editing?.id ? "编辑出口池" : "新建出口池"} size="lg" className="vpngate-pool-dialog" busy={busy} footer={editing ? <>
+      <button type="button" className="ghost" disabled={busy} onClick={() => setEditing(null)}>取消</button>
+      <button type="submit" form="vpngate-pool-form" className="primary" disabled={!poolCanSubmit(editing, busy)}>{busy ? "保存中…" : "保存"}</button>
+    </> : null}>
+      {editing && <PoolForm pool={editing} busy={busy} error={error} onChange={setEditing} onSubmit={() => void mutate("save", editing, editing.id ? "已保存，将按新条件重新挑选节点" : "出口池已创建，在代理拓扑中添加「VPNGate 出口」即可使用")} />}
     </Dialog>
     <Dialog isOpen={Boolean(deleting)} onClose={() => { if (!busy) setDeleting(null) }} title="删除出口池" size="sm" busy={busy} footer={<>
       <button type="button" className="ghost" disabled={busy} onClick={() => setDeleting(null)}>取消</button>
@@ -261,13 +264,17 @@ function PoolServerDetail({ pool, state }: { pool: VPNGatePool; state: PoolServe
   </div>
 }
 
-function PoolForm({ pool, busy, error, onChange, onCancel, onSubmit }: { pool: VPNGatePool; busy: boolean; error: string; onChange: (pool: VPNGatePool) => void; onCancel: () => void; onSubmit: () => void }) {
+function poolCanSubmit(pool: VPNGatePool, busy: boolean) {
+  return !busy && pool.name.trim() !== "" && pool.pool_size >= pool.hot_standby + 1
+}
+
+function PoolForm({ pool, busy, error, onChange, onSubmit }: { pool: VPNGatePool; busy: boolean; error: string; onChange: (pool: VPNGatePool) => void; onSubmit: () => void }) {
   const [countries, setCountries] = useState(pool.countries.join(", "))
   const [asns, setASNs] = useState(pool.operator_asns.join(", "))
   const split = (value: string) => value.split(/[\s,，、]+/).map(item => item.trim()).filter(Boolean)
   const update = (patch: Partial<VPNGatePool>) => onChange({ ...pool, ...patch })
   const sizeInvalid = pool.pool_size < pool.hot_standby + 1
-  const canSubmit = !busy && pool.name.trim() !== "" && !sizeInvalid
+  const canSubmit = poolCanSubmit(pool, busy)
   const togglePreset = (values: string[]) => {
     const current = split(asns).map(item => item.toUpperCase())
     const active = values.every(value => current.includes(value))
@@ -275,7 +282,7 @@ function PoolForm({ pool, busy, error, onChange, onCancel, onSubmit }: { pool: V
     setASNs(next.join(", ")); update({ operator_asns: next })
   }
   const selectedASNs = split(asns).map(item => item.toUpperCase())
-  return <form className="probe-task-form vpngate-form" onSubmit={event => { event.preventDefault(); if (canSubmit) onSubmit() }}>
+  return <form id="vpngate-pool-form" className="probe-task-form vpngate-form" onSubmit={event => { event.preventDefault(); if (canSubmit) onSubmit() }}>
     <fieldset disabled={busy} className="return-latency-fields">
       <div className="probe-task-form-grid">
         <FormField label="名称" required full>
@@ -337,9 +344,5 @@ function PoolForm({ pool, busy, error, onChange, onCancel, onSubmit }: { pool: V
     </fieldset>
     {sizeInvalid && <p role="alert" className="danger-text">候选节点数不能少于热备数加 1。</p>}
     {error && <p role="alert" className="danger-text">{error}</p>}
-    <div className="dialog-actions">
-      <button type="button" className="ghost" disabled={busy} onClick={onCancel}>取消</button>
-      <button type="submit" className="primary" disabled={!canSubmit}>{busy ? "保存中…" : "保存"}</button>
-    </div>
   </form>
 }
