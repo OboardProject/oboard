@@ -139,7 +139,7 @@ func TestVPNGateSelectionFlowFiltersOperatorAndFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, _ = db.GetVPNGatePoolServer(ctx, pool.ID, server.ID)
-	if len(state.Members) != 0 || !strings.Contains(state.LastError, "拒绝出站") {
+	if len(state.Members) != 0 || !strings.Contains(state.LastError, "没有符合条件") {
 		t.Fatalf("pool must fail closed: %+v", state)
 	}
 	applyTask, _ = db.GetTask(ctx, state.ApplyTaskID)

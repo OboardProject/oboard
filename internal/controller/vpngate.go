@@ -335,7 +335,7 @@ func (s *Server) vpngateReconcilePair(ctx context.Context, pool model.VPNGatePoo
 	}
 	if !pool.Enabled {
 		if len(state.Members) > 0 {
-			state.History = append(state.History, model.VPNGateSwitchEvent{At: now, Reason: "出口池已停用，拒绝出站", From: firstVPNGateMember(state.Members)})
+			state.History = append(state.History, model.VPNGateSwitchEvent{At: now, Reason: "出口池已停用，暂停出站", From: firstVPNGateMember(state.Members)})
 			state.Members = []model.VPNGateCandidate{}
 		}
 		state.LastError = "出口池已停用"
@@ -421,7 +421,7 @@ func (s *Server) vpngateQueueProbe(ctx context.Context, pool model.VPNGatePool, 
 		state.NextRefreshAt = &next
 		state.LastProbeAt = &now
 		// Live members still count: re-score them so the selection stays current.
-		s.vpngateFinishSelection(ctx, pool, state, nil, nodes, "目录中没有符合条件的候选节点")
+		s.vpngateFinishSelection(ctx, pool, state, nil, nodes, "节点目录里没有符合条件的节点")
 		return nil
 	}
 	plan := model.VPNGateProbePlan{PoolID: pool.ID, Tag: core.VPNGatePoolTag(pool.ID), RequestID: newVPNGateRequestID()}
@@ -730,7 +730,7 @@ func (s *Server) vpngateFinishSelection(ctx context.Context, pool model.VPNGateP
 			reason = "更新候选节点"
 		}
 		if len(selection.Members) == 0 {
-			reason = "没有符合条件的可用节点，拒绝出站"
+			reason = "没有符合条件的节点，暂停出站"
 		}
 		state.History = append(state.History, model.VPNGateSwitchEvent{At: time.Now(), Reason: reason, From: firstVPNGateMember(state.Members), To: firstVPNGateMember(selection.Members)})
 		state.Members = selection.Members
@@ -740,9 +740,9 @@ func (s *Server) vpngateFinishSelection(ctx context.Context, pool model.VPNGateP
 	}
 	state.LastError = ""
 	if len(state.Members) == 0 {
-		state.LastError = "没有符合条件的可用节点，当前拒绝出站"
+		state.LastError = "没有符合条件的节点"
 		if emptyReason != "" {
-			state.LastError = emptyReason + "，当前拒绝出站"
+			state.LastError = emptyReason
 		}
 	}
 	if err := s.store.SaveVPNGatePoolServer(ctx, state); err != nil {

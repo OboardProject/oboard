@@ -616,12 +616,12 @@ func SelectVPNGateMembers(pool model.VPNGatePool, current []model.VPNGateCandida
 			if result.Improvements >= vpngateImproveRounds {
 				primary = nil
 				result.Improvements = 0
-				result.Reason = "发现更优节点"
+				result.Reason = "发现更好的节点，已切换"
 			}
 		}
 	}
 	if primary == nil && len(current) > 0 && result.Reason == "" {
-		result.Reason = "当前主节点失效"
+		result.Reason = "当前出口失效，已切换"
 	}
 	used := map[int64]bool{}
 	if primary != nil {

@@ -1299,7 +1299,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
   'traffic-forwarding': { label: '流量转发', desc: '管理端口转发与服务器间隧道。', group: '网络' },
-  vpngate: { label: 'VPNGate 出口', desc: '按国家/地区与运营商自动选择 VPNGate 出口，失效秒级切换，无可用节点时拒绝出站。', group: '网络' },
+  vpngate: { label: 'VPNGate', desc: '按地区和运营商自动挑选 VPNGate 节点作为链路出口。', group: '网络' },
   notifications: { label: '通知中心', desc: '', group: '' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计中心', desc: '汇总订阅更新、连接活动和管理操作，识别异常并提供可追溯的处理依据。', group: '运维' },
@@ -2574,7 +2574,7 @@ export function App() {
     dashboard: '总览',
     servers: '服务器管理',
     'return-latency': '拨测任务',
-    vpngate: 'VPNGate 出口',
+    vpngate: 'VPNGate',
     'proxy-paths': '代理拓扑',
     users: '用户与分组',
     plans: '套餐管理',
@@ -12073,12 +12073,12 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       if (!selected?.id) return
       const pools = ((data.vpngate_pools || []) as VPNGateCanvasPool[])
       if (!pools.length) {
-        await dialogs.alert({ title: '还没有 VPNGate 出口池', message: '请先在「网络 → VPNGate 出口」创建出口池，选择国家/地区、运营商与选优策略。' })
+        await dialogs.alert({ title: '还没有 VPNGate 出口池', message: '请先在「网络 → VPNGate」创建出口池，再回到这里连接。' })
         return
       }
       const chosen = pools.length === 1 ? String(pools[0].id) : await dialogs.prompt({
         title: '选择 VPNGate 出口池',
-        message: '连接后，该链路由末端服务器经所选出口池出站；出口池没有可用节点时拒绝出站。',
+        message: '连接后，流量由前一台服务器经该出口池出站；出口池暂无可用节点时，这条链路会暂停出站，不会改走其他出口。',
         defaultValue: String(pools[0].id),
         choices: pools.map(pool => ({ value: String(pool.id), label: `${pool.name}${pool.enabled ? '' : '（已停用）'}` })),
       })
@@ -12873,7 +12873,7 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'imported', label: '导入节点', desc: 'SS / SOCKS / VLESS' },
   { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
-  { id: 'vpngate', label: 'VPNGate 出口', desc: '按运营商自动选优，无可用节点时拒绝出站' },
+  { id: 'vpngate', label: 'VPNGate 出口', desc: '按地区和运营商自动挑选节点' },
   { id: 'routing', label: '分流出口', desc: '连上服务器后配置规则，后面的节点是未匹配兜底' },
   { id: 'family_split_template', label: '双栈模板', desc: '独立编排可复用的 IPv4 / IPv6 分支' },
 ]
@@ -16585,11 +16585,11 @@ function vpngateStepPoolID(step: Pick<ProxyPathStep, 'config_json'>) {
 
 function vpngateExitMeta(pool: VPNGateCanvasPool | undefined, serverID: number, serverName: string) {
   if (!pool) return `${serverName} · 出口池不存在`
-  if (!pool.enabled) return `${serverName} · 已停用，拒绝出站`
+  if (!pool.enabled) return `${serverName} · 已停用，暂停出站`
   const exit = pool.servers?.[String(serverID)]
-  if (!exit) return `${serverName} · 等待部署后选优`
-  if (!exit.members) return `${serverName} · 无可用节点，拒绝出站`
-  return `${serverName} · ${exit.egress_ip || '选优中'}${exit.country_code ? ` ${exit.country_code}` : ''} · 健康 ${exit.healthy}/${exit.members}`
+  if (!exit) return `${serverName} · 部署后开始挑选`
+  if (!exit.members) return `${serverName} · 暂无可用节点，暂停出站`
+  return `${serverName} · ${exit.egress_ip || '挑选中'}${exit.country_code ? ` ${exit.country_code}` : ''} · 可用 ${exit.healthy}/${exit.members}`
 }
 
 function canvasRoutingNodeID(instance: CanvasRoutingInstance) {
