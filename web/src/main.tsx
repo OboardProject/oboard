@@ -14476,14 +14476,14 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
 type EntryAddressChoice = 'auto' | 'ipv4' | 'ipv6' | 'dual' | 'custom'
 
 const inboundProtocolChoices: { protocol: Protocol; label: string; summary: string }[] = [
-  { protocol: 'vless', label: 'VLESS', summary: 'Reality 免证书' },
-  { protocol: 'anytls', label: 'AnyTLS', summary: 'TLS · 需证书' },
-  { protocol: 'hy2', label: 'Hysteria2', summary: 'QUIC · 需证书' },
-  { protocol: 'shadowsocks', label: 'Shadowsocks', summary: '无证书 · 多用户' },
-  { protocol: 'mieru', label: 'Mieru', summary: '可多端口' },
-  { protocol: 'snell', label: 'Snell', summary: 'Surge 客户端' },
-  { protocol: 'socks', label: 'SOCKS5', summary: '用户名密码' },
-  { protocol: 'ssh', label: 'SSH', summary: '受限转发' },
+  { protocol: 'vless', label: 'VLESS', summary: 'Reality · WebSocket · TCP' },
+  { protocol: 'anytls', label: 'AnyTLS', summary: 'TLS + Padding · 需证书' },
+  { protocol: 'hy2', label: 'Hysteria2', summary: 'QUIC / UDP · 需证书' },
+  { protocol: 'shadowsocks', label: 'Shadowsocks', summary: 'AEAD 加密 · 免证书' },
+  { protocol: 'mieru', label: 'Mieru', summary: '免证书 · 支持多端口' },
+  { protocol: 'snell', label: 'Snell', summary: 'Surge 专用 · PSK' },
+  { protocol: 'socks', label: 'SOCKS5', summary: '用户名密码 · TCP/UDP' },
+  { protocol: 'ssh', label: 'SSH', summary: '密码认证 · 仅端口转发' },
 ]
 
 const inboundVariantOrder = ['vless-reality', 'vless-ws', 'vless-tcp', 'vless-tls-vision', 'hy2-tls', 'hy2-salamander', 'ss-2022-128', 'ss-2022-256', 'ss-aes-128-gcm', 'ss-aes-256-gcm', 'snell-v4', 'snell-v6']
@@ -20776,24 +20776,24 @@ const anyTLSLightPaddingScheme = [
 ] as const
 
 const inboundPresets: InboundPreset[] = [
-  { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision', defaultPort: 443 },
-  { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，必须使用自有域名', defaultPort: 443 },
-  { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443 },
-  { id: 'hy2-tls', protocol: 'hy2', label: 'HY2 标准', description: '必须使用自有域名签发证书', defaultPort: 443 },
-  { id: 'hy2-salamander', protocol: 'hy2', label: 'HY2 Salamander', description: 'Salamander 混淆，必须使用自有域名签发证书', defaultPort: 443 },
-  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS', description: '必须使用自有域名；Padding 在下方单独选择并由 Controller 固化', defaultPort: 443 },
-  { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388 },
-  { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388 },
-  { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
-  { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388 },
-  { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250 },
-  { id: 'snell-v4', protocol: 'snell', label: 'Snell v4', description: 'v4 基础参数，可选 HTTP 混淆', defaultPort: 6160 },
-  { id: 'snell-v6', protocol: 'snell', label: 'Snell v6', description: 'v6 协议（Surge iOS 5.20+/Mac 6.7+ 可用）', defaultPort: 7177 },
-  { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '用户名密码认证，支持 TCP 与 UDP', defaultPort: 1080 },
-  { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '密码认证，仅支持本地/动态转发', defaultPort: 2222 },
+  { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision：借用目标站点的 TLS 握手，免域名和证书', defaultPort: 443 },
+  { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS：需自有域名证书，可经 CDN 中转', defaultPort: 443 },
+  { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '明文 TCP，无加密层：仅用于内网、测试或外层已有加密的链路', defaultPort: 443 },
+  { id: 'hy2-tls', protocol: 'hy2', label: 'HY2 标准', description: 'QUIC + TLS：需自有域名证书，服务器需放行 UDP', defaultPort: 443 },
+  { id: 'hy2-salamander', protocol: 'hy2', label: 'HY2 Salamander', description: 'QUIC + TLS，并加 Salamander 混淆：需证书，客户端需填写相同混淆密码', defaultPort: 443 },
+  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS', description: 'TLS 之上的多路复用协议：需自有域名证书；Padding 填充方案在下方选择', defaultPort: 443 },
+  { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: '经典 AEAD（AES-128-GCM），单用户，客户端兼容面最广', defaultPort: 8388 },
+  { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: '经典 AEAD（AES-256-GCM），单用户，客户端兼容面最广', defaultPort: 8388 },
+  { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'Shadowsocks 2022（BLAKE3 + AES-128-GCM），多用户，抗重放', defaultPort: 8388 },
+  { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'Shadowsocks 2022（BLAKE3 + AES-256-GCM），多用户，抗重放', defaultPort: 8388 },
+  { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: '多用户，免证书；可监听多个端口，TCP 或 UDP 传输', defaultPort: 25250 },
+  { id: 'snell-v4', protocol: 'snell', label: 'Snell v4', description: 'Snell v4：PSK 认证，可选 HTTP 混淆，Surge 各版本可用', defaultPort: 6160 },
+  { id: 'snell-v6', protocol: 'snell', label: 'Snell v6', description: 'Snell v6：PSK 至少 12 字节，不支持混淆（Surge iOS 5.20+ / Mac 6.7+）', defaultPort: 7177 },
+  { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '每个用户独立的用户名密码，支持 TCP 与 UDP，无加密', defaultPort: 1080 },
+  { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '使用代理密码认证，仅允许本地 / 动态端口转发，不提供 shell', defaultPort: 2222 },
 ]
 
-const leftoverVLESSTLSPreset: InboundPreset = { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS', description: '已有入口：TCP + TLS + Vision', defaultPort: 443 }
+const leftoverVLESSTLSPreset: InboundPreset = { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS', description: '已有入口：TCP + TLS + Vision，需证书', defaultPort: 443 }
 
 const shadowsocksMethods = [
   { value: 'aes-128-gcm', label: 'SS 128' },
