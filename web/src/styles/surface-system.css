@@ -528,7 +528,6 @@ tbody tr:hover td { background: var(--row-hover); }
 .terminal-picker-quick-actions button.ghost,
 .terminal-batch-bar-actions button.primary,
 .terminal-batch-actions button:not(.ghost),
-button.user-table-compact-button,
 .latency-pill-btn,
 .node-preset-filters button,
 .accent-reset-btn,

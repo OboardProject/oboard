@@ -4,7 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(path.resolve(__dirname, 'main.tsx'), 'utf8')
-const stylesheet = readFileSync(path.resolve(__dirname, 'style.css'), 'utf8')
+const listStylesheet = readFileSync(path.resolve(__dirname, 'components/users/user-list.css'), 'utf8')
 
 describe('User table subscription column', () => {
   const tableSource = source.slice(
@@ -20,9 +20,15 @@ describe('User table subscription column', () => {
     expect(tableSource).not.toMatch(/快速一次性/)
   })
 
-  it('keeps table action chips compact and independent of the 42px control height', () => {
-    expect(source).toMatch(/className="user-table-compact-button"/)
-    expect(stylesheet).toMatch(/button\.user-table-compact-button\s*\{[^}]*min-height:\s*28px[^}]*height:\s*28px/s)
-    expect(stylesheet).not.toMatch(/\.user-subscription-actions\s*\{/)
+  it('keeps one visible row action and moves plan and ledger into the more menu', () => {
+    expect(tableSource).not.toMatch(/user-table-compact-button/)
+    expect(tableSource).not.toMatch(/管理 \$\{usr\.username\} 的套餐/)
+    expect(source).toMatch(/\{ label: '管理套餐', action: 'plan' \}/)
+    expect(source).toMatch(/\{ label: '流量明细', action: 'ledger' \}/)
+  })
+
+  it('degrades to cards on narrow containers with 44px touch targets', () => {
+    expect(listStylesheet).toMatch(/@container user-list \(max-width: 820px\)/)
+    expect(listStylesheet).toMatch(/button\.user-row-more-button \{[^}]*width: 44px[^}]*height: 44px/)
   })
 })

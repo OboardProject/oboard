@@ -120,6 +120,7 @@ import './style.css'
 import './components/proxy-path/ProxyCanvas.css'
 import './styles/surface-system.css'
 import './styles/inbound-editor.css'
+import './components/users/user-list.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
 import { ConnectivityDetails } from './components/server/ConnectivityDetails'
@@ -17246,6 +17247,10 @@ function groupToDraft(group: UserGroup): UserGroupDraft {
   return { name: group.name, description: group.description || '', role: group.role || 'viewer', enabled: group.enabled !== false }
 }
 
+function formatTableDay(value?: string) {
+  return value ? formatTableTime(value).slice(0, 10) : ''
+}
+
 function userSubscriptionStatus(user: User) {
   if (user.subscription_suspended) return { tone: 'danger' as const, label: '风控暂停' }
   if (user.subscription_token) {
@@ -17571,7 +17576,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
 }
 
 
-function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, onPassword, onCredentials, onDelete }: any) {
+function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, onPlan, onLedger, onPassword, onCredentials, onDelete }: any) {
   const actionState = useUserAction(localizeErrorMessage)
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -17580,7 +17585,9 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null)
 
   const items = [
-        { label: '修改登录密码', action: 'password' },
+    { label: '管理套餐', action: 'plan' },
+    { label: '流量明细', action: 'ledger' },
+    { label: '修改登录密码', action: 'password' },
     { label: '复制订阅链接', action: 'copy-sub' },
     { label: user.subscription_burn_after_read ? '关闭阅后即焚' : '开启阅后即焚', action: 'burn' },
     { label: '管理订阅与节点密码', action: 'credentials' },
@@ -17636,6 +17643,8 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
   const handleActionClick = async (action: string) => {
     setIsOpen(false);
     if (action === 'edit') onEdit(user);
+    else if (action === 'plan') onPlan(user);
+    else if (action === 'ledger') onLedger(user);
     else if (action === 'password') onPassword(user);
     else if (action === 'copy-sub') await copyManagedUserSubscription(user, notify)
     else if (action === 'burn') await setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs, notify);
@@ -17660,14 +17669,13 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
           if (!isOpen) placeMenu()
           setIsOpen(!isOpen);
         }}
-        className="ghost user-row-text-button"
-        style={{ backgroundColor: isOpen ? 'var(--bg-control)' : 'transparent', color: 'var(--text-secondary)' }}
+        className={`ghost icon-button user-row-more-button${isOpen ? ' is-open' : ''}`}
         title={actionState.pending ? '处理中…' : '更多操作'}
         aria-label={`${user.username} 更多操作`}
         aria-haspopup="menu"
         aria-expanded={isOpen}
       >
-        {actionState.pending ? <RefreshCw size={16} className="spin" /> : <MoreHorizontal size={16} />}<span>{actionState.pending ? '处理中' : '更多'}</span>
+        {actionState.pending ? <RefreshCw size={16} className="spin" aria-hidden="true" /> : <MoreHorizontal size={16} aria-hidden="true" />}
       </button>
       {actionState.error && <span className="user-action-error" role="alert">{actionState.error}</span>}
       {isOpen && menuStyle && createPopoverPortal(
@@ -17953,67 +17961,78 @@ export function UserManagement({ data, client, load, notify }: any) {
       {(query || filter !== 'all') && <button type="button" className="ghost" onClick={() => { setQuery(''); setFilter('all') }}>清除筛选</button>}
     </div>
     {visibleUsers.length ? <div className="card-custom user-table-card">
-      <div className="user-table-scroll">
-        <table className={`user-data-table user-overview-table${showGroupsColumn ? '' : ' is-scoped'}`}>
-          <thead><tr>
-            <th>用户与状态</th><th>套餐与有效期</th><th>本期用量</th>
-            {showGroupsColumn && <th>用户组</th>}<th>订阅链接</th><th>操作</th>
-          </tr></thead>
-          <tbody>{visibleUsers.map((usr: User) => {
-            const canManageUser = canManageAdministrators || effectiveUserRole(usr, groups, members) !== 'admin'
-            const account = userAccountDisplay(usr)
-            const limits = effectiveUserLimits(data, usr)
-            const usage = userUsageDisplay(usr.traffic_used_bytes, limits.traffic)
-            const binding = bindings.get(usr.id)
-            const plan = plans.get(binding?.plan_id)
-            const validity = userPlanDisplay(binding, plan, now)
-            const groupList = members.filter(member => member.user_id === usr.id && member.enabled !== false).map(member => groups.find(group => group.id === member.group_id)).filter((group): group is UserGroup => Boolean(group))
-            const subscriptionStatus = userSubscriptionStatus(usr)
-            return <tr key={usr.id}>
-              <td className="user-col-user" data-label="用户">
-                <div className="user-table-identity">
-                  <strong className="user-table-name">{usr.username}</strong>
-                  {usr.nickname && <span className="muted">{usr.nickname}</span>}
-                  <div><span className={`user-state-pill ${account.tone}`}>{account.label}</span>{usr.protected && <span className="badge neutral">受保护</span>}</div>
-                </div>
-              </td>
-              <td className="user-col-plan" data-label="套餐">
-                <div className="user-plan-summary">
-                  <strong>{plan?.name || (binding ? '套餐不可用' : '未分配套餐')}</strong>
-                  {binding && <><span className={`user-state-pill ${validity.tone}`}>{validity.label}</span><span className={validity.expiring ? 'user-expiry-warning' : 'muted'}>{validity.expiry}</span>
-                    {binding.expires_at && <time dateTime={binding.expires_at}>到期 {formatTableTime(binding.expires_at)}</time>}
-                    {binding.starts_at && new Date(binding.starts_at).getTime() > now && <time dateTime={binding.starts_at}>开始 {formatTableTime(binding.starts_at)}</time>}
-                  </>}
-                </div>
-              </td>
-              <td className="user-col-traffic" data-label="本期用量">
-                <div className="user-table-traffic">
-                  <div className="user-table-traffic-copy"><strong>{formatBytes(usage.bytes)}</strong><span>{usage.bounded ? `/ ${formatBytes(limits.traffic)}` : '不限量'}</span></div>
-                  {usage.bounded && <><div className="user-table-traffic-bar" role="progressbar" aria-label={`${usr.username} 本期流量使用率`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage.progress)} aria-valuetext={`已用 ${usage.percent.toFixed(1)}%，剩余 ${formatBytes(usage.remaining || 0)}`}><div className={usage.tone === 'danger' ? 'is-danger' : usage.tone === 'warning' ? 'is-warning' : ''} style={{ width: `${usage.progress}%` }} /></div><span className={`user-usage-caption ${usage.tone}`}>{usage.percent.toFixed(1)}% · 剩余 {formatBytes(usage.remaining || 0)}</span></>}
-                  <div className="user-table-traffic-meta">
-                    <span>{limits.speed > 0 ? `限速 ${limits.speed} Mbps` : '不限速'}</span>
-                    {usr.traffic_period_end && <time dateTime={usr.traffic_period_end}>流量重置 {formatTableTime(usr.traffic_period_end)}</time>}
-                    <button type="button" className="user-table-compact-button" onClick={() => setLedgerUser(usr)} aria-label={`查看 ${usr.username} 的流量明细`}>流量明细</button>
-                  </div>
-                </div>
-              </td>
-              {showGroupsColumn && <td className="user-col-groups" data-label="用户组"><div className="user-group-tags">{groupList.length ? groupList.map(group => <button key={group.id} type="button" className="ghost user-group-link" onClick={() => { setSelectedScope(group.id); setFilter('all'); setQuery('') }}>{group.name}{group.enabled === false ? ' · 已停用' : ''}</button>) : <span className="muted">未分组</span>}</div></td>}
-              <td className="user-col-subscription" data-label="订阅"><div className="user-subscription-status"><span className={`sub-pill ${subscriptionStatus.tone}`}>{subscriptionStatus.label === '长期有效' ? '可重复使用' : subscriptionStatus.label}</span></div></td>
-              <td className="user-col-actions" data-label="操作">
-                {canManageUser ? <div className="user-row-actions">
-                  <button type="button" className="ghost user-row-text-button" onClick={() => openEditUser(usr)} aria-label={`编辑 ${usr.username}`}><Edit3 size={14} />编辑</button>
-                  <button type="button" className="ghost user-row-text-button" onClick={() => setPlanUser(usr)} aria-label={`管理 ${usr.username} 的套餐`}><Layers size={14} />管理套餐</button>
-                  <UserMoreActionsDropdown user={usr} client={client} load={load} dialogs={dialogs} notify={notify} onEdit={openEditUser} onPassword={setPasswordUser} onCredentials={setCredentialsUser} onDelete={async (user: User) => {
-                    if (!await dialogs.confirm({ title: `删除用户 ${user.username}？`, message: '账号及其订阅授权将被删除，此操作无法撤销。', tone: 'danger', confirmText: '删除用户' })) return
-                    await client.request(`/users/${user.id}`, { method: 'DELETE' })
-                    await refreshAfterSave('用户已删除')
-                  }} />
-                </div> : <span className="muted">仅管理员可操作</span>}
-              </td>
-            </tr>
-          })}</tbody>
-        </table>
-      </div>
+      <table className={`user-list-table${showGroupsColumn ? '' : ' is-scoped'}`}>
+        <colgroup>
+          <col className="user-list-col-user" /><col className="user-list-col-plan" /><col className="user-list-col-traffic" />
+          {showGroupsColumn && <col className="user-list-col-groups" />}<col className="user-list-col-subscription" /><col className="user-list-col-actions" />
+        </colgroup>
+        <thead><tr>
+          <th scope="col">用户</th><th scope="col">套餐</th><th scope="col">本期用量</th>
+          {showGroupsColumn && <th scope="col">用户组</th>}<th scope="col">订阅</th><th scope="col" aria-label="操作" />
+        </tr></thead>
+        <tbody>{visibleUsers.map((usr: User) => {
+          const canManageUser = canManageAdministrators || effectiveUserRole(usr, groups, members) !== 'admin'
+          const account = userAccountDisplay(usr)
+          const limits = effectiveUserLimits(data, usr)
+          const usage = userUsageDisplay(usr.traffic_used_bytes, limits.traffic)
+          const binding = bindings.get(usr.id)
+          const plan = plans.get(binding?.plan_id)
+          const validity = userPlanDisplay(binding, plan, now)
+          const groupList = members.filter(member => member.user_id === usr.id && member.enabled !== false).map(member => groups.find(group => group.id === member.group_id)).filter((group): group is UserGroup => Boolean(group))
+          const subscriptionStatus = userSubscriptionStatus(usr)
+          const startsLater = Boolean(binding?.starts_at && new Date(binding.starts_at).getTime() > now)
+          const planDetail = !binding ? '—' : startsLater ? `${formatTableDay(binding.starts_at)} 开始` : binding.expires_at ? `${validity.expiry} · ${formatTableDay(binding.expires_at)} 到期` : validity.expiry
+          const trafficMeta = [limits.speed > 0 ? `限速 ${limits.speed} Mbps` : '不限速', usr.traffic_period_end ? `${formatTableDay(usr.traffic_period_end)} 流量重置` : ''].filter(Boolean).join(' · ')
+          return <tr key={usr.id}>
+            <td className="user-list-user">
+              <div className="user-list-line">
+                <strong className="user-list-name" title={usr.username}>{usr.username}</strong>
+                {usr.protected && <span className="user-list-protected" role="img" title="受保护账号" aria-label="受保护账号"><Lock size={14} aria-hidden="true" /></span>}
+                {account.attention && <span className={`user-state-pill ${account.tone}`}>{account.label}</span>}
+              </div>
+              <span className="user-list-sub" title={usr.nickname || undefined}>{usr.nickname || '—'}</span>
+            </td>
+            <td className="user-list-plan" data-label="套餐">
+              <div className="user-list-line">
+                <span className={`user-list-plan-name${binding ? '' : ' is-empty'}`} title={plan?.name}>{plan?.name || (binding ? '套餐不可用' : '未分配套餐')}</span>
+                {binding && validity.label !== '有效' && <span className={`user-state-pill ${validity.tone}`}>{validity.label}</span>}
+              </div>
+              <span className={`user-list-sub${validity.expiring ? ' is-warning' : ''}`} title={binding?.expires_at ? `到期 ${formatTableTime(binding.expires_at)}` : undefined}>{planDetail}</span>
+            </td>
+            <td className="user-list-traffic" data-label="本期用量">
+              <button type="button" className="user-list-traffic-button" onClick={() => setLedgerUser(usr)} aria-label={`查看 ${usr.username} 的流量明细`} title="查看流量明细">
+                <span className="user-list-traffic-copy">
+                  <span><strong>{formatBytes(usage.bytes)}</strong> {usage.bounded ? `/ ${formatBytes(limits.traffic)}` : '/ 不限量'}</span>
+                  {usage.bounded && <span className={`user-list-percent ${usage.tone}`}>{usage.percent.toFixed(usage.percent >= 10 ? 0 : 1)}%</span>}
+                </span>
+                {usage.bounded
+                  ? <span className="user-list-bar" role="progressbar" aria-label={`${usr.username} 本期流量使用率`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage.progress)} aria-valuetext={`已用 ${usage.percent.toFixed(1)}%，剩余 ${formatBytes(usage.remaining || 0)}`}><span className={usage.tone === 'success' ? '' : `is-${usage.tone}`} style={{ width: `${usage.progress}%` }} /></span>
+                  : <span className="user-list-bar is-unbounded" aria-hidden="true" />}
+                <span className="user-list-sub">{trafficMeta}</span>
+              </button>
+            </td>
+            {showGroupsColumn && <td className="user-list-groups" data-label="用户组">
+              {groupList.length ? <div className="user-list-group-tags">
+                {groupList.slice(0, 2).map(group => <button key={group.id} type="button" className="user-list-group" onClick={() => { setSelectedScope(group.id); setFilter('all'); setQuery('') }} title={group.enabled === false ? `${group.name}（已停用）` : group.name}>{group.name}</button>)}
+                {groupList.length > 2 && <span className="user-list-more-groups" title={groupList.slice(2).map(group => group.name).join('、')}>+{groupList.length - 2}</span>}
+              </div> : <span className="user-list-sub">未分组</span>}
+            </td>}
+            <td className="user-list-subscription" data-label="订阅">
+              <div className="user-subscription-status">{subscriptionStatus.tone === 'ok' ? <span className="user-list-sub">可重复使用</span> : <span className={`sub-pill ${subscriptionStatus.tone}`}>{subscriptionStatus.label}</span>}</div>
+            </td>
+            <td className="user-list-actions">
+              {canManageUser ? <div className="user-row-actions">
+                <button type="button" className="ghost user-row-text-button" onClick={() => openEditUser(usr)} aria-label={`编辑 ${usr.username}`}><Edit3 size={16} />编辑</button>
+                <UserMoreActionsDropdown user={usr} client={client} load={load} dialogs={dialogs} notify={notify} onEdit={openEditUser} onPlan={setPlanUser} onLedger={setLedgerUser} onPassword={setPasswordUser} onCredentials={setCredentialsUser} onDelete={async (user: User) => {
+                  if (!await dialogs.confirm({ title: `删除用户 ${user.username}？`, message: '账号及其订阅授权将被删除，此操作无法撤销。', tone: 'danger', confirmText: '删除用户' })) return
+                  await client.request(`/users/${user.id}`, { method: 'DELETE' })
+                  await refreshAfterSave('用户已删除')
+                }} />
+              </div> : <span className="user-list-sub">仅管理员可操作</span>}
+            </td>
+          </tr>
+        })}</tbody>
+      </table>
     </div> : <div className="empty small user-scope-empty-main">
       <p>{query || filter !== 'all' ? '没有符合筛选条件的用户。' : emptyCopy}</p>
       {selectedGroup && !selectedGroupProtected ? <button onClick={() => setManagingGroupID(selectedGroup.id)}><UserPlus size={15} />管理成员</button> : scope === 'all' ? <button onClick={openCreateUser}>创建账号</button> : null}
