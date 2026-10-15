@@ -182,6 +182,10 @@ type NetworkTraceGeography struct {
 	City     string              `json:"city,omitempty"`
 	Prefix   string              `json:"prefix,omitempty"`
 	Router   map[string][]string `json:"router,omitempty"`
+	// Source is a Controller-side annotation added after the Agent report
+	// arrives: empty for Agent NextTrace data, "nexttrace_controller" or an
+	// ipdata provider name for hops the Controller filled. Agents never send it.
+	Source string `json:"source,omitempty"`
 }
 
 type NetworkTCPProbeResult struct {

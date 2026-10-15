@@ -145,7 +145,7 @@ export function VPNGatePage({ client, servers, canManage }: { client: Client; se
       </div>
     </div>
 
-    {ipinfoMissing && <div className="vpngate-callout" role="note"><AlertTriangle size={16} aria-hidden="true" /><span>主控未配置 <code>OBOARD_IPINFO_TOKEN</code>，无法识别出口运营商。限定了运营商的出口池将找不到可用节点。</span></div>}
+    {ipinfoMissing && <div className="vpngate-callout" role="note"><AlertTriangle size={16} aria-hidden="true" /><span>IPinfo 未填写 Key，出口运营商改用免 Key 接口与备用来源识别，额度较低；识别失败时限定了运营商的出口池会跳过该节点。可在“设置 › 节点 › IP 与路由数据”填写。</span></div>}
     {error && !editing && !deleting && <p className="danger-text" role="alert">{error}</p>}
     {notice && <p className="muted" role="status">{notice}</p>}
 

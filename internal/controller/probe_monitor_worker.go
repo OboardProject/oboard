@@ -4,17 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/OboardProject/oboard/internal/ipquality"
+	"github.com/OboardProject/oboard/internal/ipdata"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"log"
-	"os"
 	"sort"
 	"time"
 )
 
 func (s *Server) StartProbeMonitors(ctx context.Context) {
-	client := ipquality.New(ipquality.Config{IPinfo: os.Getenv("OBOARD_IPINFO_TOKEN"), Proxycheck: os.Getenv("OBOARD_PROXYCHECK_KEY"), AbuseIPDB: os.Getenv("OBOARD_ABUSEIPDB_KEY")})
+	client := s.ipDataService(ctx)
 	defer client.HTTP.CloseIdleConnections()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -57,7 +56,7 @@ func (s *Server) StartProbeMonitors(ctx context.Context) {
 	}
 }
 
-func (s *Server) runProbeMonitor(ctx context.Context, client *ipquality.Client, task model.ProbeMonitor) (string, string, any, *model.ProbeRouteVersion) {
+func (s *Server) runProbeMonitor(ctx context.Context, client *ipdata.Service, task model.ProbeMonitor) (string, string, any, *model.ProbeRouteVersion) {
 	server, err := s.store.GetServer(ctx, task.ServerID)
 	if err != nil {
 		return "failed", "服务器不存在", nil, nil
@@ -67,24 +66,17 @@ func (s *Server) runProbeMonitor(ctx context.Context, client *ipquality.Client, 
 		if ip == "" {
 			ip = server.PublicIPv4
 		}
-		if !ipquality.PublicIP(ip) {
+		if !ipdata.PublicIP(ip) {
 			return "failed", "请填写公网 IP 或先配置服务器公网 IPv4", nil, nil
 		}
-		results := []ipquality.Result{}
-		successful := 0
-		for _, provider := range []string{"ipinfo", "proxycheck", "abuseipdb"} {
-			r := client.Lookup(ctx, provider, ip)
-			results = append(results, r)
-			if r.Status == "ok" {
-				successful++
-			}
-		}
-		result := map[string]any{"ip": ip, "providers": results}
-		if successful == 0 {
+		report := client.Lookup(ctx, ip, ipdata.Scope{Attribution: true, Quality: true})
+		result := map[string]any{"ip": ip, "attribution": report.Attribution, "quality": report.Quality}
+		attribution, quality := report.Attribution.Status, report.Quality.Status
+		switch {
+		case attribution == "unknown" && quality == "unknown":
 			return "unknown", "所有数据源均未取得结果", result, nil
-		}
-		if successful < 3 {
-			return "partial", "部分数据源未配置或查询失败", result, nil
+		case attribution != "ok" || quality != "ok":
+			return "partial", "部分数据源未配置或查询失败，已自动使用备用来源", result, nil
 		}
 		return "ok", "", result, nil
 	}
@@ -102,6 +94,7 @@ func (s *Server) runProbeMonitor(ctx context.Context, client *ipquality.Client, 
 	if err != nil {
 		return "failed", err.Error(), nil, nil
 	}
+	s.completeTraceGeography(ctx, &trace)
 	path, err := monitorASNPath(trace)
 	if err != nil {
 		return "unknown", err.Error(), trace, nil
@@ -160,11 +153,8 @@ func (s *Server) monitorTrace(ctx context.Context, server model.Server, monitor 
 }
 
 func monitorASNPath(trace model.NetworkTraceResult) ([]string, error) {
-	if trace.Provider != "NextTrace-API" {
-		return nil, errors.New("缺少 NextTrace 路由归属数据")
-	}
 	if trace.GeographyError != "" {
-		return nil, errors.New("NextTrace API 查询不完整，本次不判定变化")
+		return nil, errors.New("路由归属查询不完整，本次不判定变化")
 	}
 	byIP := map[string]string{}
 	for _, hop := range trace.Hops {
@@ -187,10 +177,10 @@ func monitorASNPath(trace model.NetworkTraceResult) ([]string, error) {
 			byIP[geo.Address] = geo.ASN
 		}
 	}
-	return ipquality.ASNPath(trace, func(ip string) (string, error) {
+	return ipdata.ASNPath(trace, func(ip string) (string, error) {
 		asn, ok := byIP[ip]
 		if !ok {
-			return "", errors.New("missing NextTrace ASN")
+			return "", errors.New("missing ASN")
 		}
 		return asn, nil
 	})

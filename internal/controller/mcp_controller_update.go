@@ -24,6 +24,8 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 	switch capabilityName {
 	case "probe_monitors.list", "probe_monitors.history":
 		return s.queryProbeMonitors(ctx, principal, capabilityName, input)
+	case "ip_data.providers.list", "ip_data.lookup":
+		return s.queryIPData(ctx, principal, capabilityName, input)
 	case "vpngate.overview", "vpngate.catalog.list":
 		return s.queryVPNGate(ctx, principal, capabilityName, input)
 	case "device_retirement.read":

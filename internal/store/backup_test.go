@@ -354,3 +354,30 @@ func TestRewrapEncryptedSecretsIncludesGoogleEAB(t *testing.T) {
 		t.Fatalf("decrypt rewrapped saved EAB HMAC: value=%q err=%v", savedPlain, err)
 	}
 }
+
+func TestRewrapEncryptedSecretsIncludesIPDataKeys(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	wrapped, err := security.EncryptSecret("source-master-secret", "ip_data_provider_keys", `{"ipinfo":"token"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSetting(ctx, "ip_data_provider_keys", wrapped); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RewrapEncryptedSecrets(ctx, "source-master-secret", "target-master-secret"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := db.GetSetting(ctx, "ip_data_provider_keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := security.DecryptSecret("target-master-secret", "ip_data_provider_keys", raw)
+	if err != nil || plain != `{"ipinfo":"token"}` {
+		t.Fatalf("plain=%q err=%v", plain, err)
+	}
+}

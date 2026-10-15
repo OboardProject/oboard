@@ -84,6 +84,7 @@ type trustedProxyStateContextKey struct{}
 
 type Server struct {
 	vpngate                    vpngateRuntime
+	ipData                     ipDataRuntime
 	runtimeSecurityReports     sync.Map
 	proxyDSCPMu                sync.Mutex
 	runtimeSecurityQueueMu     sync.Mutex
@@ -490,6 +491,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent-updates/retry-failed", s.auth(s.agentUpdatesRetryFailed, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups", s.auth(s.controllerBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings", s.auth(s.controllerBackupSettings, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ip-data/keys", s.auth(s.ipDataKeys, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ip-data/keys/test", s.auth(s.ipDataTest, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings/test", s.auth(s.controllerBackupTestDestination, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/upload", s.auth(s.controllerBackupUpload, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/", s.auth(s.controllerBackupSubroutes, model.RoleAdmin))
@@ -1736,7 +1739,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_runtime_security.") || strings.HasPrefix(key, "server_proxy_dscp.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || strings.HasPrefix(key, "server_stealth_layout.") || strings.HasPrefix(key, "server_runtime_security.") || strings.HasPrefix(key, "server_proxy_dscp.") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport || key == ipDataKeysSetting {
 			continue
 		}
 		out[key] = value

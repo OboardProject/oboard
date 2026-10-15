@@ -1,12 +1,15 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,17 +97,12 @@ func TestProbeMonitorAutomationAndBoundary(t *testing.T) {
 	}
 }
 
-func TestProbeMonitorUsesOnlyNextTraceASN(t *testing.T) {
+func TestProbeMonitorASNPathRequiresCompleteBoundGeography(t *testing.T) {
 	trace := model.NetworkTraceResult{Provider: "NextTrace-API", Reached: true, Hops: []model.NetworkTraceHop{{Hop: 1, Addresses: []string{"1.1.1.1"}, Geography: []model.NetworkTraceGeography{{Address: "1.1.1.1", ASN: "AS13335"}}}}}
 	path, err := monitorASNPath(trace)
 	if err != nil || len(path) != 1 || path[0] != "AS13335" {
 		t.Fatalf("path=%v err=%v", path, err)
 	}
-	trace.Provider = "ipinfo"
-	if _, err := monitorASNPath(trace); err == nil {
-		t.Fatal("wrong provider accepted")
-	}
-	trace.Provider = "NextTrace-API"
 	trace.GeographyError = "rate limited"
 	if _, err := monitorASNPath(trace); err == nil {
 		t.Fatal("partial lookup accepted")
@@ -115,3 +113,100 @@ func TestProbeMonitorUsesOnlyNextTraceASN(t *testing.T) {
 		t.Fatal("unbound geography accepted")
 	}
 }
+
+type failingRouteFiller struct{ calls int }
+
+func (f *failingRouteFiller) Fill(context.Context, *model.NetworkTraceResult) error {
+	f.calls++
+	return errors.New("NextTrace API 已限流")
+}
+func (f *failingRouteFiller) SetToken(string) {}
+
+func TestRouteGeographyKeepsAgentNextTraceAndFallsBackToAttribution(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	app := New(db, "test-secret", "", "", nil)
+	state := app.ipDataState()
+	filler := &failingRouteFiller{}
+	state.nextTrace = filler
+	queried := map[string]int{}
+	state.service.HTTP.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		queried[r.URL.Host]++
+		body := `{}`
+		if r.URL.Host == "ipinfo.io" {
+			body = `{"ip":"8.8.8.8","org":"AS15169 Google LLC","country":"US"}`
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})
+	trace := model.NetworkTraceResult{Provider: "NextTrace-API", GeographyError: "NextTrace API 冷却中", Reached: true, Hops: []model.NetworkTraceHop{
+		{Hop: 1, Addresses: []string{"1.1.1.1"}, Geography: []model.NetworkTraceGeography{{Address: "1.1.1.1", ASN: "AS13335"}}},
+		{Hop: 2, Addresses: []string{"8.8.8.8"}},
+	}}
+	app.completeTraceGeography(t.Context(), &trace)
+	if filler.calls != 1 || trace.GeographyError != "" || len(trace.Hops[1].Geography) != 1 || trace.Hops[1].Geography[0].ASN != "AS15169" || trace.Hops[1].Geography[0].Source != "ipinfo" {
+		t.Fatalf("fallback not applied: calls=%d trace=%+v", filler.calls, trace)
+	}
+	if queried["ipinfo.io"] != 1 || len(trace.Hops[0].Geography) != 1 {
+		t.Fatalf("agent NextTrace hop re-queried: %+v", queried)
+	}
+	path, err := monitorASNPath(trace)
+	if err != nil || len(path) != 2 {
+		t.Fatalf("path=%v err=%v", path, err)
+	}
+	unresolved := model.NetworkTraceResult{Reached: true, Hops: []model.NetworkTraceHop{{Hop: 1, Addresses: []string{"9.9.9.9"}}}}
+	state.service.HTTP.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+	})
+	app.completeTraceGeography(t.Context(), &unresolved)
+	if unresolved.GeographyError == "" {
+		t.Fatal("unresolved hop not reported as incomplete")
+	}
+}
+
+func TestIPDataKeysAreEncryptedAndNeverReturned(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	app := New(db, "test-secret", "", "", nil)
+	admin := &model.User{Username: "ip-data-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "44444444-4444-4444-8444-444444444444", ProxyPassword: "unused"}
+	if err := db.CreateUser(t.Context(), admin); err != nil {
+		t.Fatal(err)
+	}
+	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: admin.ID, Role: string(admin.Role), ClientBinding: sessionClientBinding("test-secret", ""), Expiry: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := app.Handler()
+	call := func(method, path, body string) string {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("%s %s status=%d body=%s", method, path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	saved := call(http.MethodPost, "/api/v1/ui/ip-data/keys", `{"keys":{"ipinfo":"ipinfo-secret-token","abuseipdb":"abuse-secret"}}`)
+	if strings.Contains(saved, "secret") || !strings.Contains(saved, `"configured":true`) {
+		t.Fatalf("keys leaked or not configured: %s", saved)
+	}
+	raw, _ := db.GetSetting(t.Context(), ipDataKeysSetting)
+	if raw == "" || strings.Contains(raw, "ipinfo-secret-token") {
+		t.Fatal("keys stored in plaintext")
+	}
+	if settings := call(http.MethodGet, "/api/v1/ui/settings", ""); strings.Contains(settings, ipDataKeysSetting) {
+		t.Fatal("encrypted keys exposed through settings")
+	}
+	if app.ipDataService(t.Context()).Key("ipinfo") != "ipinfo-secret-token" {
+		t.Fatal("service did not receive saved key")
+	}
+	call(http.MethodPost, "/api/v1/ui/ip-data/keys", `{"keys":{"ipinfo":""},"clear":["abuseipdb"]}`)
+	keys, err := app.loadIPDataKeys(t.Context())
+	if err != nil || keys["ipinfo"] != "ipinfo-secret-token" || keys["abuseipdb"] != "" {
+		t.Fatalf("blank must keep, clear must remove: %v %v", keys, err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

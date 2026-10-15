@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
@@ -101,10 +100,14 @@ func (s *Server) vpngateOverview(ctx context.Context, p application.Principal) (
 		}
 		views = append(views, view)
 	}
+	configured := map[string]bool{}
+	for _, h := range s.ipDataService(ctx).Health() {
+		configured[h.Name] = h.Configured
+	}
 	return map[string]any{
 		"pools":     views,
 		"catalog":   catalog,
-		"providers": map[string]bool{"ipinfo": os.Getenv("OBOARD_IPINFO_TOKEN") != "", "proxycheck": true, "abuseipdb": os.Getenv("OBOARD_ABUSEIPDB_KEY") != ""},
+		"providers": configured,
 	}, nil
 }
 

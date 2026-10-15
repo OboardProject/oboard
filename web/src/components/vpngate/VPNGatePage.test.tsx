@@ -34,7 +34,7 @@ it("warns that an operator filter cannot work without IPinfo and marks an empty 
   const empty = { ...live, members: [], status: { revision: 2, healthy: 0, members: [] }, last_error: "没有符合条件的可用节点，当前拒绝出站" }
   const requestV2 = vi.fn(async () => ({ pools: [{ ...pool, servers: [empty] }], catalog: { total: 0, entries: 0, skipped: 0 }, providers: {} }))
   await act(async () => root.render(<VPNGatePage client={{ request: vi.fn(), requestV2 }} servers={[{ id: 1, name: "东京出口" }]} canManage={false} />))
-  expect(document.body.textContent).toContain("OBOARD_IPINFO_TOKEN")
+  expect(document.body.textContent).toContain("IPinfo 未填写 Key")
   expect(document.body.textContent).toContain("暂停出站")
   expect(document.body.textContent).toContain("1 台暂停出站")
   expect(button("新建出口池").disabled).toBe(true)

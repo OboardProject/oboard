@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
-	"github.com/OboardProject/oboard/internal/ipquality"
+	"github.com/OboardProject/oboard/internal/ipdata"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/plugin"
 	"github.com/OboardProject/oboard/internal/store"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 )
@@ -72,7 +71,11 @@ func (s *Server) queryProbeMonitors(ctx context.Context, p application.Principal
 				visible = append(visible, task)
 			}
 		}
-		return map[string]any{"monitors": visible, "providers": map[string]bool{"ipinfo": os.Getenv("OBOARD_IPINFO_TOKEN") != "", "proxycheck": true, "abuseipdb": os.Getenv("OBOARD_ABUSEIPDB_KEY") != ""}}, nil
+		configured := map[string]bool{}
+		for _, h := range s.ipDataService(ctx).Health() {
+			configured[h.Name] = h.Configured
+		}
+		return map[string]any{"monitors": visible, "providers": configured}, nil
 	}
 	var input probeMonitorInput
 	if err := strictAutomationInput(raw, &input); err != nil {
@@ -117,7 +120,7 @@ func (s *Server) registerProbeMonitorOperations() {
 					if _, err = plugin.ValidateNetworkTarget(task.Target); err != nil {
 						return nil, err
 					}
-				} else if task.Target != "" && !ipquality.PublicIP(task.Target) {
+				} else if task.Target != "" && !ipdata.PublicIP(task.Target) {
 					return nil, errors.New("IP 质量监控只接受公网 IP")
 				}
 				if current != nil && (task.Target != current.Target || task.Mode != current.Mode || task.Kind != current.Kind || task.Port != current.Port) {

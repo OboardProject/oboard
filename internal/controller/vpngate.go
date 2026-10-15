@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/core"
-	"github.com/OboardProject/oboard/internal/ipquality"
+	"github.com/OboardProject/oboard/internal/ipdata"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -46,9 +46,8 @@ type vpngateRuntime struct {
 	wake         chan struct{}
 	mu           sync.Mutex
 	lastFetchTry time.Time
-	quality      *ipquality.Client
-	// lookup replaces the provider client in tests.
-	lookup func(ctx context.Context, provider, ip string) ipquality.Result
+	// lookup replaces the IP data service in tests.
+	lookup func(ctx context.Context, ip string, scope ipdata.Scope) ipdata.Report
 
 	// The worker goroutine is the only writer of pool selection state. Other
 	// paths (task callbacks, health reports, operator requests) hand it work
@@ -90,7 +89,6 @@ func (s *Server) vpngateState() *vpngateRuntime {
 		s.vpngate.status = map[[2]int64]vpngateStatusEntry{}
 		s.vpngate.pending = map[[2]int64]model.VPNGateProbeReport{}
 		s.vpngate.reselect = map[int64]bool{}
-		s.vpngate.quality = ipquality.New(ipquality.Config{IPinfo: os.Getenv("OBOARD_IPINFO_TOKEN"), Proxycheck: os.Getenv("OBOARD_PROXYCHECK_KEY"), AbuseIPDB: os.Getenv("OBOARD_ABUSEIPDB_KEY")})
 	})
 	return &s.vpngate
 }
@@ -107,7 +105,6 @@ func (s *Server) WakeVPNGate() {
 // enabled path exits through a VPNGate pool.
 func (s *Server) StartVPNGate(ctx context.Context) {
 	state := s.vpngateState()
-	defer state.quality.HTTP.CloseIdleConnections()
 	ticker := time.NewTicker(vpngateWorkerTick)
 	defer ticker.Stop()
 	for {
@@ -513,7 +510,7 @@ func (s *Server) vpngateLookupQuality(ctx context.Context, ip string, full bool)
 		return cached
 	}
 	runtime := s.vpngateState()
-	lookup := runtime.quality.Lookup
+	lookup := s.ipDataService(ctx).Lookup
 	if runtime.lookup != nil {
 		lookup = runtime.lookup
 	}
@@ -524,40 +521,35 @@ func (s *Server) vpngateLookupQuality(ctx context.Context, ip string, full bool)
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	providers := []string{"ipinfo"}
-	if full {
-		providers = append(providers, "proxycheck", "abuseipdb")
-	}
+	report := lookup(lookupCtx, ip, ipdata.Scope{Attribution: true, Quality: full})
 	found := false
-	for _, provider := range providers {
-		result := lookup(lookupCtx, provider, ip)
-		if result.Status != "ok" {
-			continue
-		}
+	if a := report.Attribution; a != nil && (a.ASN != "" || a.CountryCode != "") {
 		found = true
-		if result.ASN != "" {
-			quality.ASN = strings.ToUpper(result.ASN)
+		if a.ASN != "" {
+			quality.ASN = strings.ToUpper(a.ASN)
 		}
-		if result.Organization != "" {
-			quality.Organization = result.Organization
+		if a.ASName != "" {
+			quality.Organization = a.ASName
 		}
-		if result.Country != "" {
-			quality.Country = strings.ToUpper(result.Country)
+		if a.CountryCode != "" {
+			quality.Country = a.CountryCode
 		}
-		if result.Hosting != nil {
-			quality.Hosting = result.Hosting
+	}
+	if q := report.Quality; q != nil && q.Status != "unknown" {
+		found = true
+		for _, item := range []struct {
+			target  **bool
+			verdict ipdata.Verdict
+		}{{&quality.Hosting, q.Hosting}, {&quality.VPN, q.VPN}, {&quality.Tor, q.Tor}} {
+			if value := item.verdict.Bool(); value != nil {
+				*item.target = value
+			}
 		}
-		if result.VPN != nil {
-			quality.VPN = result.VPN
+		if q.Risk != nil {
+			quality.Risk = q.Risk
 		}
-		if result.Tor != nil {
-			quality.Tor = result.Tor
-		}
-		if result.Risk != nil {
-			quality.Risk = result.Risk
-		}
-		if provider == "abuseipdb" && result.Confidence != nil {
-			quality.Abuse = result.Confidence
+		if q.AbuseScore != nil {
+			quality.Abuse = q.AbuseScore
 		}
 	}
 	if !found {

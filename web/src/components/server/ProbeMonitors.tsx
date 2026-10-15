@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Activity, ListTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
 import { Dialog } from "../ui/dialog"
@@ -6,18 +6,22 @@ import { FormField } from "../ui/form-field"
 import { Select } from "../ui/select"
 import { Switch } from "../ui/switch"
 import type { Server } from "../proxy-path/types"
+import { ipDataProviderName, ipDataStatusText, ipDataStatusTone } from "../ip-data/labels"
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any>; requestV2?: (path: string, init?: RequestInit) => Promise<any> }
 type Monitor = { id: number; server_id: number; revision: number; name: string; kind: "route" | "ip_quality"; target: string; mode: string; port: number; interval_seconds: number; enabled: boolean; checked_at?: string; status?: string; error?: string; result?: any }
-type Geography = { address: string; asn?: string; owner?: string; isp?: string; country?: string; province?: string; city?: string; prefix?: string; router?: Record<string, string[]> }
+type Geography = { address: string; source?: string; asn?: string; owner?: string; isp?: string; country?: string; province?: string; city?: string; prefix?: string; router?: Record<string, string[]> }
 type Trace = { provider?: string; geography_error?: string; hops: { hop: number; addresses: string[]; probes: { address?: string; rtt_ms?: number; timeout: boolean }[]; geography?: Geography[] }[] }
 type Route = { id: number; checked_at: string; last_seen_at: string; asn_path: string[]; trace: Trace }
-type Provider = { provider: string; status: string; error?: string; asn?: string; organization?: string; country?: string; proxy?: boolean; vpn?: boolean; tor?: boolean; hosting?: boolean; risk?: number; confidence?: number; reports?: number; checked_at?: string }
+type Source = { provider: string; status: string; error?: string; keyed?: boolean; asn?: string; as_name?: string; organization?: string; country_code?: string; country?: string; region?: string; city?: string; proxy?: boolean; vpn?: boolean; tor?: boolean; hosting?: boolean; abuser?: boolean; risk?: number; confidence?: number; abuse_score?: number; reports?: number; checked_at?: string }
+type Agreement = { agree: number; total: number }
+type Attribution = { status: string; primary?: string; asn?: string; as_name?: string; country_code?: string; country?: string; region?: string; city?: string; field_sources?: Record<string, string>; asn_agreement?: Agreement; country_agreement?: Agreement; conflicts?: { provider: string; field: string; value: string }[]; sources?: Source[] }
+type Verdict = { state: string; positive: number; negative: number; flagged_by?: string[] }
+type Quality = { status: string; proxy?: Verdict; vpn?: Verdict; tor?: Verdict; hosting?: Verdict; abuser?: Verdict; risk?: number; risk_source?: string; abuse_score?: number; abuse_source?: string; reports?: number; sources?: Source[] }
 
 const statusText: Record<string, string> = { pending: "等待执行", running: "执行中", ok: "已获取", partial: "部分可用", unknown: "结果不完整", offline: "服务器离线", unsupported: "需要更新 Agent", not_configured: "未配置", failed: "执行失败", unavailable: "查询失败", quota_exhausted: "额度用完" }
 const statusTone: Record<string, string> = { ok: "online", failed: "offline", offline: "offline", unavailable: "offline", quota_exhausted: "offline" }
-const providerName: Record<string, string> = { ipinfo: "IPinfo", proxycheck: "Proxycheck", abuseipdb: "AbuseIPDB" }
-const providerEnv: Record<string, string> = { ipinfo: "OBOARD_IPINFO_TOKEN", abuseipdb: "OBOARD_ABUSEIPDB_KEY" }
+const providerName = ipDataProviderName
 const date = (value?: string) => value ? new Date(value).toLocaleString() : "—"
 const flag = (value?: boolean) => value === undefined || value === null ? "未知" : value ? "是" : "否"
 const score = (value?: number) => value === undefined || value === null ? "未知" : `${value} / 100`
@@ -90,7 +94,7 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot }:
   const all = useMemo(() => items.filter(item => item.kind === kind), [items, kind])
   const needle = query.trim().toLowerCase()
   const visible = needle ? all.filter(item => `${item.name} ${item.target} ${serverName(item.server_id)}`.toLowerCase().includes(needle)) : all
-  const missingProviders = kind === "ip_quality" && !loading ? Object.keys(providerEnv).filter(name => providers[name] === false) : []
+  const missingProviders = kind === "ip_quality" && !loading ? ["ipinfo", "abuseipdb"].filter(name => providers[name] === false) : []
   const create = () => { setError(""); setNotice(""); setEditing({ id: 0, revision: 0, server_id: servers.length === 1 ? servers[0].id : 0, name: "", kind, target: "", mode: kind === "route" ? "icmp" : "", port: 0, interval_seconds: kind === "route" ? 900 : 86400, enabled: true }) }
   const dialogOpen = Boolean(editing || deleting || detail)
   const targetText = (task: Monitor) => `${task.target || "服务器公网 IPv4"}${task.mode === "tcp" ? `:${task.port} · TCP` : task.mode === "icmp" ? " · ICMP" : ""}`
@@ -104,7 +108,7 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot }:
     {toolbarSlot ? createPortal(toolbar, toolbarSlot) : <div className="return-latency-toolbar">{toolbar}</div>}
     {error && !dialogOpen && <p className="danger-text" role="alert">{error}</p>}
     {notice && <p className="muted" role="status">{notice}</p>}
-    {missingProviders.length > 0 && <p className="muted probe-monitor-note">{missingProviders.map(name => providerName[name]).join("、")} 未配置，对应数据显示为未知。在主控环境变量中设置 {missingProviders.map(name => <code key={name}>{providerEnv[name]}</code>).reduce<ReactNode[]>((acc, node, index) => index ? [...acc, "、", node] : [node], [])} 后生效。</p>}
+    {missingProviders.length > 0 && <p className="muted probe-monitor-note">{missingProviders.map(name => providerName[name]).join("、")} 未填写 Key，已自动使用备用来源。管理员可在“设置 › 节点 › IP 与路由数据”中填写。</p>}
     {all.length > 0 && <div className="return-latency-filters">
       <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label={`搜索${title}任务`} placeholder="搜索名称、目标或服务器" value={query} onChange={event => setQuery(event.target.value)} /></div>
     </div>}
@@ -209,7 +213,7 @@ function MonitorForm({ task, servers, busy, error, onChange, onCancel, onSubmit 
         <span><strong>启用该任务</strong><small className="muted">停用后保留配置与历史，但不再执行检测。</small></span>
         <Switch checked={task.enabled} ariaLabel="启用该任务" onChange={enabled => onChange({ ...task, enabled })} />
       </label>}
-      <p className="muted">{route ? "使用 NextTrace 归属数据。首次结果作为基线，之后仅在 ASN 路径变化时新增记录；有未回应跳或归属查询失败时不判定变化。" : "各数据源独立判断，未配置或查询失败的来源显示为未知。"}</p>
+      <p className="muted">{route ? "以 NextTrace 归属数据为主，缺失的跳由主控 NextTrace 与 IP 归属数据源补全。首次结果作为基线，之后仅在 ASN 路径变化时新增记录；有未回应跳或归属仍无法补全时不判定变化。" : "归属信息以 IPinfo 为准并与其他来源交叉校验；质量信息由多个来源投票。任一来源不可用时自动降级。"}</p>
       {error && <p className="danger-text" role="alert">{error}</p>}
       <div className="return-latency-form-actions">
         <button type="button" className="ghost" onClick={onCancel}>取消</button>
@@ -233,43 +237,79 @@ function RouteHistory({ detail, versions, loading, error, more, onMore }: { deta
   </div>
 }
 
-function QualityResult({ result }: { result?: { ip?: string; providers?: Provider[] } }) {
-  if (!result?.providers?.length) return <p className="muted">尚无检测结果。</p>
+const verdictText: Record<string, string> = { yes: "是", no: "否", conflict: "来源不一致", unknown: "未知" }
+const verdictTone: Record<string, string> = { yes: "offline", no: "online", conflict: "warning" }
+const agreementText = (value?: Agreement) => value && value.total > 0 ? `${value.agree}/${value.total} 来源一致` : "无可比来源"
+
+function SourceBadge({ status }: { status: string }) {
+  return <span className={`probe-task-badge ${ipDataStatusTone[status] || ""}`.trim()}>{ipDataStatusText[status] || statusText[status] || status}</span>
+}
+
+function SourceList({ sources, quality }: { sources?: Source[]; quality?: boolean }) {
+  if (!sources?.length) return null
+  return <details className="probe-quality-sources">
+    <summary>各来源原始结果</summary>
+    <ul>{sources.map(source => <li key={source.provider}>
+      <strong>{providerName[source.provider] || source.provider}</strong>
+      <SourceBadge status={source.status} />
+      <span className="muted">{source.status === "ok"
+        ? quality
+          ? [source.proxy !== undefined && `代理 ${flag(source.proxy)}`, source.vpn !== undefined && `VPN ${flag(source.vpn)}`, source.tor !== undefined && `Tor ${flag(source.tor)}`, source.hosting !== undefined && `机房 ${flag(source.hosting)}`, source.abuser !== undefined && `滥用 ${flag(source.abuser)}`, source.risk !== undefined && `风险 ${source.risk}`, source.abuse_score !== undefined && `滥用置信度 ${source.abuse_score}`].filter(Boolean).join(" · ") || "无质量字段"
+          : [source.asn, source.as_name || source.organization, source.country_code || source.country, source.region, source.city].filter(Boolean).join(" · ")
+        : source.error || ""}</span>
+    </li>)}</ul>
+  </details>
+}
+
+function QualityResult({ result }: { result?: { ip?: string; attribution?: Attribution; quality?: Quality } }) {
+  const a = result?.attribution, q = result?.quality
+  if (!a && !q) return <p className="muted">尚无检测结果。</p>
+  const sourceOf = (field: string) => a?.field_sources?.[field] ? `（${providerName[a.field_sources[field]] || a.field_sources[field]}）` : ""
   return <div className="probe-quality-results">
-    <p>检测 IP：<strong>{result.ip}</strong></p>
-    <div className="probe-quality-grid">{result.providers.map(provider => <section key={provider.provider} className="probe-quality-card" aria-label={providerName[provider.provider] || provider.provider}>
-      <header><h4>{providerName[provider.provider] || provider.provider}</h4><span className={`probe-task-badge ${statusTone[provider.status] || ""}`.trim()}>{statusText[provider.status] || provider.status}</span></header>
-      {provider.error ? <p className="muted">{provider.error}</p> : <>
-        {(provider.asn || provider.organization || provider.country) && <p>{[provider.asn, provider.organization, provider.country].filter(Boolean).join(" · ")}</p>}
-        {provider.provider === "proxycheck" && <dl className="probe-quality-metrics">
-          <div><dt>代理</dt><dd>{flag(provider.proxy)}</dd></div>
-          <div><dt>VPN</dt><dd>{flag(provider.vpn)}</dd></div>
-          <div><dt>Tor</dt><dd>{flag(provider.tor)}</dd></div>
-          <div><dt>机房</dt><dd>{flag(provider.hosting)}</dd></div>
-          <div><dt>风险分</dt><dd>{score(provider.risk)}</dd></div>
-          <div><dt>置信度</dt><dd>{score(provider.confidence)}</dd></div>
-        </dl>}
-        {provider.provider === "abuseipdb" && <dl className="probe-quality-metrics">
-          <div><dt>滥用置信度</dt><dd>{score(provider.confidence)}</dd></div>
-          <div><dt>30 天举报</dt><dd>{provider.reports ?? "未知"}</dd></div>
-        </dl>}
-      </>}
-      <small className="muted">数据时间：{date(provider.checked_at)}</small>
-    </section>)}</div>
-    <p className="muted">各来源独立判断；机房标记不等于滥用风险，未查询到的数据显示为未知。</p>
+    <p>检测 IP：<strong>{result?.ip}</strong></p>
+    <div className="probe-quality-grid">
+      {a && <section className="probe-quality-card" aria-label="IP 归属信息">
+        <header><h4>归属信息</h4><SourceBadge status={a.status} /></header>
+        <dl className="probe-quality-metrics">
+          <div><dt>ASN</dt><dd>{a.asn ? `${a.asn}${sourceOf("asn")}` : "未知"}</dd></div>
+          <div><dt>组织</dt><dd>{a.as_name || "未知"}</dd></div>
+          <div><dt>国家 / 地区</dt><dd>{[a.country_code, a.country].filter(Boolean).join(" ") || "未知"}{a.country_code ? sourceOf("country") : ""}</dd></div>
+          <div><dt>位置</dt><dd>{[a.region, a.city].filter(Boolean).join(" · ") || "未知"}{a.region || a.city ? sourceOf("region") : ""}</dd></div>
+          <div><dt>ASN 校验</dt><dd>{agreementText(a.asn_agreement)}</dd></div>
+          <div><dt>国家校验</dt><dd>{agreementText(a.country_agreement)}</dd></div>
+        </dl>
+        {a.status === "degraded" && <p className="muted">IPinfo 暂不可用，结果由其余来源投票得出。</p>}
+        {a.status === "offline" && <p className="muted">在线来源均不可用，仅有离线库的国家与地区，无 ASN。</p>}
+        {!!a.conflicts?.length && <p className="muted">不一致：{a.conflicts.map(c => `${providerName[c.provider] || c.provider} ${c.field === "asn" ? "ASN" : "国家"} ${c.value}`).join("；")}</p>}
+        <SourceList sources={a.sources} />
+      </section>}
+      {q && <section className="probe-quality-card" aria-label="IP 质量信息">
+        <header><h4>质量信息</h4><SourceBadge status={q.status} /></header>
+        <dl className="probe-quality-metrics">
+          {([["proxy", "代理"], ["vpn", "VPN"], ["tor", "Tor"], ["hosting", "机房"], ["abuser", "滥用"]] as const).map(([key, label]) => {
+            const v = q[key]
+            return <div key={key}><dt>{label}</dt><dd><span className={`probe-task-badge ${verdictTone[v?.state || ""] || ""}`.trim()} title={v && v.positive + v.negative > 0 ? `${v.positive} 个来源判定是，${v.negative} 个判定否` : undefined}>{verdictText[v?.state || "unknown"]}</span>{v && v.positive + v.negative > 1 ? <small className="muted"> {v.positive}/{v.positive + v.negative}</small> : null}</dd></div>
+          })}
+          <div><dt>风险分</dt><dd>{score(q.risk)}{q.risk_source ? <small className="muted">（{providerName[q.risk_source] || q.risk_source}）</small> : null}</dd></div>
+          <div><dt>滥用置信度</dt><dd>{score(q.abuse_score)}{q.reports !== undefined ? <small className="muted">（30 天 {q.reports} 次举报）</small> : null}</dd></div>
+        </dl>
+        <SourceList sources={q.sources} quality />
+      </section>}
+    </div>
+    <p className="muted">每项按各来源投票；机房不等于滥用，未查询到的数据显示为未知，不合成纯净度总分。</p>
   </div>
 }
 
 function RouteHops({ trace }: { trace: Trace }) {
   return <>
-    <p className="muted">归属来源：{trace.provider || "未知"}{trace.geography_error ? ` · ${trace.geography_error}` : ""}</p>
+    <p className="muted">归属来源：NextTrace 为主{trace.hops?.some(hop => hop.geography?.some(geo => geo.source)) ? "，部分跳由备用来源补全" : ""}{trace.geography_error ? ` · ${trace.geography_error}` : ""}</p>
     <div className="network-probe-table-scroll" tabIndex={0} role="region" aria-label="路由跳数明细"><table className="network-probe-table probe-route-hops">
       <thead><tr><th scope="col">跳</th><th scope="col">IP</th><th scope="col">延迟</th><th scope="col">ASN / 运营商</th><th scope="col">位置 / 路由标注</th></tr></thead>
       <tbody>{trace.hops?.map(hop => <tr key={hop.hop}>
         <td data-label="跳">{hop.hop}</td>
         <td data-label="IP">{hop.addresses?.join(" / ") || <span className="muted">未回应</span>}</td>
         <td data-label="延迟">{hop.probes?.map(probe => probe.timeout ? "超时" : `${probe.rtt_ms ?? "—"} ms`).join(" / ")}</td>
-        <td data-label="ASN / 运营商">{hop.geography?.length ? hop.geography.map(geo => <div key={geo.address}>{[geo.asn, geo.owner, geo.isp].filter(Boolean).join(" · ") || "未知"}</div>) : <span className="muted">未知</span>}</td>
+        <td data-label="ASN / 运营商">{hop.geography?.length ? hop.geography.map(geo => <div key={geo.address}>{[geo.asn, geo.owner, geo.isp].filter(Boolean).join(" · ") || "未知"}{geo.source ? <small className="muted"> · {providerName[geo.source] || geo.source}</small> : null}</div>) : <span className="muted">未知</span>}</td>
         <td data-label="位置 / 路由标注">{hop.geography?.length ? hop.geography.map(geo => <div key={geo.address}>{[geo.country, geo.province, geo.city].filter(Boolean).join(" · ") || "未知"}{Object.entries(geo.router || {}).map(([key, values]) => <small className="muted" key={key}>{key}：{values.join(" · ")}</small>)}</div>) : <span className="muted">未知</span>}</td>
       </tr>)}</tbody>
     </table></div>

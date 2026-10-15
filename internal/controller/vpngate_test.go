@@ -10,19 +10,22 @@ import (
 
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/core"
-	"github.com/OboardProject/oboard/internal/ipquality"
+	"github.com/OboardProject/oboard/internal/ipdata"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-func vpngateTestQuality(asnByIP map[string]string) func(context.Context, string, string) ipquality.Result {
-	return func(_ context.Context, provider, ip string) ipquality.Result {
-		hosting := false
-		risk := 5
-		result := ipquality.Result{Provider: provider, Status: "ok", Country: "JP", ASN: asnByIP[ip], Organization: "test", Hosting: &hosting, Risk: &risk}
-		if result.ASN == "" {
-			result.ASN = "AS2516"
+func vpngateTestQuality(asnByIP map[string]string) func(context.Context, string, ipdata.Scope) ipdata.Report {
+	return func(_ context.Context, ip string, scope ipdata.Scope) ipdata.Report {
+		asn := asnByIP[ip]
+		if asn == "" {
+			asn = "AS2516"
 		}
-		return result
+		report := ipdata.Report{IP: ip, Attribution: &ipdata.Attribution{Status: "ok", ASN: asn, ASName: "test", CountryCode: "JP"}}
+		if scope.Quality {
+			risk := 5
+			report.Quality = &ipdata.Quality{Status: "ok", Hosting: ipdata.Verdict{State: "no", Negative: 1}, Risk: &risk}
+		}
+		return report
 	}
 }
 

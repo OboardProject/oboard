@@ -161,6 +161,7 @@ import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 const AgentSettingsPanel = lazySurface(() => import('./components/AgentSettingsPanel').then(module => ({ default: module.AgentSettingsPanel })))
+const IPDataSettings = lazySurface(() => import('./components/settings/IPDataSettings').then(module => ({ default: module.IPDataSettings })))
 const ProxyDSCPSettings = lazySurface(() => import('./components/settings/ProxyDSCPSettings').then(module => ({ default: module.ProxyDSCPSettings })))
 const RemoteAccessSettings = lazySurface(() => import('./components/remote-access/RemoteAccessSettings').then(module => ({ default: module.RemoteAccessSettings })))
 import { RemoteAccessStatus } from './components/remote-access/RemoteAccessStatus'
@@ -3625,6 +3626,7 @@ const settingsCategories: Array<{ key: SettingsCategory; label: string; icon: an
     { key: 'general', label: '通用' },
     { key: 'presets', label: '节点预设' },
     { key: 'certificates', label: '证书' },
+    { key: 'ip-data', label: 'IP 与路由数据' },
   ] },
   { key: 'subscriptions', label: '订阅', icon: Shield, sections: [] },
   { key: 'notifications', label: '通知', icon: Bell, sections: [] },
@@ -4033,6 +4035,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       </>}
       {showing('nodes', 'presets') && <NodePresetsPanel data={data} client={client} load={load} notify={notify} />}
       {showing('nodes', 'certificates') && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
+      {showing('nodes', 'ip-data') && <section id="settings-panel-ip-data" className="settings-card"><IPDataSettings client={client} notify={notify} /></section>}
       {showing('subscriptions') && <><section id="settings-panel-subscriptions" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
           <SettingsRow label="加密策略" description="仅影响 Mihomo 格式。">

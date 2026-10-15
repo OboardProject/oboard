@@ -510,6 +510,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, networkDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, runtimeSecurityDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, probeMonitorDescriptors(positiveID, stringValue, boolValue)...)
+	descriptors = append(descriptors, ipDataDescriptors(stringValue, boolValue)...)
 	descriptors = append(descriptors, vpngateDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, proxyDSCPDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, configHealthDescriptors(positiveID, stringValue, boolValue)...)

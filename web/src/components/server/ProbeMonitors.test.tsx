@@ -23,15 +23,26 @@ it("queues a scoped run and preserves old route history when latest result is un
   expect(document.body.textContent).toContain("ASN 查询不完整")
   expect(document.body.textContent).toContain("1.1.1.1")
 })
-it("keeps missing quality data unknown and shows independent provider scores", async () => {
-  const quality = { ...task, kind: "ip_quality", result: { ip: "1.1.1.1", providers: [{ provider: "proxycheck", status: "ok", proxy: false, hosting: true, risk: 33, confidence: 100 }, { provider: "abuseipdb", status: "not_configured", error: "未配置 API Key" }] } }
-  const requestV2 = vi.fn(async () => ({ monitors: [quality], providers: {} }))
+it("shows attribution and quality separately, with votes and degraded sources", async () => {
+  const unknown = { state: "unknown", positive: 0, negative: 0, flagged_by: [] }
+  const result = {
+    ip: "1.1.1.1",
+    attribution: { status: "degraded", primary: "ipapi_is", asn: "AS13335", as_name: "Cloudflare", country_code: "US", field_sources: { asn: "ipapi_is", country: "ipapi_is" }, asn_agreement: { agree: 2, total: 2 }, country_agreement: { agree: 2, total: 3 }, conflicts: [{ provider: "ipwhois", field: "country", value: "AU" }], sources: [{ provider: "ipinfo", status: "invalid_key", error: "API Key 无效或无权限" }] },
+    quality: { status: "partial", proxy: { state: "no", positive: 0, negative: 2, flagged_by: [] }, vpn: unknown, tor: unknown, hosting: { state: "yes", positive: 2, negative: 0, flagged_by: ["proxycheck", "ipapi_is"] }, abuser: { state: "conflict", positive: 1, negative: 1, flagged_by: ["ipapi_is"] }, risk: 33, risk_source: "proxycheck", sources: [{ provider: "abuseipdb", status: "not_configured", error: "未配置 API Key" }] },
+  }
+  const requestV2 = vi.fn(async () => ({ monitors: [{ ...task, kind: "ip_quality", result }], providers: { ipinfo: false } }))
   await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={servers} kind="ip_quality" canManage={false} />))
   expect(button("立即检测").disabled).toBe(true)
+  expect(document.body.textContent).toContain("IPinfo 未填写 Key")
   await act(async () => button("结果").click())
   const metric = (label: string) => [...document.body.querySelectorAll(".probe-quality-metrics div")].find(item => item.querySelector("dt")?.textContent === label)?.querySelector("dd")?.textContent
+  expect(metric("ASN")).toBe("AS13335（ipapi.is）")
+  expect(metric("国家校验")).toBe("2/3 来源一致")
   expect(metric("VPN")).toBe("未知")
-  expect(metric("机房")).toBe("是")
-  expect(metric("风险分")).toBe("33 / 100")
+  expect(metric("机房")).toBe("是 2/2")
+  expect(metric("滥用")).toBe("来源不一致 1/2")
+  expect(metric("风险分")).toBe("33 / 100（Proxycheck）")
+  expect(document.body.textContent).toContain("IPinfo 暂不可用")
+  expect(document.body.textContent).toContain("IPWhois 国家 AU")
   expect(document.body.textContent).toContain("未配置 API Key")
 })

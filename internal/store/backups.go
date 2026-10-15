@@ -116,6 +116,9 @@ func (s *Store) RewrapEncryptedSecrets(ctx context.Context, sourceSecret, target
 	if err := rewrapProxyCredentials(ctx, tx, sourceSecret, targetSecret); err != nil {
 		return err
 	}
+	if err := rewrapSettingSecret(ctx, tx, "ip_data_provider_keys", sourceSecret, targetSecret); err != nil {
+		return err
+	}
 	var backupSecret string
 	err = tx.QueryRowContext(ctx, `select value from app_settings where key=?`, controllerBackupSecretsSetting).Scan(&backupSecret)
 	if err == nil && backupSecret != "" {
@@ -164,4 +167,24 @@ func rewrapColumn(ctx context.Context, tx *sql.Tx, selectSQL, updateSQL, sourceS
 		}
 	}
 	return rows.Err()
+}
+
+func rewrapSettingSecret(ctx context.Context, tx *sql.Tx, key, sourceSecret, targetSecret string) error {
+	var wrapped string
+	err := tx.QueryRowContext(ctx, `select value from app_settings where key=?`, key).Scan(&wrapped)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && wrapped == "" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	plain, err := security.DecryptSecret(sourceSecret, key, wrapped)
+	if err != nil {
+		return fmt.Errorf("restore %s: %w", key, err)
+	}
+	if wrapped, err = security.EncryptSecret(targetSecret, key, plain); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `update app_settings set value=?,updated_at=? where key=?`, wrapped, now(), key)
+	return err
 }
