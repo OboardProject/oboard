@@ -150,13 +150,21 @@ func ResolveAssignableNodeTopologies(input AssignableNodeCatalogInput) (map[stri
 			out[node.NodeKey] = node
 			continue
 		}
+		lastControlledServerID := root.ServerID
 		for position, step := range steps {
 			switch step.NodeType {
+			case model.ProxyPathStepVPNGate:
+				if position == len(steps)-1 {
+					node.ExitKind = "vpngate"
+					node.ExitServerID = lastControlledServerID
+					node.ExitServerName = proxyPathServerLabel(serverByID[lastControlledServerID], lastControlledServerID)
+				}
 			case model.ProxyPathStepServerInbound:
 				serverID, _, found := proxyPathStepTargetServer(step, inboundByID)
 				if !found {
 					continue
 				}
+				lastControlledServerID = serverID
 				role := "transit"
 				if position == len(steps)-1 {
 					role = "exit"

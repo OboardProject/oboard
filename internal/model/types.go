@@ -1592,6 +1592,7 @@ const (
 	ProxyPathStepServerInbound ProxyPathStepNodeType = "server_inbound"
 	ProxyPathStepImported      ProxyPathStepNodeType = "imported"
 	ProxyPathStepWARP          ProxyPathStepNodeType = "warp"
+	ProxyPathStepVPNGate       ProxyPathStepNodeType = "vpngate"
 )
 
 type ProxyPathStepTransportMode string
@@ -2125,6 +2126,8 @@ const (
 	AgentTaskTypeRemoteExec            = "remote_exec"
 	AgentTaskTypeRemoteOperation       = "remote_operation"
 	AgentTaskTypeApplyStealth          = "apply_stealth"
+	AgentTaskTypeApplyVPNGatePool      = "apply_vpngate_pool"
+	AgentTaskTypeProbeVPNGate          = "probe_vpngate_candidates"
 )
 
 const AgentCapabilityTrafficPolicy = "traffic_policy_v1"
@@ -3422,6 +3425,7 @@ func TCPFastOpenServerReady(state string) bool {
 type HealthReport struct {
 	ProxyDSCP                 *ProxyDSCPReport           `json:"proxy_dscp,omitempty"`
 	RuntimeSecurity           *RuntimeSecurityReport     `json:"runtime_security,omitempty"`
+	VPNGatePools              []VPNGatePoolStatus        `json:"vpngate_pools,omitempty"`
 	AgentID                   string                     `json:"agent_id"`
 	Status                    ServerStatus               `json:"status"`
 	PublicIPv4                string                     `json:"public_ipv4"`

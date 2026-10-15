@@ -727,6 +727,11 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 		return SingBoxConfig{}, err
 	}
 	config.Outbounds = append(config.Outbounds, pathOutbounds...)
+	vpngateOutbounds, err := buildVPNGatePoolOutbounds(server, opts)
+	if err != nil {
+		return SingBoxConfig{}, err
+	}
+	config.Outbounds = append(config.Outbounds, vpngateOutbounds...)
 	inheritedFamilyDNSStrategy, _ := dns["strategy"].(string)
 	familySplitOutbounds, err := buildRoutingRuleFamilySplitOutbounds(server, opts, pathOutbounds, topology, defaultDomainResolver(dns, server), inheritedFamilyDNSStrategy, dns)
 	if err != nil {
@@ -1276,6 +1281,20 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 				}
 				continue
 			}
+			if step.NodeType == model.ProxyPathStepVPNGate {
+				if activeServerID != server.ID {
+					continue
+				}
+				poolID, ok := VPNGateStepPoolID(step)
+				if !ok {
+					return nil, nil, fmt.Errorf("proxy path %s has a VPNGate exit without a pool", path.Name)
+				}
+				if previousTag != "" {
+					return nil, nil, fmt.Errorf("proxy path %s must connect the VPNGate exit directly after a controlled server", path.Name)
+				}
+				previousTag = VPNGatePoolTag(poolID)
+				continue
+			}
 			if step.NodeType == model.ProxyPathStepWARP {
 				if activeServerID != server.ID {
 					continue
@@ -1399,6 +1418,13 @@ func ProxyPathEntryRoute(path model.ProxyPath, steps []model.ProxyPathStep, root
 		return "", "", errors.New("SSH 普通代理路径至少需要一个步骤")
 	}
 	first := ordered[0]
+	if first.NodeType == model.ProxyPathStepVPNGate {
+		poolID, ok := VPNGateStepPoolID(first)
+		if !ok {
+			return "", "", errors.New("SSH 入口路径的 VPNGate 出口没有选择出口池")
+		}
+		return "outbound", VPNGatePoolTag(poolID), nil
+	}
 	if first.NodeType == model.ProxyPathStepWARP {
 		for _, profile := range warpProfiles {
 			if profile.ServerID == root.ServerID && profile.Enabled {
@@ -2180,6 +2206,17 @@ func routingRuleTargetProxyPathOutboundTag(rule model.RoutingRule, targetPathID 
 		}
 		if mode == model.ProxyPathTransportPortForward {
 			return "", errors.New("rule-specific path cannot enter a transparent forwarding hop")
+		}
+		if step.NodeType == model.ProxyPathStepVPNGate {
+			if previousTag != "" {
+				return "", errors.New("VPNGate exit must be the first local hop after the routing stage")
+			}
+			poolID, ok := VPNGateStepPoolID(step)
+			if !ok {
+				return "", errors.New("target proxy path has a VPNGate exit without a pool")
+			}
+			previousTag = VPNGatePoolTag(poolID)
+			continue
 		}
 		if step.NodeType == model.ProxyPathStepWARP {
 			if previousTag != "" {
@@ -4615,4 +4652,33 @@ func rejectDisabledTLS(item map[string]any, protocol string) error {
 		}
 	}
 	return nil
+}
+
+// buildVPNGatePoolOutbounds emits one fail-closed vpngate-pool outbound per
+// pool this server exits through. Members and the hot-standby count are not
+// part of the configuration: they arrive over the runtime membership lane, so
+// pool tuning and member changes never restart the kernel, and a pool that has
+// no members refuses traffic instead of rerouting it.
+func buildVPNGatePoolOutbounds(server model.Server, opts ConfigOptions) ([]map[string]any, error) {
+	pools := ProxyPathVPNGateServerPools(opts.ProxyPaths, opts.ProxyPathSteps, opts.Inbounds)[server.ID]
+	if len(pools) == 0 {
+		return nil, nil
+	}
+	if strings.TrimSpace(server.AgentID) != "" && !stringSliceContains(server.KernelCapabilities, "vpngate_pool_v1") {
+		return nil, markInvalidDesiredState(fmt.Errorf("服务器 %s 的内核缺少 vpngate_pool_v1 能力；请先更新 Agent/内核", server.Name))
+	}
+	ids := make([]int64, 0, len(pools))
+	for id := range pools {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, map[string]any{
+			"type":    "vpngate-pool",
+			"tag":     VPNGatePoolTag(id),
+			"pool_id": id,
+		})
+	}
+	return out, nil
 }

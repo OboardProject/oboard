@@ -19,6 +19,7 @@ import { SignalEmptyState } from './components/ui/SignalEmptyState'
 import { lazyDialog, lazySurface } from './components/ui/lazy-surface'
 import { useMobileNavigation } from './hooks/use-mobile-navigation'
 const ReturnLatencyPage = lazySurface(() => import('./components/server/ReturnLatencyPage').then(module => ({ default: module.ReturnLatencyPage })))
+const VPNGatePage = lazySurface(() => import('./components/vpngate/VPNGatePage').then(module => ({ default: module.VPNGatePage })))
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createPopoverPortal, ModalSurface } from './components/ui/modal-layer'
@@ -1297,6 +1298,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
   'traffic-forwarding': { label: '流量转发', desc: '管理端口转发与服务器间隧道。', group: '网络' },
+  vpngate: { label: 'VPNGate 出口', desc: '按国家/地区与运营商自动选择 VPNGate 出口，失效秒级切换，无可用节点时拒绝出站。', group: '网络' },
   notifications: { label: '通知中心', desc: '', group: '' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计中心', desc: '汇总订阅更新、连接活动和管理操作，识别异常并提供可追溯的处理依据。', group: '运维' },
@@ -1307,7 +1309,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
 }
 const navGroups = [
   { label: '', tabs: ['dashboard'] },
-  { label: '网络', tabs: ['servers', 'proxy-paths', 'traffic-forwarding', 'return-latency', 'dns', 'dns-records'] },
+  { label: '网络', tabs: ['servers', 'proxy-paths', 'traffic-forwarding', 'vpngate', 'return-latency', 'dns', 'dns-records'] },
   { label: '访问', tabs: ['users', 'plans', 'nodes'] },
   { label: '运维', tabs: ['tasks', 'audit', 'notifications', 'automation'] },
   { label: '', tabs: ['settings', 'account'] },
@@ -1320,7 +1322,7 @@ function navTabVisible(tab: string, role: Role) {
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 2, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
-  'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator', 'traffic-forwarding': 'operator',
+  'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator', 'traffic-forwarding': 'operator', vpngate: 'operator',
   users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
   plugins: 'operator', 'plugin-runs': 'operator',
   nodes: 'none',
@@ -1422,6 +1424,7 @@ function getTabIcon(x: string) {
   if (x === 'servers') return <ServerIcon size={18} />
   if (x === 'proxy-paths') return <Workflow size={18} />
   if (x === 'traffic-forwarding') return <Network size={18} />
+  if (x === 'vpngate') return <ShieldCheck size={18} />
   if (x === 'users') return <UsersIcon size={18} />
   if (x === 'plans') return <Package size={18} />
   if (x === 'nodes') return <LinkIcon size={18} />
@@ -2570,6 +2573,7 @@ export function App() {
     dashboard: '总览',
     servers: '服务器管理',
     'return-latency': '拨测任务',
+    vpngate: 'VPNGate 出口',
     'proxy-paths': '代理拓扑',
     users: '用户与分组',
     plans: '套餐管理',
@@ -3119,6 +3123,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} patchPageData={patchPageData} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
   if (tab === 'mtu') return <MTU data={data} client={client} load={load} notify={notify} />
+  if (tab === 'vpngate') return <VPNGatePage client={client} servers={data.servers || []} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} />
   if (tab === 'traffic-forwarding') return <TrafficForwardingPage data={data} client={client} load={load} notify={notify} localizeError={localizeErrorMessage} />
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
   if (tab === 'tasks') return <Tasks tasks={data.agent_tasks} servers={data.servers} client={client} loading={loading} />
@@ -9870,7 +9875,7 @@ function inboundEntryAddress(data: any, entry: Inbound) {
   return inboundClientEntryHost(entry, server, settingEnabled(data.settings?.dns_always_resolve, false))
 }
 
-type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'family_split_template'
+type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'vpngate' | 'routing' | 'family_split_template'
 
 function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData, focusRequest }: any) {
   const [servers, setServers] = useState<Server[]>(data.servers || [])
@@ -9934,7 +9939,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
 type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; family_split_template_id: number; family_dns_strategy: FamilyDNSStrategy; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean; lock_host?: boolean }
-type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
+type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'vpngate' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
 type ProxyInboundFocusRequest = { inboundID: number; requestID: number }
 type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
 type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge'; sheet: boolean; position?: GraphPosition }
@@ -9960,6 +9965,7 @@ function graphEntityRemoveLabel(entity: GraphEntity) {
     entity.node_id?.startsWith('canvas-server-')
     || entity.node_id?.startsWith('direct-exit-canvas-')
     || entity.node_id?.startsWith('warp-canvas-')
+    || entity.node_id?.startsWith('vpngate-canvas-')
     || entity.node_id?.startsWith('routing-canvas-')
     || entity.type === 'detached-step',
   )
@@ -9969,7 +9975,7 @@ function graphEntityRemoveLabel(entity: GraphEntity) {
 }
 
 function graphEntityPrimaryActionLabel(entity: GraphEntity, step?: ProxyPathStep) {
-  if (entity.type === 'proxy-path-step') return step?.node_type === 'warp' ? '' : '传递方式'
+  if (entity.type === 'proxy-path-step') return step?.node_type === 'warp' || step?.node_type === 'vpngate' ? '' : '传递方式'
   if (entity.type === 'entry') return '编辑'
   if (entity.type === 'imported') return '编辑'
   if (entity.type === 'server') return '详情'
@@ -9979,6 +9985,8 @@ function graphEntityPrimaryActionLabel(entity: GraphEntity, step?: ProxyPathStep
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
 type CanvasServerInstance = { instance_id: string; server_id: number }
 type CanvasWARPInstance = { instance_id: string; root_server_id: number }
+type CanvasVPNGateInstance = { instance_id: string; root_server_id: number; pool_id: number }
+type VPNGateCanvasPool = { id: number; name: string; enabled: boolean; servers: Record<string, { members: number; healthy: number; egress_ip?: string; country_code?: string; error?: string }> }
 type CanvasRoutingInstance = { instance_id: string; root_server_id: number }
 
 function newCanvasDirectExitInstance(rootServerID: number, sequence: number): GraphDirectExitInstance {
@@ -9987,6 +9995,22 @@ function newCanvasDirectExitInstance(rootServerID: number, sequence: number): Gr
 
 function newCanvasWARPInstance(rootServerID: number, sequence: number): CanvasWARPInstance {
   return { instance_id: `${Date.now().toString(36)}-${sequence.toString(36)}`, root_server_id: rootServerID }
+}
+
+function newCanvasVPNGateInstance(rootServerID: number, poolID: number, sequence: number): CanvasVPNGateInstance {
+  return { instance_id: `${Date.now().toString(36)}-${sequence.toString(36)}`, root_server_id: rootServerID, pool_id: poolID }
+}
+
+// Local exits are server-local terminals: they take no transport choice and
+// must sit directly after a controlled server.
+function localExitStepTarget(entity?: GraphEntity) {
+  if (entity?.type === 'warp') return { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
+  if (entity?.type === 'vpngate' && entity.id > 0) return { node_type: 'vpngate' as const, transport_mode: 'singbox' as const, config_json: JSON.stringify({ vpngate_pool_id: entity.id }) }
+  return null
+}
+
+function isLocalExitStep<T extends { node_type?: string }>(step: T): step is Extract<T, { node_type: 'warp' | 'vpngate' }> {
+  return step.node_type === 'warp' || step.node_type === 'vpngate'
 }
 
 function newCanvasRoutingInstance(rootServerID: number, sequence: number): CanvasRoutingInstance {
@@ -10050,6 +10074,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	const [canvasServerInstances, setCanvasServerInstances] = useCanvasScope<CanvasServerInstance[]>(selected?.id || 0, [])
 	const [canvasDirectExitInstances, setCanvasDirectExitInstances] = useState<GraphDirectExitInstance[]>(() => loadGraphDirectExitInstances())
 	const [canvasWARPInstances, setCanvasWARPInstances] = useState<CanvasWARPInstance[]>([])
+	const [canvasVPNGateInstances, setCanvasVPNGateInstances] = useState<CanvasVPNGateInstance[]>([])
+	const canvasVPNGateSequence = useRef(0)
 	const [canvasRoutingInstances, setCanvasRoutingInstances] = useState<CanvasRoutingInstance[]>([])
 	const [canvasDetachedChains, setCanvasDetachedChains] = useState<CanvasDetachedChain[]>([])
 	const canvasServerSequence = useRef(0)
@@ -10073,7 +10099,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  .map(([nodeID, position]) => `${nodeID}:${position.x}`)
 	  .sort()
 	  .join('|'), [positions])
-	const builtFlowContent = useMemo(() => editableProxyFlow(data, positionsRef.current, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances, canvasDetachedChains), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.routing_rules, data.port_forwards, data.tunnels, entryCardOrderKey, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasRoutingInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasDetachedChains])
+	const builtFlowContent = useMemo(() => editableProxyFlow(data, positionsRef.current, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances, canvasDetachedChains, canvasVPNGateInstances), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.vpngate_pools, canvasVPNGateInstances.map(item => `${item.instance_id}:${item.root_server_id}:${item.pool_id}`).join(','), data.proxy_paths, data.proxy_path_steps, data.routing_rules, data.port_forwards, data.tunnels, entryCardOrderKey, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasRoutingInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasDetachedChains])
 	const builtFlow = useMemo(() => ({
 	  nodes: builtFlowContent.nodes.map(node => {
 	    const saved = positions[node.id]
@@ -10942,7 +10968,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  })
 	  return false
 	}
-	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
+	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' } | { node_type: 'vpngate'; config_json: string }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const candidateStep = { position: 1, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
 	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPrefixCompatible(0, entry.id, [candidateStep])) return null
 	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true, initial_steps: [candidateStep] }) }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[] }
@@ -10954,7 +10980,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  applyMutationResult(result)
 	  return result.proxy_path || null
 	}
-	const appendPathAfterStep = async (stepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
+	const appendPathAfterStep = async (stepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' } | { node_type: 'vpngate'; config_json: string }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const steps: ProxyPathStep[] = data.proxy_path_steps || []
 	  const step = steps.find(x => x.id === stepID)
 	  if (!step) {
@@ -10970,7 +10996,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  applyMutationResult(result)
 	  return result.proxy_path_step || null
 	}
-	const appendPathAfterRoutingStage = async (pathID: number, stageStepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
+	const appendPathAfterRoutingStage = async (pathID: number, stageStepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' } | { node_type: 'vpngate'; config_json: string }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === pathID)
 	  if (!path) {
 	    await dialogs.alert({ title: '无法继续链路', message: '分流所属路径已经不存在，请刷新后重试。' })
@@ -10991,7 +11017,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  applyMutationResult(result)
 	  return result.proxy_path_step || null
 	}
-	const createRoutingRuleTargetPath = async (rule: RoutingRule, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
+	const createRoutingRuleTargetPath = async (rule: RoutingRule, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' } | { node_type: 'vpngate'; config_json: string }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const sourcePath = ((data.proxy_paths || []) as ProxyPath[]).find(path => path.id === rule.proxy_path_id)
 	  if (!sourcePath) throw new Error('分流规则所属路径已经不存在，请刷新后重试。')
 	  const ordered = ((data.proxy_path_steps || []) as ProxyPathStep[])
@@ -11069,6 +11095,25 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    saveGraphPositions(next)
 	    return next
 	  })
+	}
+	const consumeCanvasVPNGateTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
+	  if (!targetID.startsWith('vpngate-canvas-') || !createdSteps.length) return
+	  const instanceID = targetID.slice('vpngate-canvas-'.length)
+	  setCanvasVPNGateInstances(items => items.filter(item => item.instance_id !== instanceID))
+	  setPositions(current => {
+	    const sourcePosition = current[targetID]
+	    const next = { ...current }
+	    delete next[targetID]
+	    createdSteps.forEach((step, index) => {
+	      if (sourcePosition) next[proxyPathStepNodeID(step)] = { x: sourcePosition.x + index * 260, y: sourcePosition.y }
+	    })
+	    saveGraphPositions(next)
+	    return next
+	  })
+	}
+	const consumeCanvasLocalExitTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
+	  consumeCanvasWARPTarget(targetID, createdSteps)
+	  consumeCanvasVPNGateTarget(targetID, createdSteps)
 	}
 	const consumeCanvasRoutingTarget = (targetID: string, pathID: number, stageStepID: number) => {
 	  if (!targetID.startsWith('routing-canvas-')) return
@@ -11167,12 +11212,10 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 				if (targetEntity?.type === 'routing' || targetEntity?.type === 'detached-step') {
 				  return dialogs.alert({ title: '无法连接', message: '规则链路请连接到服务器、导入节点、WARP 或直接出口。' })
 				}
-				const target = targetEntity?.type === 'warp'
-				  ? { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
-				  : await targetStepForGraphTarget(conn.target)
+				const target = localExitStepTarget(targetEntity) || await targetStepForGraphTarget(conn.target)
 				if (!target) return
 				let stepTarget: any = target
-				if (target.node_type !== 'warp') {
+				if (!isLocalExitStep(target)) {
 				  const transport = await chooseTransportForTarget(target, undefined, rule.name)
 				  if (!transport) return
 				  const transportStep = { transport_mode: transport.transport_mode, processing_role: false, config_json: transport.config_json }
@@ -11189,7 +11232,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 				const created = await createRoutingRuleTargetPath(rule, stepTarget)
 				if (!created) return
 				if (target.node_type === 'server_inbound') consumeCanvasServerTarget(conn.target, [created])
-				if (target.node_type === 'warp') consumeCanvasWARPTarget(conn.target, [created])
+				if (isLocalExitStep(target)) consumeCanvasLocalExitTarget(conn.target, [created])
 				reconcileTopology()
 				return
 			  }
@@ -11203,12 +11246,10 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 			    if (targetEntity?.type === 'routing' || targetEntity?.type === 'detached-step') {
 			      return dialogs.alert({ title: '无法连接', message: '请把分流区块连接到服务器、导入节点或 WARP；规则顺序在分流区块内调整。' })
 			    }
-			    const target = targetEntity?.type === 'warp'
-			      ? { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
-			      : await targetStepForGraphTarget(conn.target)
+			    const target = localExitStepTarget(targetEntity) || await targetStepForGraphTarget(conn.target)
 			    if (!target) return
 			    let stepTarget: any = target
-			    if (target.node_type !== 'warp') {
+			    if (!isLocalExitStep(target)) {
 			      const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === routingSource.pathID)
 			      const transport = await chooseTransportForTarget(target, undefined, path?.name || sourceEntity?.label || '分流规则')
 			      if (!transport) return
@@ -11226,7 +11267,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 			    const created = await appendPathAfterRoutingStage(routingSource.pathID, routingSource.stageStepID, stepTarget)
 			    if (!created) return
 			    if (target.node_type === 'server_inbound') consumeCanvasServerTarget(conn.target, [created])
-			    if (target.node_type === 'warp') consumeCanvasWARPTarget(conn.target, [created])
+			    if (isLocalExitStep(target)) consumeCanvasLocalExitTarget(conn.target, [created])
 			    reconcileTopology()
 			    return
 			  }
@@ -11264,14 +11305,15 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 			      if (failures.length) await dialogs.alert({ title: createdPaths.length ? '部分直接出口未添加' : '直接出口添加失败', message: failures.join('\n') })
 			      return
 			    }
-			    if (targetEntity?.type === 'warp') {
-			      const target = { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
+			    const localExit = localExitStepTarget(targetEntity)
+			    if (localExit) {
+			      const target = localExit
 			      const created = await runSharedAppends(sources, graphSourceLabel, source => {
 			        if (source.step_id) return appendPathAfterStep(source.step_id, target)
 			        const entry = entries.find(item => item.id === source.inbound_id)
 			        return entry ? createPathFromEntry(entry, target) : Promise.resolve(null)
 			      })
-			      consumeCanvasWARPTarget(conn.target, created)
+			      consumeCanvasLocalExitTarget(conn.target, created)
 			      reconcileTopology()
 			      return
 			    }
@@ -11326,15 +11368,16 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 			    }
 			    return dialogs.alert({ title: '请连接服务器', message: '把服务器或入口拖到分流区块即可把规则写在那台服务器上，不需要先选分支。' })
 			  }
-			  if (targetEntity?.type === 'warp') {
-	    const target = { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
+			  if (localExitStepTarget(targetEntity)) {
+	    const target = localExitStepTarget(targetEntity)!
+	    const exitName = target.node_type === 'vpngate' ? 'VPNGate 出口' : 'WARP'
 	    const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
 	    if (sourcePathStepID) {
 	      const sourceStep = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === sourcePathStepID)
-	      if (!sourceStep || sourceStep.node_type !== 'server_inbound') return dialogs.alert({ title: '无法连接 WARP', message: 'WARP 必须直接连接在可控服务器之后。' })
+	      if (!sourceStep || sourceStep.node_type !== 'server_inbound') return dialogs.alert({ title: `无法连接 ${exitName}`, message: `${exitName} 必须直接连接在可控服务器之后。` })
 	      const created = await appendPathAfterStep(sourcePathStepID, target)
 	      if (created) {
-	        consumeCanvasWARPTarget(conn.target, [created])
+	        consumeCanvasLocalExitTarget(conn.target, [created])
 	        reconcileTopology()
 	      }
 	      return
@@ -11343,12 +11386,12 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	    if (sourceEntry) {
 	      const created = await createPathFromEntry(sourceEntry, target)
 	      if (created) {
-	        consumeCanvasWARPTarget(conn.target, [created])
+	        consumeCanvasLocalExitTarget(conn.target, [created])
 	        reconcileTopology()
 	      }
 	      return
 	    }
-	    return dialogs.alert({ title: '请选择服务器连接点', message: '从一级入口、服务器入口点或路径中的服务器继续连接点拖线到 WARP。' })
+	    return dialogs.alert({ title: '请选择服务器连接点', message: `从一级入口、服务器入口点或路径中的服务器继续连接点拖线到 ${exitName}。` })
 	  }
 	  if (targetEntity?.type === 'direct') {
 	    if (targetEntity.path_id) {
@@ -11707,6 +11750,17 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       })
       return
     }
+    if (entity.node_id?.startsWith('vpngate-canvas-')) {
+      const instanceID = entity.node_id.slice('vpngate-canvas-'.length)
+      setCanvasVPNGateInstances(items => items.filter(item => item.instance_id !== instanceID))
+      setPositions(current => {
+        const next = { ...current }
+        delete next[entity.node_id!]
+        saveGraphPositions(next)
+        return next
+      })
+      return
+    }
     if (entity.node_id?.startsWith('warp-canvas-')) {
       const instanceID = entity.node_id.slice('warp-canvas-'.length)
       setCanvasWARPInstances(items => items.filter(item => item.instance_id !== instanceID))
@@ -11748,6 +11802,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       entry: { name: '入口节点', path: `/inbounds/${entity.id}` },
       imported: { name: '导入节点', path: `/external-outbounds/${entity.id}` },
       warp: { name: 'WARP 出口', path: '' },
+      vpngate: { name: 'VPNGate 出口', path: '' },
       routing: { name: '分流出口', path: '' },
       direct: { name: '直接出口', path: `/proxy-paths/${entity.path_id || entity.id}` },
       'port-forward': { name: '端口转发', path: `/port-forwards/${entity.id}` },
@@ -11954,7 +12009,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
 	  setGraphMenu(null)
 	  editProxyPathNameForEntity(entity)
 	}
-  const runTool = (action: ProxyToolAction, position?: GraphPosition) => {
+  const runTool = async (action: ProxyToolAction, position?: GraphPosition) => {
 	  if (action === 'server') return void addServer(position)
 	  if (action === 'entry') return void addEntry(position)
 	  if (action === 'imported') return void openImportNode(position)
@@ -11968,6 +12023,27 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       })
       const targetPos = position || getPreferredViewportNewNodePosition(240, 120)
       placeGraphNode(canvasDirectExitNodeID(instance), targetPos)
+      return
+    }
+    if (action === 'vpngate') {
+      if (!selected?.id) return
+      const pools = ((data.vpngate_pools || []) as VPNGateCanvasPool[])
+      if (!pools.length) {
+        await dialogs.alert({ title: '还没有 VPNGate 出口池', message: '请先在「网络 → VPNGate 出口」创建出口池，选择国家/地区、运营商与选优策略。' })
+        return
+      }
+      const chosen = pools.length === 1 ? String(pools[0].id) : await dialogs.prompt({
+        title: '选择 VPNGate 出口池',
+        message: '连接后，该链路由末端服务器经所选出口池出站；出口池没有可用节点时拒绝出站。',
+        defaultValue: String(pools[0].id),
+        choices: pools.map(pool => ({ value: String(pool.id), label: `${pool.name}${pool.enabled ? '' : '（已停用）'}` })),
+      })
+      const pool = pools.find(item => String(item.id) === chosen)
+      if (!pool) return
+      const instance = newCanvasVPNGateInstance(selected.id, pool.id, canvasVPNGateSequence.current++)
+      setCanvasVPNGateInstances(items => [...items, instance])
+      const targetPos = position || getPreferredViewportNewNodePosition(260, 140)
+      placeGraphNode(canvasVPNGateNodeID(instance), targetPos)
       return
     }
     if (action === 'warp') {
@@ -12182,7 +12258,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
     if (entity.type === 'entry') return [`entry-${entity.id}`]
     if (entity.type === 'server') return [`server-${entity.id}`]
     if (entity.type === 'imported') return [`imported-${entity.id}`]
-    if (entity.type === 'proxy-path-step') return [`proxy-server-step-${entity.id}`, `proxy-imported-step-${entity.id}`, `proxy-warp-step-${entity.id}`]
+    if (entity.type === 'proxy-path-step') return [`proxy-server-step-${entity.id}`, `proxy-imported-step-${entity.id}`, `proxy-warp-step-${entity.id}`, `proxy-vpngate-step-${entity.id}`]
     return []
   }
   const deleteGraphMenuEntity = async () => {
@@ -12753,6 +12829,7 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'imported', label: '导入节点', desc: 'SS / SOCKS / VLESS' },
   { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
+  { id: 'vpngate', label: 'VPNGate 出口', desc: '按运营商自动选优，无可用节点时拒绝出站' },
   { id: 'routing', label: '分流出口', desc: '连上服务器后配置规则，后面的节点是未匹配兜底' },
   { id: 'family_split_template', label: '双栈模板', desc: '独立编排可复用的 IPv4 / IPv6 分支' },
 ]
@@ -12980,6 +13057,7 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 	if (kind === 'imported') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z" /><path d="M3 12h4M17 12h4" /><path d="M12 3v4M12 17v4" /><circle cx="12" cy="12" r="2" /></svg>
 	if (kind === 'direct') return <LogOut size={15} />
 	if (kind === 'warp') return <Zap size={15} />
+	if (kind === 'vpngate') return <ShieldCheck size={15} />
   if (kind === 'routing') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9" /><path d="M4 17h9" /><path d="m14 4 3 3-3 3" /><path d="m14 14 3 3-3 3" /><path d="M17 7h3" /><path d="M17 17h3" /></svg>
   if (kind === 'family_split_template') return <GitBranch size={15} />
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h8a4 4 0 0 1 0 8H9" /><path d="m9 11-4 4 4 4" /><path d="M18 5v4" /><path d="M16 7h4" /></svg>
@@ -15466,7 +15544,7 @@ type GraphTransportEdgeData = GraphRoutingEdgeData & {
 }
 
 function estimatedGraphNodeHeight(node: Node) {
-	  if (node.id.startsWith('direct-exit-') || node.id.startsWith('warp-canvas-') || node.id.startsWith('routing-canvas-') || node.id.startsWith('routing-stage-') || node.id.startsWith('proxy-warp-step-')) {
+	  if (node.id.startsWith('direct-exit-') || node.id.startsWith('warp-canvas-') || node.id.startsWith('vpngate-canvas-') || node.id.startsWith('routing-canvas-') || node.id.startsWith('routing-stage-') || node.id.startsWith('proxy-warp-step-') || node.id.startsWith('proxy-vpngate-step-')) {
     return GRAPH_LAYOUT_EXIT_NODE_HEIGHT
   }
   if (node.id.startsWith('entry-')) return 150
@@ -15635,6 +15713,7 @@ function ProxyGraphLegend() {
         <span><i className="legend-node legend-imported" /><em>第三方代理</em></span>
         <span><i className="legend-node legend-direct" /><em>直接出口</em></span>
         <span><i className="legend-node legend-warp" /><em>WARP 出口</em></span>
+        <span><i className="legend-node legend-warp" /><em>VPNGate 出口</em></span>
       </div>
       <div className="proxy-graph-legend-section">
         <strong>传递方式</strong>
@@ -15728,6 +15807,7 @@ function proxyPathReusableTargetOptions(data: any, serverID: number): ProxyPathR
 
 function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'node_type' | 'transport_mode' | 'config_json' | 'inbound_id'>) {
   if (step.node_type === 'warp') return { kind: 'warp' as const, title: 'WARP 出口' }
+  if (step.node_type === 'vpngate') return { kind: 'warp' as const, title: 'VPNGate 出口' }
   const mode = step.transport_mode || 'singbox'
   if (mode === 'port_forward') return { kind: 'port_forward' as const, title: '端口转发' }
   if (mode === 'tunnel') {
@@ -15784,7 +15864,7 @@ function graphTransportEdge(
   }
 }
 
-function editableProxyFlow(data: any, positions: Record<string, { x: number; y: number }>, rootServerId = 0, canvasImportedIDs: number[] = [], canvasServerInstances: CanvasServerInstance[] = [], canvasDirectExitInstances: GraphDirectExitInstance[] = [], canvasWARPInstances: CanvasWARPInstance[] = [], canvasRoutingInstances: CanvasRoutingInstance[] = [], canvasDetachedChains: CanvasDetachedChain[] = []) {
+function editableProxyFlow(data: any, positions: Record<string, { x: number; y: number }>, rootServerId = 0, canvasImportedIDs: number[] = [], canvasServerInstances: CanvasServerInstance[] = [], canvasDirectExitInstances: GraphDirectExitInstance[] = [], canvasWARPInstances: CanvasWARPInstance[] = [], canvasRoutingInstances: CanvasRoutingInstance[] = [], canvasDetachedChains: CanvasDetachedChain[] = [], canvasVPNGateInstances: CanvasVPNGateInstance[] = []) {
   const nodes: Node[] = []
   const edges: Edge[] = []
   const entries: Inbound[] = data.inbounds || []
@@ -15895,7 +15975,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   visiblePaths.forEach(path => {
     if (collapsedDirectSourceByPath.has(path.id)) return
     ;(stepsByPath.get(path.id) || []).forEach(step => {
-      if (step.node_type === 'warp') return
+      if (isLocalExitStep(step)) return
       const nodeID = stepNodeID(step)
       if (nodeID) addContinuation(nodeID, step, path)
     })
@@ -16052,6 +16132,15 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         || stepFallbackPosition(id, canonicalStep, canonicalPathSteps, canonicalPath)
         || defaultServerGraphPosition(visibleServers.length + canvasServerInstances.length + stepIndex)
       const entity = { type: 'proxy-path-step', id: canonicalStep.id, path_id: canonicalPath.id, label: `${canonicalPath.name || `代理路径 ${canonicalPath.id}`} / 第 ${canonicalStep.position} 跳` } as GraphEntity
+      if (canonicalStep.node_type === 'vpngate') {
+        const serverID = graphWARPServerID(canonicalPath, canonicalPathSteps, canonicalStep, inboundByID)
+        const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
+        const pool = ((data.vpngate_pools || []) as VPNGateCanvasPool[]).find(item => item.id === vpngateStepPoolID(canonicalStep))
+        const exit = pool?.servers?.[String(serverID)]
+        const status = !pool || !pool.enabled || (exit && !exit.members) ? 'failed' : exit ? 'ready' : 'needed'
+	        nodes.push({ id, className: `graph-node warp-graph-node vpngate-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 240 }, data: { entity, pathIDs: sharedPathIDs, label: <WARPGraphNode connected icon="vpngate" title={pool ? `VPNGate · ${pool.name}` : 'VPNGate'} meta={vpngateExitMeta(pool, serverID, server?.name || `服务器 ${serverID}`)} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+        return
+      }
       if (canonicalStep.node_type === 'warp') {
         const serverID = graphWARPServerID(canonicalPath, canonicalPathSteps, canonicalStep, inboundByID)
         const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
@@ -16183,6 +16272,13 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const position = positions[id] || { x: rootPosition.x + index * 240, y: rootPosition.y + 300 }
 	    nodes.push({ id, className: 'graph-node warp-graph-node canvas-warp-node', position, style: { width: 220 }, data: { entity: { type: 'warp', id: 0, label: 'WARP 出口', node_id: id } as GraphEntity, label: <WARPGraphNode title="WARP" meta="未连接" /> } })
 	  })
+	  canvasVPNGateInstances.filter(instance => instance.root_server_id === rootID).forEach((instance, index) => {
+    const id = canvasVPNGateNodeID(instance)
+    const rootPosition = serverPositions.get(rootID) || defaultServerGraphPosition(0)
+    const position = positions[id] || { x: rootPosition.x + index * 240 + 120, y: rootPosition.y + 360 }
+    const pool = ((data.vpngate_pools || []) as VPNGateCanvasPool[]).find(item => item.id === instance.pool_id)
+	    nodes.push({ id, className: 'graph-node warp-graph-node vpngate-graph-node canvas-warp-node', position, style: { width: 240 }, data: { entity: { type: 'vpngate', id: instance.pool_id, label: 'VPNGate 出口', node_id: id } as GraphEntity, label: <WARPGraphNode icon="vpngate" title={pool ? `VPNGate · ${pool.name}` : 'VPNGate'} meta="未连接" /> } })
+	  })
 	  canvasRoutingInstances.filter(instance => instance.root_server_id === rootID).forEach((instance, index) => {
     const id = canvasRoutingNodeID(instance)
     const rootPosition = serverPositions.get(rootID) || defaultServerGraphPosition(0)
@@ -16194,7 +16290,9 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	    const step = item.step
 	    const id = detachedChainStepNodeID(chain.instance_id, index)
 	    const entity = { type: 'detached-step', id: step.id, path_id: chain.source_path_id, label: `${chain.source_path_name} / 未连接节点 ${index + 1}`, node_id: id } as GraphEntity
-	    if (step.node_type === 'warp') {
+	    if (step.node_type === 'vpngate') {
+	      nodes.push({ id, className: 'graph-node warp-graph-node vpngate-graph-node detached-chain-node', position: item.position, style: { width: 240 }, data: { entity, label: <WARPGraphNode icon="vpngate" title="VPNGate" meta="未连接链段" /> } })
+	    } else if (step.node_type === 'warp') {
 	      nodes.push({ id, className: 'graph-node warp-graph-node detached-chain-node', position: item.position, style: { width: 220 }, data: { entity, label: <WARPGraphNode title="WARP" meta="未连接链段" /> } })
 	    } else if (step.node_type === 'imported' && step.external_outbound_id) {
 	      const imported = (data.external_outbounds || []).find((candidate: ExternalOutbound) => candidate.id === step.external_outbound_id) as ExternalOutbound | undefined
@@ -16402,6 +16500,7 @@ function graphWARPServerID(path: ProxyPath, steps: ProxyPathStep[], warpStep: Pr
 
 function proxyPathStepNodeID(step: ProxyPathStep) {
 	if (step.node_type === 'warp') return `proxy-warp-step-${step.id}`
+	if (step.node_type === 'vpngate') return `proxy-vpngate-step-${step.id}`
   if (step.node_type === 'imported' && step.external_outbound_id) return `proxy-imported-step-${step.id}`
   if (step.node_type === 'server_inbound' && (step.inbound_id || step.server_id)) return `proxy-server-step-${step.id}`
   return ''
@@ -16430,6 +16529,23 @@ function canvasDirectExitNodeID(instance: GraphDirectExitInstance) {
 
 function canvasWARPNodeID(instance: CanvasWARPInstance) {
   return `warp-canvas-${instance.instance_id}`
+}
+
+function canvasVPNGateNodeID(instance: CanvasVPNGateInstance) {
+  return `vpngate-canvas-${instance.instance_id}`
+}
+
+function vpngateStepPoolID(step: Pick<ProxyPathStep, 'config_json'>) {
+  return Number((parseConfig(step.config_json || '{}') || {}).vpngate_pool_id || 0)
+}
+
+function vpngateExitMeta(pool: VPNGateCanvasPool | undefined, serverID: number, serverName: string) {
+  if (!pool) return `${serverName} · 出口池不存在`
+  if (!pool.enabled) return `${serverName} · 已停用，拒绝出站`
+  const exit = pool.servers?.[String(serverID)]
+  if (!exit) return `${serverName} · 等待部署后选优`
+  if (!exit.members) return `${serverName} · 无可用节点，拒绝出站`
+  return `${serverName} · ${exit.egress_ip || '选优中'}${exit.country_code ? ` ${exit.country_code}` : ''} · 健康 ${exit.healthy}/${exit.members}`
 }
 
 function canvasRoutingNodeID(instance: CanvasRoutingInstance) {
@@ -16480,10 +16596,10 @@ function DirectExitGraphNode({ connected = false, title, meta, exitRegion }: { c
   </div>
 }
 
-function WARPGraphNode({ connected = false, title, meta, exitRegion }: { connected?: boolean; title: string; meta: string; exitRegion?: { code?: string; status?: string } }) {
+function WARPGraphNode({ connected = false, icon = 'warp', title, meta, exitRegion }: { connected?: boolean; icon?: 'warp' | 'vpngate'; title: string; meta: string; exitRegion?: { code?: string; status?: string } }) {
   return <div className="warp-exit-card">
     <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} isConnectable={!connected} />
-    <span className="warp-exit-icon"><Zap size={18} /></span>
+    <span className="warp-exit-icon">{icon === 'vpngate' ? <ShieldCheck size={18} /> : <Zap size={18} />}</span>
     <span className="warp-exit-copy"><small>{connected ? '链路出口' : '可选出口'}</small><strong>{title}</strong></span>
 	{exitRegion && <ExitRegionBadge code={exitRegion.code} status={exitRegion.status} compact />}
     <span className={`warp-exit-state${connected ? ' enabled' : ''}`}>{meta}</span>

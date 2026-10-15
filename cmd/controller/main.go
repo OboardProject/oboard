@@ -148,6 +148,7 @@ func main() {
 	}
 	go app.StartMonitor(ctx)
 	go app.StartProbeMonitors(ctx)
+	go app.StartVPNGate(ctx)
 	go app.StartDNSDDNS(ctx)
 	go app.StartCertificateRenewal(ctx)
 	go app.StartControllerUpdates(ctx)

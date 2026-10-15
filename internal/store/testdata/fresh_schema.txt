@@ -2750,6 +2750,47 @@ table users
     legacy_proxy_enabled INTEGER notnull=1 default=1 pk=0
     created_at TEXT notnull=1 default=- pk=0
     updated_at TEXT notnull=1 default=- pk=0
+table vpngate_catalog_state
+    id INTEGER notnull=0 default=- pk=1
+    fetched_at TEXT notnull=1 default='' pk=0
+    source TEXT notnull=1 default='' pk=0
+    entries INTEGER notnull=1 default=0 pk=0
+    skipped INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+table vpngate_ip_quality
+    ip TEXT notnull=0 default=- pk=1
+    quality_json TEXT notnull=1 default=- pk=0
+    checked_at TEXT notnull=1 default=- pk=0
+table vpngate_nodes
+    id INTEGER notnull=0 default=- pk=1
+    node_key TEXT notnull=1 default=- pk=0
+    host_name TEXT notnull=1 default='' pk=0
+    ip TEXT notnull=1 default=- pk=0
+    port INTEGER notnull=1 default=- pk=0
+    network TEXT notnull=1 default=- pk=0
+    country_code TEXT notnull=1 default='' pk=0
+    country_name TEXT notnull=1 default='' pk=0
+    score INTEGER notnull=1 default=0 pk=0
+    ping_ms INTEGER notnull=1 default=0 pk=0
+    speed_bps INTEGER notnull=1 default=0 pk=0
+    sessions INTEGER notnull=1 default=0 pk=0
+    uptime_ms INTEGER notnull=1 default=0 pk=0
+    operator TEXT notnull=1 default='' pk=0
+    spec_json TEXT notnull=1 default=- pk=0
+    first_seen_at TEXT notnull=1 default=- pk=0
+    last_seen_at TEXT notnull=1 default=- pk=0
+table vpngate_pool_servers
+    pool_id INTEGER notnull=1 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=2
+    state_json TEXT notnull=1 default='{}' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table vpngate_pools
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    policy_json TEXT notnull=1 default='{}' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
 table warp_profiles
     id INTEGER notnull=0 default=- pk=1
     server_id INTEGER notnull=1 default=- pk=0

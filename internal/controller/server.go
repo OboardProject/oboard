@@ -83,6 +83,7 @@ type trustedProxyState struct {
 type trustedProxyStateContextKey struct{}
 
 type Server struct {
+	vpngate                    vpngateRuntime
 	runtimeSecurityReports     sync.Map
 	proxyDSCPMu                sync.Mutex
 	runtimeSecurityQueueMu     sync.Mutex
@@ -2602,7 +2603,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				return err
 			})
 		}
-	case "return-latency":
+	case "return-latency", "vpngate":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
 		}
@@ -2664,6 +2665,20 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				out["inbound_user_counts"] = counts
 			}
+		}
+		if err == nil {
+			err = timing.run("vpngate_pools", func() error {
+				pools, listErr := s.store.ListVPNGatePools(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				states, listErr := s.store.ListVPNGatePoolServers(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				out["vpngate_pools"] = s.vpngateCanvasPools(pools, states)
+				return nil
+			})
 		}
 	case "inbounds":
 		if err = require(model.RoleOperator); err == nil {
@@ -4754,6 +4769,9 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 		}
 		if task.Type == model.AgentTaskTypeProbeExternalEgress || task.Type == model.AgentTaskTypeApplyDeployment {
 			_ = s.applyExternalEgressTaskResults(ctx, task.ServerID, task, "failed", task.ResultJSON)
+		}
+		if task.Type == model.AgentTaskTypeProbeVPNGate {
+			_ = s.applyVPNGateProbeResult(ctx, task.ServerID, task, "failed", task.ResultJSON)
 		}
 		if err := s.applyTimeCheckTaskResult(ctx, task, "failed", task.ResultJSON); err != nil {
 			log.Printf("apply timed out time check task %d: %v", task.ID, err)
@@ -10922,6 +10940,31 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, path *mode
 	}
 	v.ProcessingRole = false // Derived from the leading transparent-forward segment.
 	switch v.NodeType {
+	case model.ProxyPathStepVPNGate:
+		if v.TransportMode != model.ProxyPathTransportSingBox {
+			return errors.New("VPNGate 出口只能作为 sing-box 链路出口")
+		}
+		if path != nil && path.Kind != "" && path.Kind != model.ProxyPathKindChain {
+			return errors.New("VPNGate 出口只能用于普通代理拓扑")
+		}
+		poolID := int64(0)
+		switch value := cfg["vpngate_pool_id"].(type) {
+		case float64:
+			poolID = int64(value)
+			if float64(poolID) != value {
+				poolID = 0
+			}
+		}
+		if poolID <= 0 {
+			return errors.New("请选择 VPNGate 出口池")
+		}
+		if _, err := s.store.GetVPNGatePool(ctx, poolID); err != nil {
+			return fmt.Errorf("VPNGate 出口池不存在：%w", err)
+		}
+		v.ServerID = nil
+		v.InboundID = nil
+		v.ExternalOutboundID = nil
+		v.ConfigJSON = fmt.Sprintf(`{"vpngate_pool_id":%d}`, poolID)
 	case model.ProxyPathStepWARP:
 		if v.TransportMode != model.ProxyPathTransportSingBox {
 			return errors.New("WARP 只能作为 sing-box 链路出口")
@@ -15521,6 +15564,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
 				s.recordUsersApplied(ctx, server, h.AppliedUsers)
+				s.recordVPNGateHealth(ctx, server.ID, h.VPNGatePools)
 				s.syncLanes.recordProbe(server.ID, h.AppliedLatencyProbe)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				if result.AgentUpdateRetryReset {
@@ -15858,6 +15902,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	}
 	if task.Type == model.AgentTaskTypeApplyTrafficPolicy {
 		s.recordAuthorizationTaskResult(r.Context(), server, *task, req.Status)
+	}
+	if task.Type == model.AgentTaskTypeProbeVPNGate {
+		if err := s.applyVPNGateProbeResult(r.Context(), server.ID, *task, req.Status, req.ResultJSON); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
 	}
 	if task.Type == model.AgentTaskTypeProbeLatencyTargets {
 		if err := s.applyLatencyProbeTaskResult(r.Context(), server.ID, *task, req.Status, req.ResultJSON); err != nil {

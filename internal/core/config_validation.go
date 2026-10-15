@@ -408,6 +408,13 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "snell", "socks":
 			v.validateRemoteAdapter(path, typ, outbound)
 		case "user-selector":
+		case "vpngate-pool":
+			if !strings.HasPrefix(tag, "vpngate-") {
+				v.addf("%s vpngate-pool tag must be vpngate-<pool_id>", path)
+			}
+			if stringFromAny(outbound["detour"]) != "" {
+				v.addf("%s vpngate-pool must not have a detour", path)
+			}
 		default:
 			v.addf("%s unsupported outbound type %q", path, typ)
 		}

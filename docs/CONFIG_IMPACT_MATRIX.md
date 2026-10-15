@@ -18,6 +18,7 @@
 | DNS 列表 | create/update/delete/set-default | `dns_lists.*` | 完整部署 | 引用列表的服务器；全局默认变更保守全量 |
 | 服务器 DNS policy | `POST /servers/:id/dns-policy` | `servers.dns_policy.set` | 完整部署 | 指定服务器 |
 | WARP profile | create/update/delete | WARP 管理 capability | 完整部署 | profile server 及使用该 profile 的路径 |
+| VPNGate 出口池 | `POST /api/v1/vpngate`（save/delete/reselect） | `vpngate.pools.save/delete/reselect` | 不触发部署；成员与热备经 `apply_vpngate_pool` 运行时通道下发，不分配 `config_version` | 使用该池的出口服务器；拓扑中加入/移除 VPNGate 步骤仍按代理路径完整部署 |
 | 用户与组 | user/group/member create/update/delete | `users.*`, `user_groups.*`, `user_group_members.*` | 完整部署 | 可能改变凭据/授权，保守全量 |
 | 设备凭据 | device create/revoke/rotate/access state | `user_devices.update/revoke` 及审计后台 | 完整部署，异步 | 使用凭据的服务器；当前保守全量 |
 | 套餐版本/节点 | plan version、node ordering、publish/disable | `subscription_plans.*`, `access_changes.*` | 草稿/待发布只保存期望；有效版本由 access-change 两阶段激活，激活事务进入统一配置修订并异步完整部署 | `AffectedAuthServers`；不把草稿或中间授权态推给 Agent |

@@ -307,6 +307,8 @@ func proxyPathSummaryLabels(path model.ProxyPath, steps []model.ProxyPathStep, s
 			labels = append(labels, "导入节点")
 		case model.ProxyPathStepWARP:
 			labels = append(labels, "WARP")
+		case model.ProxyPathStepVPNGate:
+			labels = append(labels, "VPNGate")
 		}
 	}
 	return labels

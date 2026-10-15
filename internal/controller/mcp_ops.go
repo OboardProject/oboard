@@ -24,6 +24,7 @@ func (s *Server) registerOpsAutomationOperations() {
 	s.registerProbeOperations()
 	s.registerLatencyProbeTaskOperations()
 	s.registerProbeMonitorOperations()
+	s.registerVPNGateOperations()
 }
 
 // ---- task triggers (diagnose / update agent / agents update all) ----

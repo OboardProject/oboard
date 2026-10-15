@@ -1429,6 +1429,26 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 			}
 		}
 		for index, step := range ordered {
+			if step.NodeType != model.ProxyPathStepVPNGate {
+				continue
+			}
+			if path.Kind != "" && path.Kind != model.ProxyPathKindChain {
+				return fmt.Errorf("VPNGate 出口只能用于普通代理拓扑")
+			}
+			if index != len(ordered)-1 {
+				return fmt.Errorf("代理路径 %s 的 VPNGate 出口必须是最后一个节点", path.Name)
+			}
+			if step.TransportMode != "" && step.TransportMode != model.ProxyPathTransportSingBox {
+				return fmt.Errorf("代理路径 %s 的 VPNGate 出口只能使用 sing-box 出站", path.Name)
+			}
+			if index > 0 && ordered[index-1].NodeType != model.ProxyPathStepServerInbound {
+				return fmt.Errorf("代理路径 %s 的 VPNGate 出口必须直接连接在可控服务器之后", path.Name)
+			}
+			if _, ok := VPNGateStepPoolID(step); !ok {
+				return fmt.Errorf("代理路径 %s 的 VPNGate 出口没有选择出口池", path.Name)
+			}
+		}
+		for index, step := range ordered {
 			if step.NodeType != model.ProxyPathStepWARP {
 				continue
 			}
@@ -1548,6 +1568,50 @@ func ProxyPathWARPServerIDs(paths []model.ProxyPath, steps []model.ProxyPathStep
 		}
 	}
 	return out, nil
+}
+
+// ProxyPathVPNGateServerPools resolves every enabled VPNGate terminal to the
+// controlled server immediately before it, returning server -> pool IDs. The
+// same derivation drives config generation and the selection worker.
+func ProxyPathVPNGateServerPools(paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound) map[int64]map[int64]bool {
+	inboundByID := make(map[int64]model.Inbound, len(inbounds))
+	for _, inbound := range inbounds {
+		inboundByID[inbound.ID] = inbound
+	}
+	stepsByPath := map[int64][]model.ProxyPathStep{}
+	for _, step := range steps {
+		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
+	}
+	out := map[int64]map[int64]bool{}
+	for _, path := range paths {
+		if !path.Enabled || IsFamilyBranch(path) {
+			continue
+		}
+		root, ok := inboundByID[path.InboundID]
+		if !ok {
+			continue
+		}
+		currentServerID := root.ServerID
+		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
+		for index, step := range ordered {
+			switch step.NodeType {
+			case model.ProxyPathStepServerInbound:
+				if serverID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
+					currentServerID = serverID
+				}
+			case model.ProxyPathStepVPNGate:
+				poolID, ok := VPNGateStepPoolID(step)
+				if !ok || index != len(ordered)-1 || currentServerID == 0 {
+					continue
+				}
+				if out[currentServerID] == nil {
+					out[currentServerID] = map[int64]bool{}
+				}
+				out[currentServerID][poolID] = true
+			}
+		}
+	}
+	return out
 }
 
 func directProxyPathSignature(inboundID int64, steps []model.ProxyPathStep) string {

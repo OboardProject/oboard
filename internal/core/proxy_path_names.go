@@ -263,6 +263,10 @@ func proxyPathRouteLabels(path model.ProxyPath, steps []model.ProxyPathStep, ser
 			labels = append(labels, "WARP")
 			continue
 		}
+		if step.NodeType == model.ProxyPathStepVPNGate {
+			labels = append(labels, "VPNGate")
+			continue
+		}
 		if step.NodeType == model.ProxyPathStepImported && step.ExternalOutboundID != nil {
 			external := externals[*step.ExternalOutboundID]
 			labels = append(labels, firstNonEmpty(strings.TrimSpace(external.Name), fmt.Sprintf("导入节点 #%d", *step.ExternalOutboundID)))
@@ -410,6 +414,8 @@ func proxyPathNameFeatures(path model.ProxyPath, steps []model.ProxyPathStep, in
 		feature := ""
 		if step.NodeType == model.ProxyPathStepWARP {
 			feature = "WARP"
+		} else if step.NodeType == model.ProxyPathStepVPNGate {
+			feature = "VPNGate"
 		} else if step.NodeType == model.ProxyPathStepImported && step.ExternalOutboundID != nil {
 			feature = proxyProtocolName(externals[*step.ExternalOutboundID].Protocol)
 		} else {

@@ -28,6 +28,8 @@ type apiPrincipalContextKey struct{}
 
 func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/probe-monitors", s.apiAuth(s.apiProbeMonitors, model.RoleOperator))
+	mux.HandleFunc("/api/v1/vpngate", s.apiAuth(s.apiVPNGate, model.RoleOperator))
+	mux.HandleFunc("/api/v1/vpngate/catalog", s.apiAuth(s.apiVPNGate, model.RoleOperator))
 	for _, view := range []string{"accounts", "events", "executions"} {
 		mux.HandleFunc("/api/v1/audit/"+view, s.apiAuth(s.apiV1AccountAudit, model.RoleOperator))
 	}
@@ -1396,6 +1398,7 @@ func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation
 		TunnelType          string                           `json:"tunnel_type,omitempty"`
 		SSHPort             int                              `json:"ssh_port,omitempty"`
 		PersistentKeepalive *int                             `json:"persistent_keepalive,omitempty"`
+		VPNGatePoolID       int64                            `json:"vpngate_pool_id,omitempty"`
 	}
 	var wire struct {
 		Path        model.ProxyPath    `json:"path"`
@@ -1421,6 +1424,9 @@ func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation
 			}
 			encoded, _ := json.Marshal(config)
 			step.ConfigJSON = string(encoded)
+		}
+		if step.NodeType == model.ProxyPathStepVPNGate {
+			step.ConfigJSON = fmt.Sprintf(`{"vpngate_pool_id":%d}`, value.VPNGatePoolID)
 		}
 		request.Steps = append(request.Steps, step)
 	}

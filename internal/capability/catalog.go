@@ -510,6 +510,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, networkDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, runtimeSecurityDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, probeMonitorDescriptors(positiveID, stringValue, boolValue)...)
+	descriptors = append(descriptors, vpngateDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, proxyDSCPDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, configHealthDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, forwardsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
@@ -891,7 +892,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "topology.write":
 		namePart := closedObject(map[string]any{"kind": stringValue, "value": stringValue}, "kind")
 		path := closedObject(map[string]any{"kind": stringValue, "name": stringValue, "name_mode": stringValue, "name_template": map[string]any{"type": "array", "maxItems": 16, "items": namePart}, "inbound_id": positiveID, "exit_region_mode": stringValue, "exit_region_code": stringValue, "enabled": boolValue})
-		step := closedObject(map[string]any{"node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535}, "persistent_keepalive": map[string]any{"type": "integer", "minimum": 0, "maximum": 65535}})
+		step := closedObject(map[string]any{"node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535}, "persistent_keepalive": map[string]any{"type": "integer", "minimum": 0, "maximum": 65535}, "vpngate_pool_id": positiveID})
 		routingRule := closedObject(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "priority": map[string]any{"type": "integer"}, "sort_position": map[string]any{"type": "integer", "minimum": 0}, "match_source": map[string]any{"type": "string", "enum": []string{"inline", "rule_set"}}, "rule_set_id": positiveID, "match_json": map[string]any{"type": "string", "maxLength": 8192}, "action": map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "interface", "source_prefix"}}, "outbound_id": positiveID, "external_outbound_id": positiveID, "interface_name": stringValue, "source_prefix": stringValue, "sync_source_rule_id": positiveID, "sync_enabled": boolValue, "enabled": boolValue}, "name", "action")
 		pathOutput := closedObject(map[string]any{"id": positiveID, "kind": stringValue, "name": stringValue, "name_mode": stringValue, "name_template": map[string]any{"type": "array", "items": namePart}, "inbound_id": positiveID, "exit_region_mode": stringValue, "exit_region_code": stringValue, "exit_region_status": stringValue, "exit_region_source": stringValue, "enabled": boolValue, "created_at": stringValue, "updated_at": stringValue})
 		stepOutput := closedObject(map[string]any{"id": positiveID, "path_id": positiveID, "position": positiveID, "node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": nullableInteger(), "inbound_id": nullableInteger(), "external_outbound_id": nullableInteger(), "config_json": stringValue, "created_at": stringValue, "updated_at": stringValue})
@@ -914,9 +915,9 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "proxy_path_steps.create", "proxy_path_steps.update":
 		stepProperties := map[string]any{
 			"path_id": positiveID, "position": map[string]any{"type": "integer", "minimum": 1, "maximum": 5},
-			"node_type":      map[string]any{"type": "string", "enum": []string{"server_inbound", "imported", "warp"}},
+			"node_type":      map[string]any{"type": "string", "enum": []string{"server_inbound", "imported", "warp", "vpngate"}},
 			"transport_mode": map[string]any{"type": "string", "enum": []string{"singbox", "port_forward", "tunnel"}},
-			"server_id":      positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID,
+			"server_id":      positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID, "vpngate_pool_id": positiveID,
 			"chain_protocol": map[string]any{"type": "string", "enum": []string{"shadowsocks", "vless", "mieru", "socks"}},
 			"chain_method":   stringValue, "reality_handshake_server": stringValue,
 			"reality_handshake_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},

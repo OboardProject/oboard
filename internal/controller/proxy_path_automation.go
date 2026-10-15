@@ -37,7 +37,7 @@ var proxyPathStepAutomationFields = map[string]bool{
 	"server_id": true, "inbound_id": true, "external_outbound_id": true,
 	"chain_protocol": true, "chain_method": true, "reality_handshake_server": true,
 	"reality_handshake_port": true, "tunnel_type": true, "ssh_port": true,
-	"persistent_keepalive": true, "listen_ip": true,
+	"persistent_keepalive": true, "listen_ip": true, "vpngate_pool_id": true,
 }
 
 func (s *Server) registerProxyPathAutomationOperations() {
@@ -608,7 +608,7 @@ func (s *Server) decodeProxyPathStepAutomationOperation(ctx context.Context, pri
 		}
 		step.Position = position
 	}
-	if hasAnyAutomationField(fields, "node_type", "transport_mode", "chain_protocol", "chain_method", "reality_handshake_server", "reality_handshake_port", "tunnel_type", "ssh_port", "persistent_keepalive", "listen_ip") || current == nil {
+	if hasAnyAutomationField(fields, "node_type", "transport_mode", "chain_protocol", "chain_method", "reality_handshake_server", "reality_handshake_port", "tunnel_type", "ssh_port", "persistent_keepalive", "listen_ip", "vpngate_pool_id") || current == nil {
 		config := map[string]any{}
 		if current != nil && !hasAnyAutomationField(fields, "node_type", "transport_mode") {
 			_ = json.Unmarshal([]byte(current.ConfigJSON), &config)
@@ -625,7 +625,7 @@ func (s *Server) decodeProxyPathStepAutomationOperation(ctx context.Context, pri
 			_ = json.Unmarshal(value, &decoded)
 			config["type"] = decoded
 		}
-		for _, field := range []string{"ssh_port", "persistent_keepalive"} {
+		for _, field := range []string{"ssh_port", "persistent_keepalive", "vpngate_pool_id"} {
 			if value, ok := fields[field]; ok {
 				var decoded any
 				_ = json.Unmarshal(value, &decoded)

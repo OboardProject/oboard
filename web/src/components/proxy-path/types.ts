@@ -234,7 +234,7 @@ export type ProxyPathStep = {
   id: number
   path_id: number
   position: number
-  node_type: 'server_inbound' | 'imported' | 'warp'
+  node_type: 'server_inbound' | 'imported' | 'warp' | 'vpngate'
   transport_mode?: ProxyPathTransportMode
   processing_role?: boolean
   server_id?: number

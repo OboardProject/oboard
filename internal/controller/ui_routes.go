@@ -32,6 +32,7 @@ var knownUIPagePaths = map[string]struct{}{
 	"/tasks":                {},
 	"/traffic-forwarding":   {},
 	"/users":                {},
+	"/vpngate":              {},
 }
 
 func isKnownUIPagePath(path string) bool {
