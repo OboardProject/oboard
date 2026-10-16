@@ -281,3 +281,20 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 		t.Fatalf("inbounds.create still exposes removed kind vless-tls-vision: %s", raw)
 	}
 }
+
+func TestProbeDDNSPrefixMCPSchemas(t *testing.T) {
+	catalog := NewCatalog()
+	for _, name := range []string{"probe_ddns.save", "probe_ddns.list"} {
+		d, ok := catalog.Get(name)
+		if !ok {
+			t.Fatal(name)
+		}
+		raw := d.InputSchema
+		if name == "probe_ddns.list" {
+			raw = d.OutputSchema
+		}
+		if !strings.Contains(string(raw), "interface_prefix") {
+			t.Fatalf("%s lacks prefix schema", name)
+		}
+	}
+}

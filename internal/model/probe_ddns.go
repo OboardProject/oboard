@@ -16,6 +16,7 @@ type ProbeDDNSRecord struct {
 	IntervalSeconds  int        `json:"interval_seconds"`
 	Enabled          bool       `json:"enabled"`
 	InterfaceName    string     `json:"interface_name,omitempty"`
+	InterfacePrefix  string     `json:"interface_prefix,omitempty"`
 	InterfaceAddress string     `json:"interface_address,omitempty"`
 	AddressFamily    string     `json:"address_family,omitempty"`
 	ExcludePrivate   bool       `json:"exclude_private"`
@@ -30,5 +31,5 @@ type ProbeDDNSRecord struct {
 
 // InterfaceBound reports whether updates must use a reported NIC address.
 func (v ProbeDDNSRecord) InterfaceBound() bool {
-	return v.InterfaceName != "" || v.InterfaceAddress != ""
+	return v.InterfaceName != "" || v.InterfaceAddress != "" || v.InterfacePrefix != ""
 }

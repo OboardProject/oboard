@@ -156,6 +156,9 @@ func TestDNSDDNSUpdatesAddressAndRejectsAmbiguousRecords(t *testing.T) {
 	if err := db.SaveProbeDDNS(ctx, *node, ddns); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.UpsertDNSRecordMetadata(ctx, credential.Zones[0].ID, model.DNSRecord{ID: "record", ProbeDDNSID: &ddns.ID, ServerID: &node.ID}); err != nil {
+		t.Fatal(err)
+	}
 	record := cloudflareDNSRecord{ID: "record", Type: "A", Name: inbound.DNSDomain, Content: "203.0.113.1", TTL: 300}
 	reads, writes := 0, 0
 	ambiguous := false
@@ -202,13 +205,17 @@ func TestDNSDDNSUpdatesAddressAndRejectsAmbiguousRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.syncDNSInbounds(ctx, []model.Server{*node}, []model.Inbound{*saved}); err != nil || writes != 2 {
-		t.Fatalf("inbound sync should keep its own comment: writes=%d err=%v", writes, err)
+	if _, err := srv.syncDNSInbounds(ctx, []model.Server{*node}, []model.Inbound{*saved}); err != nil || writes != 1 {
+		t.Fatalf("inbound sync must preserve DDNS ownership: writes=%d err=%v", writes, err)
 	}
 	ambiguous = true
-	if _, err := srv.syncDNSInbounds(ctx, []model.Server{*node}, []model.Inbound{*saved}); err == nil || !strings.Contains(err.Error(), "存在多条 A 记录") || writes != 2 {
-		t.Fatalf("ambiguous records accepted or modified: writes=%d err=%v", writes, err)
+	if err := db.UpsertDNSRecordMetadata(ctx, credential.Zones[0].ID, model.DNSRecord{ID: "duplicate", ProbeDDNSID: &ddns.ID, ServerID: &node.ID}); err != nil {
+		t.Fatal(err)
 	}
+	if _, err := srv.publishProbeDDNS(ctx, *node, *ddns, []dnsRecordTarget{{Type: "A", Content: node.PublicIPv4}}); err == nil || !strings.Contains(err.Error(), "存在多条 A 记录") || writes != 1 {
+		t.Fatalf("ambiguous owned records accepted: writes=%d err=%v", writes, err)
+	}
+
 }
 
 func TestCloudflareFilteredPagination(t *testing.T) {

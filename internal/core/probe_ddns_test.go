@@ -128,3 +128,33 @@ func TestResolveProbeDDNSTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestProbeDDNSPrefixSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, prefix, types string
+		addresses           []string
+		want                string
+		fail                bool
+	}{
+		{"carrier ipv4", "203.0.113.0/24", "a", []string{"198.51.100.8/24", "203.0.113.9/24"}, "203.0.113.9", false},
+		{"changed ipv4", "203.0.113.0/24", "a", []string{"203.0.113.17/24"}, "203.0.113.17", false},
+		{"ipv6", "2001:db8:1::/48", "aaaa", []string{"2001:db8:2::1/64", "2001:db8:1::4/64"}, "2001:db8:1::4", false},
+		{"ambiguous", "203.0.113.0/24", "a", []string{"203.0.113.1/24", "203.0.113.2/24"}, "", true},
+		{"missing", "203.0.113.0/24", "a", []string{"198.51.100.8/24"}, "", true},
+		{"private", "10.0.0.0/8", "a", []string{"10.1.1.1/24"}, "", true},
+		{"invalid", "carrier", "a", []string{"203.0.113.1/24"}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveProbeDDNSTargets(ProbeDDNSAddressRequest{Record: model.ProbeDDNSRecord{InterfaceName: "eth0", InterfacePrefix: tc.prefix, RecordTypes: tc.types, ExcludePrivate: true}, Interfaces: []model.NetworkInterfaceInfo{{Name: "eth0", Up: true, Running: true, Addresses: tc.addresses}}, InventoryAt: time.Now()})
+			if tc.fail {
+				if err == nil {
+					t.Fatal("expected rejection")
+				}
+				return
+			}
+			if err != nil || len(got) != 1 || got[0].Content != tc.want {
+				t.Fatalf("got=%+v err=%v", got, err)
+			}
+		})
+	}
+}

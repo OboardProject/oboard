@@ -103,7 +103,6 @@ index idx_plugin_runs_queue on plugin_runs
 index idx_plugin_schedules_due on plugin_schedules
 index idx_plugin_schedules_instance on plugin_schedules
 index idx_port_forwards_source on port_forwards
-index idx_probe_ddns_server_domain on probe_ddns_records
 index idx_probe_route_versions_monitor on probe_route_versions
 index idx_proxy_credentials_active_scope on proxy_credentials
 index idx_proxy_path_port_allocations_server on proxy_path_port_allocations
@@ -1050,6 +1049,7 @@ table dns_lists
 table dns_record_metadata
     dns_zone_id INTEGER notnull=1 default=- pk=1
     provider_record_id TEXT notnull=1 default=- pk=2
+    probe_ddns_id INTEGER notnull=0 default=- pk=0
     comment TEXT notnull=1 default='' pk=0
     server_id INTEGER notnull=0 default=- pk=0
     inbound_id INTEGER notnull=0 default=- pk=0
@@ -1770,6 +1770,7 @@ table probe_ddns_records
     enabled INTEGER notnull=1 default=1 pk=0
     interface_name TEXT notnull=1 default='' pk=0
     interface_address TEXT notnull=1 default='' pk=0
+    interface_prefix TEXT notnull=1 default='' pk=0
     address_family TEXT notnull=1 default='' pk=0
     exclude_private INTEGER notnull=1 default=0 pk=0
     revision INTEGER notnull=1 default=1 pk=0

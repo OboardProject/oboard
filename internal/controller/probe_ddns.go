@@ -30,6 +30,7 @@ type probeDDNSInput struct {
 	IntervalSeconds  int    `json:"interval_seconds,omitempty"`
 	Enabled          bool   `json:"enabled"`
 	InterfaceName    string `json:"interface_name,omitempty"`
+	InterfacePrefix  string `json:"interface_prefix,omitempty"`
 	InterfaceAddress string `json:"interface_address,omitempty"`
 	AddressFamily    string `json:"address_family,omitempty"`
 	ExcludePrivate   bool   `json:"exclude_private"`
@@ -39,7 +40,7 @@ func (v probeDDNSInput) model() model.ProbeDDNSRecord {
 	return model.ProbeDDNSRecord{
 		ID: v.ID, ServerID: v.ServerID, Revision: v.Revision, Name: v.Name, DNSCredentialID: v.DNSCredentialID,
 		Domain: v.Domain, RecordTypes: v.RecordTypes, ProxyEnabled: v.ProxyEnabled, IntervalSeconds: v.IntervalSeconds,
-		Enabled: v.Enabled, InterfaceName: v.InterfaceName, InterfaceAddress: v.InterfaceAddress,
+		Enabled: v.Enabled, InterfaceName: v.InterfaceName, InterfaceAddress: v.InterfaceAddress, InterfacePrefix: v.InterfacePrefix,
 		AddressFamily: v.AddressFamily, ExcludePrivate: v.ExcludePrivate,
 	}
 }
@@ -125,6 +126,8 @@ func (s *Server) registerProbeDDNSOperations() {
 			return refs, nil
 		})
 		s.automation.Register(name, func(ctx context.Context, p application.Principal, raw json.RawMessage) (any, error) {
+			s.dnsDDNSMu.Lock()
+			defer s.dnsDDNSMu.Unlock()
 			if _, err := validate(ctx, p, raw); err != nil {
 				return nil, err
 			}
@@ -227,16 +230,31 @@ func (s *Server) deleteProbeDDNSNames(ctx context.Context, record model.ProbeDDN
 	if record.DNSCredentialID == nil || strings.TrimSpace(record.Domain) == "" {
 		return nil
 	}
-	return s.deleteDNSInboundRecords(ctx, model.Inbound{
-		ServerID: record.ServerID, Name: record.Name, DNSSyncEnabled: true,
-		DNSCredentialID: record.DNSCredentialID, DNSDomain: record.Domain,
-	})
+	credential, err := s.store.GetDNSCredential(ctx, *record.DNSCredentialID)
+	if err != nil {
+		return err
+	}
+	zone, err := selectDNSCredentialZone(*credential, record.Domain, record.ServerID)
+	if err != nil {
+		return err
+	}
+	client, err := s.dnsProviderClient(credentialForDNSZone(*credential, *zone))
+	if err != nil {
+		return err
+	}
+	_, err = s.publishDNSTargets(ctx, client, credential.ID, *zone, normalizeDomainName(record.Domain), false, "", &record.ServerID, nil, nil, record.ID)
+	return err
 }
 
 func (s *Server) syncProbeDDNS(ctx context.Context, record model.ProbeDDNSRecord) error {
 	server, err := s.store.GetServer(ctx, record.ServerID)
 	if err != nil {
 		return s.failProbeDDNS(ctx, record, nil, err)
+	}
+	if record.InterfaceBound() {
+		if err := s.refreshProbeDDNSInventory(ctx, *server); err != nil {
+			return s.failProbeDDNS(ctx, record, server, err)
+		}
 	}
 	targets, err := s.probeDDNSPublishTargets(ctx, *server, record)
 	if err != nil {
@@ -307,8 +325,8 @@ func (s *Server) publishProbeDDNS(ctx context.Context, server model.Server, reco
 	if err != nil {
 		return "", err
 	}
-	comment := normalizeDNSComment(fmt.Sprintf("OBoard: DDNS %s / 服务器 %s", record.Name, server.Name))
-	return s.publishDNSTargets(ctx, client, credential.ID, *zone, domain, record.ProxyEnabled, comment, &record.ServerID, nil, targets)
+	comment := normalizeDNSComment(fmt.Sprintf("OBoard: DDNS #%d %s / 服务器 %s", record.ID, record.Name, server.Name))
+	return s.publishDNSTargets(ctx, client, credential.ID, *zone, domain, record.ProxyEnabled, comment, &record.ServerID, nil, targets, record.ID)
 }
 
 func probeDDNSAddressText(targets []dnsRecordTarget) string {
@@ -447,4 +465,58 @@ func (s *Server) ddnsCredentialOptions(ctx context.Context) ([]ddnsCredentialOpt
 		out = append(out, ddnsCredentialOption{ID: credential.ID, Name: credential.Name, Provider: credential.Provider, Enabled: true, VerifiedAt: credential.VerifiedAt, Zones: zones})
 	}
 	return out, nil
+}
+
+func (s *Server) refreshProbeDDNSInventory(ctx context.Context, server model.Server) error {
+	if reason := agentTaskImmediateFailure(&server); reason != "" {
+		return errors.New(reason)
+	}
+	if server.AgentBuild != "" && !agentBuildSupportsTask(server.AgentBuild, agentBuildMinNetworkInterfaces) {
+		return errors.New("请更新 Agent 后再读取 DDNS 网卡地址")
+	}
+	_, observed, err := s.probeDDNSInventory(ctx, server.ID)
+	if err != nil {
+		return err
+	}
+	if !observed.IsZero() && time.Since(observed) < time.Minute {
+		return nil
+	}
+	tasks, err := s.store.ListTasksByServer(ctx, server.ID, 100)
+	if err != nil {
+		return err
+	}
+	var task model.AgentTask
+	for _, existing := range tasks {
+		if existing.Type == model.AgentTaskTypeListNetworkInterfaces && (existing.Status == "pending" || existing.Status == "running") {
+			task = existing
+			break
+		}
+	}
+	if task.ID == 0 {
+		task, err = s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeListNetworkInterfaces, map[string]any{}, time.Now().Unix())
+		if err != nil {
+			return err
+		}
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		current, err := s.store.GetTask(waitCtx, task.ID)
+		if err != nil {
+			return err
+		}
+		switch current.Status {
+		case "succeeded":
+			return nil
+		case "failed", "rollback_failed", "cancelled":
+			return errors.New("DDNS 网卡读取失败，保留原解析")
+		}
+		select {
+		case <-waitCtx.Done():
+			return errors.New("DDNS 网卡读取超时，保留原解析")
+		case <-ticker.C:
+		}
+	}
 }

@@ -114,3 +114,81 @@ func TestProbeDDNSMigratesPreviousInbound(t *testing.T) {
 		t.Fatalf("reopen=%+v %v", again, err)
 	}
 }
+
+func TestProbeDDNSPrefixOwnershipPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "previous.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := &model.Server{Name: "edge"}
+	if err = db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	cred := &model.DNSCredential{Name: "cf", Provider: model.DNSProviderCloudflare, Enabled: true, ConfigEncrypted: "enc", Zones: []model.DNSCredentialZone{{ZoneName: "example.com", ProviderZoneID: "zone"}}}
+	if err = db.CreateDNSCredential(ctx, cred); err != nil {
+		t.Fatal(err)
+	}
+	record := model.ProbeDDNSRecord{ServerID: node.ID, Name: "carrier", DNSCredentialID: &cred.ID, Domain: "a.example.com", RecordTypes: "a", IntervalSeconds: 300, Enabled: true}
+	if err = db.SaveProbeDDNS(ctx, *node, &record); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.UpsertDNSRecordMetadata(ctx, cred.Zones[0].ID, model.DNSRecord{ID: "remote", ServerID: &node.ID, Comment: "OBoard: DDNS carrier / 服务器 edge"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"alter table probe_ddns_records drop column interface_prefix",
+		"alter table dns_record_metadata drop column probe_ddns_id",
+		"create unique index idx_probe_ddns_server_domain on probe_ddns_records(server_id,domain)",
+	} {
+		if _, err = db.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := db.ListDNSRecordMetadata(ctx, cred.Zones[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner := metadata["remote"].ProbeDDNSID; owner == nil || *owner != record.ID {
+		t.Fatalf("ownership not migrated: %+v", metadata)
+	}
+	got, err := db.GetProbeDDNS(ctx, record.ID)
+	if err != nil || got.InterfacePrefix != "" {
+		t.Fatalf("old record=%+v err=%v", got, err)
+	}
+	other := record
+	other.ID = 0
+	other.Name = "other"
+	other.InterfaceName = "eth0"
+	other.InterfacePrefix = "203.0.113.9/24"
+	if err = db.SaveProbeDDNS(ctx, *node, &other); err != nil {
+		t.Fatal(err)
+	}
+	if other.InterfacePrefix != "203.0.113.0/24" {
+		t.Fatal(other.InterfacePrefix)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, err = db.GetProbeDDNS(ctx, other.ID)
+	if err != nil || got.InterfacePrefix != other.InterfacePrefix {
+		t.Fatalf("prefix lost: %+v %v", got, err)
+	}
+	metadata, err = db.ListDNSRecordMetadata(ctx, cred.Zones[0].ID)
+	if err != nil || metadata["remote"].ProbeDDNSID == nil || *metadata["remote"].ProbeDDNSID != record.ID {
+		t.Fatalf("ownership changed: %+v %v", metadata, err)
+	}
+}

@@ -66,6 +66,7 @@ func probeDDNSDescriptors(id, text, boolean map[string]any) []Descriptor {
 		"interval_seconds":  map[string]any{"type": "integer", "minimum": 300, "maximum": 86400},
 		"enabled":           boolean,
 		"interface_name":    map[string]any{"type": "string", "maxLength": 64},
+		"interface_prefix":  map[string]any{"type": "string", "maxLength": 80},
 		"interface_address": map[string]any{"type": "string", "maxLength": 80},
 		"address_family":    map[string]any{"type": "string", "enum": []string{"", "ipv4", "ipv6"}},
 		"exclude_private":   boolean,
@@ -96,7 +97,7 @@ func probeDDNSDescriptors(id, text, boolean map[string]any) []Descriptor {
 		read := action == "list"
 		d := Descriptor{Name: "probe_ddns." + action, Description: map[string]string{
 			"list":   "列出授权服务器的拨测 DDNS 记录。记录按服务器归属，入口只引用记录作为连接域名",
-			"save":   "创建或更新拨测 DDNS 记录。网卡绑定必须使用该服务器最近一次读取到的地址；排除内网时不会发布内网地址",
+			"save":   "创建或更新拨测 DDNS 记录。网卡绑定可选固定地址或 interface_prefix CIDR 前缀（两者互斥），前缀必须唯一匹配最近读取的地址；同域名任务分别拥有解析记录；排除内网时不会发布内网地址",
 			"delete": "删除拨测 DDNS 记录及其在 DNS 服务商处的 A/AAAA 记录，并解除入口引用",
 			"run":    "立即检查一条已启用的 DDNS 记录并更新解析",
 		}[action], InputSchema: input, OutputSchema: output, RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: read, Idempotent: action != "save", DataClassification: DataInternal, MCPEnabled: true, Executable: !read, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: refs}

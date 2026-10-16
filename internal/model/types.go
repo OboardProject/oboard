@@ -1229,6 +1229,7 @@ type DNSCredentialZone struct {
 }
 
 type DNSRecord struct {
+	ProbeDDNSID      *int64 `json:"-"`
 	ID               string `json:"id"`
 	CredentialID     int64  `json:"credential_id"`
 	CredentialZoneID int64  `json:"dns_zone_id,omitempty"`

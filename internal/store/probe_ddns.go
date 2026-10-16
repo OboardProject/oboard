@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -168,7 +169,7 @@ func probeDDNSDomain(domain string) bool {
 	return strings.Count(domain, ".") >= 1
 }
 
-const probeDDNSColumns = `id,server_id,name,dns_credential_id,domain,record_types,proxy_enabled,interval_seconds,enabled,interface_name,interface_address,address_family,exclude_private,revision,status,error,current_address,last_synced_at,created_at,updated_at`
+const probeDDNSColumns = `id,server_id,name,dns_credential_id,domain,record_types,proxy_enabled,interval_seconds,enabled,interface_name,interface_address,interface_prefix,address_family,exclude_private,revision,status,error,current_address,last_synced_at,created_at,updated_at`
 
 func (s *Store) ListProbeDDNS(ctx context.Context) ([]model.ProbeDDNSRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `select `+probeDDNSColumns+` from probe_ddns_records order by id desc limit 1000`)
@@ -201,7 +202,7 @@ func scanProbeDDNS(row probeDDNSScanner) (model.ProbeDDNSRecord, error) {
 	var credential sql.NullInt64
 	var proxy, enabled, exclude int
 	var synced, created, updated sql.NullString
-	err := row.Scan(&v.ID, &v.ServerID, &v.Name, &credential, &v.Domain, &v.RecordTypes, &proxy, &v.IntervalSeconds, &enabled, &v.InterfaceName, &v.InterfaceAddress, &v.AddressFamily, &exclude, &v.Revision, &v.Status, &v.Error, &v.CurrentAddress, &synced, &created, &updated)
+	err := row.Scan(&v.ID, &v.ServerID, &v.Name, &credential, &v.Domain, &v.RecordTypes, &proxy, &v.IntervalSeconds, &enabled, &v.InterfaceName, &v.InterfaceAddress, &v.InterfacePrefix, &v.AddressFamily, &exclude, &v.Revision, &v.Status, &v.Error, &v.CurrentAddress, &synced, &created, &updated)
 	if err != nil {
 		return v, err
 	}
@@ -248,14 +249,7 @@ func (s *Store) SaveProbeDDNS(ctx context.Context, server model.Server, v *model
 		if count >= 1000 {
 			return errors.New("最多支持 1000 条 DDNS 记录")
 		}
-		var taken int
-		if err = tx.QueryRowContext(ctx, `select count(*) from probe_ddns_records where server_id=? and domain=?`, v.ServerID, v.Domain).Scan(&taken); err != nil {
-			return err
-		}
-		if taken != 0 {
-			return errors.New("该服务器已有相同域名的 DDNS 记录")
-		}
-		result, e := tx.ExecContext(ctx, `insert into probe_ddns_records(server_id,name,dns_credential_id,domain,record_types,proxy_enabled,interval_seconds,enabled,interface_name,interface_address,address_family,exclude_private,revision,status,error,current_address,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,1,'','','',?,?)`, v.ServerID, v.Name, v.DNSCredentialID, v.Domain, v.RecordTypes, boolInt(v.ProxyEnabled), v.IntervalSeconds, boolInt(v.Enabled), v.InterfaceName, v.InterfaceAddress, v.AddressFamily, boolInt(v.ExcludePrivate), ts, ts)
+		result, e := tx.ExecContext(ctx, `insert into probe_ddns_records(server_id,name,dns_credential_id,domain,record_types,proxy_enabled,interval_seconds,enabled,interface_name,interface_address,interface_prefix,address_family,exclude_private,revision,status,error,current_address,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,1,'','','',?,?)`, v.ServerID, v.Name, v.DNSCredentialID, v.Domain, v.RecordTypes, boolInt(v.ProxyEnabled), v.IntervalSeconds, boolInt(v.Enabled), v.InterfaceName, v.InterfaceAddress, v.InterfacePrefix, v.AddressFamily, boolInt(v.ExcludePrivate), ts, ts)
 		if e != nil {
 			return e
 		}
@@ -264,20 +258,13 @@ func (s *Store) SaveProbeDDNS(ctx context.Context, server model.Server, v *model
 		v.CreatedAt = parseTime(ts)
 		v.UpdatedAt = v.CreatedAt
 	} else {
-		result, e := tx.ExecContext(ctx, `update probe_ddns_records set name=?,dns_credential_id=?,domain=?,record_types=?,proxy_enabled=?,interval_seconds=?,enabled=?,interface_name=?,interface_address=?,address_family=?,exclude_private=?,revision=revision+1,next_at=0,updated_at=? where id=? and server_id=? and revision=?`, v.Name, v.DNSCredentialID, v.Domain, v.RecordTypes, boolInt(v.ProxyEnabled), v.IntervalSeconds, boolInt(v.Enabled), v.InterfaceName, v.InterfaceAddress, v.AddressFamily, boolInt(v.ExcludePrivate), ts, v.ID, v.ServerID, v.Revision)
+		result, e := tx.ExecContext(ctx, `update probe_ddns_records set name=?,dns_credential_id=?,domain=?,record_types=?,proxy_enabled=?,interval_seconds=?,enabled=?,interface_name=?,interface_address=?,interface_prefix=?,address_family=?,exclude_private=?,revision=revision+1,next_at=0,updated_at=? where id=? and server_id=? and revision=?`, v.Name, v.DNSCredentialID, v.Domain, v.RecordTypes, boolInt(v.ProxyEnabled), v.IntervalSeconds, boolInt(v.Enabled), v.InterfaceName, v.InterfaceAddress, v.InterfacePrefix, v.AddressFamily, boolInt(v.ExcludePrivate), ts, v.ID, v.ServerID, v.Revision)
 		if e != nil {
 			return e
 		}
 		n, _ := result.RowsAffected()
 		if n != 1 {
 			return errors.New("DDNS 记录已改变，请刷新")
-		}
-		var others int
-		if err = tx.QueryRowContext(ctx, `select count(*) from probe_ddns_records where server_id=? and domain=? and id<>?`, v.ServerID, v.Domain, v.ID).Scan(&others); err != nil {
-			return err
-		}
-		if others != 0 {
-			return errors.New("该服务器已有相同域名的 DDNS 记录")
 		}
 		v.Revision++
 		v.UpdatedAt = parseTime(ts)
@@ -372,9 +359,23 @@ func ValidateProbeDDNS(v *model.ProbeDDNSRecord) error {
 	if v.IntervalSeconds < 300 || v.IntervalSeconds > 86400 {
 		return errors.New("DDNS 检查间隔为 5 分钟至 24 小时")
 	}
-	bound := v.InterfaceName != "" || v.InterfaceAddress != ""
-	if bound && (v.InterfaceName == "" || v.InterfaceAddress == "") {
-		return errors.New("绑定网卡时必须同时指定网卡名称和 Agent 报告的地址")
+	v.InterfacePrefix = strings.TrimSpace(v.InterfacePrefix)
+	if v.InterfacePrefix != "" {
+		prefix, err := netip.ParsePrefix(v.InterfacePrefix)
+		if err != nil || prefix.Addr().Is4In6() {
+			return errors.New("地址前缀必须是 IPv4 或 IPv6 CIDR，例如 203.0.113.0/24")
+		}
+		if v.InterfaceAddress != "" {
+			return errors.New("固定地址与前缀匹配只能选择一种")
+		}
+		if (prefix.Addr().Is4() && v.RecordTypes != "a") || (prefix.Addr().Is6() && v.RecordTypes != "aaaa") {
+			return errors.New("地址前缀与记录类型不一致")
+		}
+		v.InterfacePrefix = prefix.Masked().String()
+	}
+	bound := v.InterfaceBound()
+	if bound && (v.InterfaceName == "" || (v.InterfaceAddress == "" && v.InterfacePrefix == "")) {
+		return errors.New("绑定网卡时必须指定网卡名称及固定地址或 CIDR 前缀")
 	}
 	if bound && v.RecordTypes == "both" {
 		return errors.New("绑定单个网卡地址时请只选择 A 或 AAAA")
@@ -386,4 +387,20 @@ func ValidateProbeDDNS(v *model.ProbeDDNSRecord) error {
 		return errors.New("IPv6 过滤不能发布 A 记录")
 	}
 	return nil
+}
+
+func (s *Store) migrateProbeDDNSOwnership(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+ update dns_record_metadata as m set probe_ddns_id=(
+  select d.id from probe_ddns_records d join servers s on s.id=d.server_id
+  join dns_credential_zones z on z.credential_id=d.dns_credential_id
+  where z.id=m.dns_zone_id and d.server_id=m.server_id
+  and m.comment='OBoard: DDNS '||d.name||' / 服务器 '||s.name
+ ) where m.probe_ddns_id is null and (
+  select count(*) from probe_ddns_records d join servers s on s.id=d.server_id
+  join dns_credential_zones z on z.credential_id=d.dns_credential_id
+  where z.id=m.dns_zone_id and d.server_id=m.server_id
+  and m.comment='OBoard: DDNS '||d.name||' / 服务器 '||s.name
+ )=1 `)
+	return err
 }

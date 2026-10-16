@@ -95,8 +95,8 @@ func resolveBoundProbeDDNS(req ProbeDDNSAddressRequest) ([]ProbeDDNSTarget, erro
 	record := req.Record
 	name := strings.TrimSpace(record.InterfaceName)
 	wanted := strings.TrimSpace(record.InterfaceAddress)
-	if name == "" || wanted == "" {
-		return nil, fmt.Errorf("绑定网卡时必须同时指定网卡名称和 Agent 报告的地址")
+	if name == "" || (wanted == "" && record.InterfacePrefix == "") {
+		return nil, fmt.Errorf("绑定网卡时必须指定网卡名称及固定地址或 CIDR 前缀")
 	}
 	if req.InventoryAt.IsZero() || len(req.Interfaces) == 0 {
 		return nil, fmt.Errorf("尚未读取该服务器的网卡，未更新解析")
@@ -109,7 +109,7 @@ func resolveBoundProbeDDNS(req ProbeDDNSAddressRequest) ([]ProbeDDNSTarget, erro
 		return nil, fmt.Errorf("网卡列表已过期（上次读取 %s），未更新解析", req.InventoryAt.UTC().Format(time.RFC3339))
 	}
 	normalizedWanted, err := normalizeProbeDDNSAddress(wanted)
-	if err != nil {
+	if err != nil && record.InterfacePrefix == "" {
 		return nil, fmt.Errorf("绑定地址 %s 无法识别", wanted)
 	}
 	var iface *model.NetworkInterfaceInfo
@@ -130,6 +130,45 @@ func resolveBoundProbeDDNS(req ProbeDDNSAddressRequest) ([]ProbeDDNSTarget, erro
 	}
 	if !iface.Running {
 		return nil, fmt.Errorf("网卡 %s 当前未运行，未更新解析", name)
+	}
+	if record.InterfacePrefix != "" {
+		network, err := netip.ParsePrefix(record.InterfacePrefix)
+		if err != nil || network.Addr().Is4In6() || wanted != "" {
+			return nil, fmt.Errorf("地址前缀无效或与固定地址冲突")
+		}
+		want4, want6, err := probeDDNSFamilies(record.RecordTypes, record.AddressFamily)
+		if err != nil {
+			return nil, err
+		}
+		matches := map[netip.Addr]bool{}
+		for _, raw := range iface.Addresses {
+			value, err := normalizeProbeDDNSAddress(raw)
+			if err != nil {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				continue
+			}
+			addr := prefix.Addr().Unmap()
+			if !network.Contains(addr) || (addr.Is4() && !want4) || (addr.Is6() && !want6) || (record.ExcludePrivate && probeDDNSInternal(addr)) {
+				continue
+			}
+			matches[addr] = true
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("网卡 %s 没有符合前缀 %s 和过滤条件的地址，未更新解析", name, network)
+		}
+		if len(matches) > 1 {
+			return nil, fmt.Errorf("网卡 %s 的前缀 %s 匹配到多个地址，请缩小前缀，未更新解析", name, network)
+		}
+		for addr := range matches {
+			kind := "AAAA"
+			if addr.Is4() {
+				kind = "A"
+			}
+			return []ProbeDDNSTarget{{Type: kind, Content: addr.String()}}, nil
+		}
 	}
 	var matched string
 	for _, raw := range iface.Addresses {

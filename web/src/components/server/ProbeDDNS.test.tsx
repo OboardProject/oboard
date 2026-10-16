@@ -18,7 +18,7 @@ it("groups DDNS records under their server and hides servers without records by 
   await act(async () => root.render(<ProbeDDNS client={{ request: vi.fn(), requestV2 }} servers={servers} credentials={[]} canManage />))
   expect(groupNames()).toEqual(["Tokyo", "Seoul", "服务器 #9"])
   const tokyo = document.body.querySelector('.probe-ddns-group[aria-label="Tokyo"]')!
-  expect([...tokyo.querySelectorAll(".probe-ddns-row strong")].map(item => item.textContent)).toEqual(["a", "c"])
+  expect([...tokyo.querySelectorAll(".probe-ddns-row strong")].map(item => item.textContent)).toEqual(["a #1", "c #3"])
   await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="服务器范围"]')!.click())
   await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(item => item.textContent === "全部服务器")!.click())
   expect(groupNames()).toEqual(["Tokyo", "Osaka", "Seoul", "服务器 #9"])
@@ -48,3 +48,11 @@ it("picks the DDNS server by region and lists verified DNS accounts", async () =
   await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="域名服务账号"]')!.click())
   expect([...document.body.querySelectorAll('[role="option"]')].map(item => item.textContent)).toEqual(["选择账号", "cf-main"])
 })
+
+ it("preserves prefix mode when editing and submits CIDR instead of a pinned address", async () => {
+  const submit = vi.fn(async () => {})
+  await act(async () => root.render(<ProbeDDNSForm record={{ ...record(1, 1, "carrier"), record_types: "a", interface_name: "eth0", interface_prefix: "203.0.113.0/24" }} servers={servers} credentials={[]} client={{ request: vi.fn() }} busy={false} canManage onCancel={vi.fn()} onSubmit={submit} />))
+  expect(document.body.querySelector<HTMLInputElement>('[aria-label="地址前缀"]')?.value).toBe("203.0.113.0/24")
+  await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ interface_prefix: "203.0.113.0/24", interface_address: "", record_types: "a" }))
+ })

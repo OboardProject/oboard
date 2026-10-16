@@ -180,7 +180,7 @@ func (s *Store) GetDNSCredentialZone(ctx context.Context, id int64) (*model.DNSC
 }
 
 func (s *Store) ListDNSRecordMetadata(ctx context.Context, zoneID int64) (map[string]model.DNSRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `select provider_record_id,comment,server_id,inbound_id from dns_record_metadata where dns_zone_id=?`, zoneID)
+	rows, err := s.db.QueryContext(ctx, `select provider_record_id,comment,server_id,inbound_id,probe_ddns_id from dns_record_metadata where dns_zone_id=?`, zoneID)
 	if err != nil {
 		return nil, err
 	}
@@ -188,8 +188,8 @@ func (s *Store) ListDNSRecordMetadata(ctx context.Context, zoneID int64) (map[st
 	out := map[string]model.DNSRecord{}
 	for rows.Next() {
 		var record model.DNSRecord
-		var serverID, inboundID sql.NullInt64
-		if err := rows.Scan(&record.ID, &record.Comment, &serverID, &inboundID); err != nil {
+		var serverID, inboundID, ddnsID sql.NullInt64
+		if err := rows.Scan(&record.ID, &record.Comment, &serverID, &inboundID, &ddnsID); err != nil {
 			return nil, err
 		}
 		if serverID.Valid {
@@ -198,13 +198,16 @@ func (s *Store) ListDNSRecordMetadata(ctx context.Context, zoneID int64) (map[st
 		if inboundID.Valid {
 			record.InboundID = &inboundID.Int64
 		}
+		if ddnsID.Valid {
+			record.ProbeDDNSID = &ddnsID.Int64
+		}
 		out[record.ID] = record
 	}
 	return out, rows.Err()
 }
 
 func (s *Store) UpsertDNSRecordMetadata(ctx context.Context, zoneID int64, record model.DNSRecord) error {
-	_, err := s.db.ExecContext(ctx, `insert into dns_record_metadata(dns_zone_id,provider_record_id,comment,server_id,inbound_id,updated_at) values(?,?,?,?,?,?) on conflict(dns_zone_id,provider_record_id) do update set comment=excluded.comment,server_id=excluded.server_id,inbound_id=excluded.inbound_id,updated_at=excluded.updated_at`, zoneID, record.ID, record.Comment, record.ServerID, record.InboundID, now())
+	_, err := s.db.ExecContext(ctx, `insert into dns_record_metadata(dns_zone_id,provider_record_id,comment,server_id,inbound_id,probe_ddns_id,updated_at) values(?,?,?,?,?,?,?) on conflict(dns_zone_id,provider_record_id) do update set comment=excluded.comment,server_id=excluded.server_id,inbound_id=excluded.inbound_id,probe_ddns_id=coalesce(dns_record_metadata.probe_ddns_id,excluded.probe_ddns_id),updated_at=excluded.updated_at`, zoneID, record.ID, record.Comment, record.ServerID, record.InboundID, record.ProbeDDNSID, now())
 	return err
 }
 

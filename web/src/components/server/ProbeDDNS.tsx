@@ -23,6 +23,7 @@ export type ProbeDDNSRecord = {
   interval_seconds: number
   enabled: boolean
   interface_name?: string
+  interface_prefix?: string
   interface_address?: string
   address_family?: '' | 'ipv4' | 'ipv6'
   exclude_private: boolean
@@ -182,11 +183,11 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
           </header>
           {open && <div id={panelID} className="probe-ddns-group-body">
             {!group.records.length ? <p className="muted probe-ddns-group-empty">这台服务器还没有 DDNS 记录。</p> : <ul className="probe-ddns-rows" aria-label={`${group.name} 的 DDNS 记录`}>{group.records.map(record => <li key={record.id} className="probe-ddns-row">
-              <div className="probe-ddns-cell is-name"><strong>{record.name}</strong><span className="probe-task-target">{record.domain}</span></div>
+              <div className="probe-ddns-cell is-name"><strong>{record.name} <small className="muted">#{record.id}</small></strong><span className="probe-task-target">{record.domain}</span></div>
               <div className="probe-ddns-cell">
                 <span className="probe-ddns-label">当前解析</span>
                 {addressParts(record.current_address).length ? <span className="probe-ddns-addresses">{addressParts(record.current_address).map(part => <span key={part.value}><span className="probe-ddns-type">{part.type}</span>{part.value}</span>)}</span> : <span className="muted">尚未解析</span>}
-                <small className="muted">{record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}{record.exclude_private ? ' · 排除内网' : ''}</small>
+                <small className="muted">{record.interface_prefix ? record.interface_name + ' · 前缀 ' + record.interface_prefix : record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}{record.exclude_private ? ' · 排除内网' : ''}</small>
               </div>
               <div className="probe-ddns-cell"><span className="probe-ddns-label">检查间隔</span>{formatInterval(record.interval_seconds)}</div>
               <div className="probe-ddns-cell"><span className="probe-ddns-label">状态</span><span className={`probe-task-badge${record.enabled && record.status === 'ok' ? ' is-on' : ''}`}>{record.enabled ? (statusText[record.status || 'pending'] || record.status) : '已停用'}</span>{record.error ? <small className="danger-text">{record.error}</small> : null}</div>
@@ -243,7 +244,7 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
       const result = await v2(client, '/probe-ddns')
       const next = ((result.records || []) as ProbeDDNSRecord[]).filter(item => item.server_id === serverID)
       setRecords(next)
-      const created = [...next].reverse().find(item => item.domain === record.domain.trim().toLowerCase().replace(/\.$/, '')) || next[0]
+      const created = next.find(item => !records.some(previous => previous.id === item.id) && item.name === record.name.trim() && item.domain === record.domain.trim().toLowerCase().replace(/\.$/, ''))
       if (created) onChange(created)
       setCreating(false)
     } catch (cause: any) {
@@ -289,6 +290,7 @@ function inputOf(record: ProbeDDNSRecord) {
     enabled: record.enabled,
     interface_name: record.interface_name || '',
     interface_address: record.interface_address || '',
+    interface_prefix: record.interface_prefix || '',
     address_family: record.address_family || '',
     exclude_private: record.exclude_private,
   }
@@ -306,11 +308,12 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
   onSubmit: (record: ProbeDDNSRecord) => Promise<void>
 }) {
   const [draft, setDraft] = useState(record)
-  const [bindInterface, setBindInterface] = useState(Boolean(record.interface_name || record.interface_address))
+  const [bindInterface, setBindInterface] = useState(Boolean(record.interface_name || record.interface_address || record.interface_prefix))
   const [interfaces, setInterfaces] = useState<DDNSInterface[]>([])
   const [readStatus, setReadStatus] = useState('')
   const [reading, setReading] = useState(false)
   const [formError, setFormError] = useState('')
+  const [prefixMode, setPrefixMode] = useState(Boolean(record.interface_prefix))
   const bound = bindInterface
   const usable = credentials.filter(item => item.enabled && item.verified_at)
   const provider = usable.find(item => item.id === Number(draft.dns_credential_id || 0))?.provider
@@ -343,7 +346,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
   }
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (bound && (!draft.interface_name || !draft.interface_address || (interfaces.length > 0 && !selectedChoice))) {
+    if (bound && (!draft.interface_name || (prefixMode ? !draft.interface_prefix : (!draft.interface_address || (interfaces.length > 0 && !selectedChoice))))) {
       setFormError(draft.exclude_private && interfaces.length ? '当前过滤条件下没有可保存的网卡地址。' : '请先读取网卡，并从 Agent 返回的地址中选择。')
       return
     }
@@ -352,7 +355,13 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
     if (!bound) {
       next.interface_name = ''
       next.interface_address = ''
+      next.interface_prefix = ''
+    } else if (prefixMode) {
+      next.interface_address = ''
+      next.record_types = next.interface_prefix?.includes(':') ? 'aaaa' : 'a'
+      next.address_family = next.record_types === 'a' ? 'ipv4' : 'ipv6'
     } else if (selectedChoice) {
+      next.interface_prefix = ''
       next.record_types = selectedChoice.family === 'ipv4' ? 'a' : 'aaaa'
       next.address_family = selectedChoice.family
     }
@@ -364,7 +373,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
         {!serverLocked && <FormField label="服务器" required>
           <ServerPickerSelect ariaLabel="DDNS 服务器" required servers={servers} value={draft.server_id || 0} onChange={serverID => {
             if (serverID !== draft.server_id) { setInterfaces([]); setReadStatus('') }
-            setDraft({ ...draft, server_id: serverID, interface_name: '', interface_address: '' })
+            setDraft({ ...draft, server_id: serverID, interface_name: '', interface_address: '', interface_prefix: '' })
           }} />
         </FormField>}
         <FormField label="名称" required>
@@ -377,7 +386,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
           </Select>
           {!usable.length && <p className="field-hint">没有可用账号。请先在“域名解析”中添加并验证账号。</p>}
         </FormField>
-        <FormField label="解析域名" required hint="写入并持续更新的域名。">
+        <FormField label="解析域名" required hint="每个任务只维护自己的解析，同一域名可创建多个任务。">
           <input aria-label="解析域名" required value={draft.domain} onChange={event => setDraft({ ...draft, domain: event.target.value })} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
         </FormField>
         <FormField label="记录类型">
@@ -403,7 +412,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
         </FormField>}
       </div>
       <div className="inbound-editor-switch">
-        <span><strong>绑定网卡地址</strong><small>不绑定则使用服务器当前公网地址。绑定必须来自 Agent 读到的地址。</small></span>
+        <span><strong>绑定网卡地址</strong><small>不绑定则使用服务器当前公网地址。可固定一个地址，或按前缀跟随网卡地址变化。</small></span>
         <Switch checked={bound} ariaLabel="绑定网卡地址" onChange={checked => { setBindInterface(checked); setDraft({ ...draft, interface_name: checked ? draft.interface_name : '', interface_address: checked ? draft.interface_address : '', exclude_private: checked ? true : draft.exclude_private }) }} />
       </div>
       {bound && <>
@@ -424,6 +433,23 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
           <button type="button" className="ghost" disabled={!draft.server_id || reading} onClick={() => void readInterfaces()}><RefreshCw size={15} aria-hidden="true" className={reading ? 'spin' : ''} />{reading ? '读取中…' : '读取网卡'}</button>
         </div>
         {readStatus && <p className={choices.length ? 'field-hint' : 'danger-text'} role={choices.length ? 'status' : 'alert'}>{readStatus}</p>}
+        <FormField label="取址方式">
+          <Select aria-label="取址方式" value={prefixMode ? 'prefix' : 'exact'} onChange={event => { setPrefixMode(event.target.value === 'prefix'); setDraft({ ...draft, interface_address: '', interface_prefix: '' }) }}>
+            <option value="exact">固定地址</option><option value="prefix">匹配地址前缀</option>
+          </Select>
+        </FormField>
+        {prefixMode ? <div className="inbound-editor-grid">
+          <FormField label="网卡" required>
+            <Select aria-label="前缀匹配网卡" required value={draft.interface_name || ''} onChange={event => setDraft({ ...draft, interface_name: event.target.value })}>
+              <option value="">请先读取网卡</option>
+              {draft.interface_name && !interfaces.some(item => item.name === draft.interface_name) && <option value={draft.interface_name}>{draft.interface_name}（已保存）</option>}
+              {interfaces.filter(item => item.up && item.running && !item.loopback).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}
+            </Select>
+          </FormField>
+          <FormField label="地址前缀" required hint="填写 CIDR，例如 203.0.113.0/24 或 2001:db8::/48。只有一个地址匹配时才更新；无匹配或多个匹配会保留原解析。">
+            <input aria-label="地址前缀" required maxLength={80} value={draft.interface_prefix || ''} placeholder="203.0.113.0/24" onChange={event => setDraft({ ...draft, interface_prefix: event.target.value, record_types: event.target.value.includes(':') ? 'aaaa' : 'a' })} />
+          </FormField>
+        </div> : <>
         <FormField label="网卡地址" required={interfaces.length > 0} hint={draft.interface_address ? `已保存 ${draft.interface_name} ${draft.interface_address}` : '读取后从列表选择，不能手工填写。'}>
           <Select aria-label="网卡地址" value={selectedChoice ? `${selectedChoice.interfaceName}\u001f${selectedChoice.address}` : ''} onChange={event => {
             const choice = choices.find(item => `${item.interfaceName}\u001f${item.address}` === event.target.value)
@@ -435,6 +461,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
           </Select>
         </FormField>
         {interfaces.length > 0 && draft.interface_address && !selectedChoice && <p className="danger-text" role="alert">{draft.exclude_private ? '该地址不在当前过滤结果中。若它是内网地址，本次不会发布。' : '该地址已不在最近一次读取结果中，请重新选择。'}</p>}
+        </>}
       </>}
       <div className="inbound-editor-switch">
         <span><strong>启用</strong><small>停用后保留记录，但不再更新解析。</small></span>

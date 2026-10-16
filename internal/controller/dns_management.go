@@ -628,8 +628,8 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 		return "", err
 	}
 	domain := normalizeDomainName(inbound.DNSDomain)
-	if owner, err := s.store.ProbeDDNSByDomain(ctx, inbound.ServerID, domain); err == nil && owner.InterfaceBound() {
-		return "由拨测 DDNS 按网卡地址维护", nil
+	if owner, err := s.store.ProbeDDNSByDomain(ctx, inbound.ServerID, domain); err == nil && owner.ID > 0 {
+		return "由拨测 DDNS 维护", nil
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
@@ -645,7 +645,7 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 	return s.publishDNSTargets(ctx, client, credential.ID, *zone, domain, inbound.DNSProxyEnabled, normalizeDNSComment(fmt.Sprintf("OBoard: 入口 %s / 服务器 %s", inbound.Name, server.Name)), &inbound.ServerID, &inbound.ID, targets)
 }
 
-func (s *Server) publishDNSTargets(ctx context.Context, client dnsProviderClient, credentialID int64, zone model.DNSCredentialZone, domain string, proxied bool, comment string, serverID, inboundID *int64, targets []dnsRecordTarget) (string, error) {
+func (s *Server) publishDNSTargets(ctx context.Context, client dnsProviderClient, credentialID int64, zone model.DNSCredentialZone, domain string, proxied bool, comment string, serverID, inboundID *int64, targets []dnsRecordTarget, ddnsOwner ...int64) (string, error) {
 	records, err := listDNSRecordsForDomain(ctx, client, domain)
 	if err != nil {
 		return "", err
@@ -654,10 +654,28 @@ func (s *Server) publishDNSTargets(ctx context.Context, client dnsProviderClient
 	if err != nil {
 		return "", err
 	}
+	var owner *int64
+	if len(ddnsOwner) > 0 {
+		owner = &ddnsOwner[0]
+	}
 	existing := map[string]model.DNSRecord{}
 	for _, record := range records {
 		if local, ok := metadata[record.ID]; ok {
 			record.Comment, record.ServerID, record.InboundID = local.Comment, local.ServerID, local.InboundID
+		}
+		record.ProbeDDNSID = metadata[record.ID].ProbeDDNSID
+		if owner != nil {
+			if record.ProbeDDNSID == nil || *record.ProbeDDNSID != *owner {
+				if record.ProbeDDNSID == nil && normalizeDomainName(record.Name) == domain && strings.HasPrefix(record.Comment, "OBoard: DDNS ") {
+					return "", errors.New("该域名存在归属不明确的旧 DDNS 解析，请先在域名解析中核对并清理，未更新解析")
+				}
+				continue
+			}
+		} else if record.ProbeDDNSID != nil || strings.HasPrefix(record.Comment, "OBoard: DDNS ") {
+			if normalizeDomainName(record.Name) == domain {
+				return "由拨测 DDNS 维护", nil
+			}
+			continue
 		}
 		if normalizeDomainName(record.Name) == domain {
 			recordType := strings.ToUpper(record.Type)
@@ -685,6 +703,7 @@ func (s *Server) publishDNSTargets(ctx context.Context, client dnsProviderClient
 		record.Comment = comment
 		record.ServerID = serverID
 		record.InboundID = inboundID
+		record.ProbeDDNSID = owner
 		if old, found := existing[target.Type]; found && strings.EqualFold(strings.TrimSuffix(old.Content, "."), strings.TrimSuffix(target.Content, ".")) && old.Proxied == proxied && old.Comment == record.Comment {
 			actions = append(actions, target.Type+" 无变化")
 			continue
@@ -693,6 +712,7 @@ func (s *Server) publishDNSTargets(ctx context.Context, client dnsProviderClient
 		if err != nil {
 			return "", err
 		}
+		saved.ProbeDDNSID = owner
 		saved.CredentialZoneID, saved.Comment, saved.ServerID, saved.InboundID = zone.ID, record.Comment, record.ServerID, record.InboundID
 		if err := s.store.UpsertDNSRecordMetadata(ctx, zone.ID, saved); err != nil {
 			return "", err
@@ -782,8 +802,16 @@ func (s *Server) deleteDNSInboundRecords(ctx context.Context, inbound model.Inbo
 	if err != nil {
 		return err
 	}
+	metadata, err := s.store.ListDNSRecordMetadata(ctx, zone.ID)
+	if err != nil {
+		return err
+	}
 	domain := normalizeDomainName(inbound.DNSDomain)
 	for _, record := range records {
+		if metadata[record.ID].ProbeDDNSID != nil || strings.HasPrefix(record.Comment, "OBoard: DDNS ") || strings.HasPrefix(metadata[record.ID].Comment, "OBoard: DDNS ") {
+			continue
+		}
+
 		if normalizeDomainName(record.Name) != domain {
 			continue
 		}
