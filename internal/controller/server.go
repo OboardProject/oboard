@@ -2606,7 +2606,14 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				return err
 			})
 		}
-	case "return-latency", "vpngate":
+	case "return-latency":
+		if err = require(model.RoleOperator); err == nil {
+			err = addServers()
+		}
+		if err == nil {
+			out["dns_credentials"], err = s.ddnsCredentialOptions(ctx)
+		}
+	case "vpngate":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
 		}

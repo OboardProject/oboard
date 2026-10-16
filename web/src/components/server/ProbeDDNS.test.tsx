@@ -2,7 +2,7 @@
 import React, { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { ProbeDDNS } from "./ProbeDDNS"
+import { ProbeDDNS, ProbeDDNSForm } from "./ProbeDDNS"
 import type { Server } from "../proxy-path/types"
 
 let host: HTMLDivElement
@@ -32,4 +32,19 @@ it("shows every resolved address on its own line", async () => {
   const requestV2 = vi.fn(async () => ({ records: [{ ...record(1, 1, "a"), current_address: "A 13.231.255.51，AAAA 2406:da14::1" }] }))
   await act(async () => root.render(<ProbeDDNS client={{ request: vi.fn(), requestV2 }} servers={servers} credentials={[]} canManage />))
   expect([...document.body.querySelectorAll(".probe-ddns-addresses > span")].map(item => item.textContent)).toEqual(["A13.231.255.51", "AAAA2406:da14::1"])
+})
+
+it("picks the DDNS server by region and lists verified DNS accounts", async () => {
+  const regional = [{ id: 1, name: "Tokyo", status: "online", region_mode: "manual", region_code: "JP" }, { id: 2, name: "Osaka", region_mode: "manual", region_code: "JP" }, { id: 3, name: "Seoul", region_mode: "manual", region_code: "KR" }] as Server[]
+  const credentials = [{ id: 7, name: "cf-main", provider: "cloudflare", enabled: true, verified_at: "2026-01-01T00:00:00Z" }, { id: 8, name: "unverified", provider: "cloudflare", enabled: true }]
+  await act(async () => root.render(<ProbeDDNSForm record={{ id: 0, server_id: 0, revision: 0, name: "", domain: "", record_types: "a", proxy_enabled: false, interval_seconds: 300, enabled: true, exclude_private: false }} servers={regional} credentials={credentials} client={{ request: vi.fn() }} busy={false} canManage onCancel={vi.fn()} onSubmit={vi.fn()} />))
+  const optionNames = () => [...document.body.querySelectorAll('[role="option"] .entry-server-name')].map(item => item.textContent)
+  await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="DDNS 服务器"]')!.click())
+  expect(optionNames()).toEqual(["Tokyo", "Osaka", "Seoul"])
+  await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="按地区筛选DDNS 服务器"] button[title^="韩国"]')!.click())
+  expect(optionNames()).toEqual(["Seoul"])
+  await act(async () => document.body.querySelector<HTMLButtonElement>('[role="option"]')!.click())
+  expect(document.body.querySelector('[aria-label="DDNS 服务器"] .entry-server-name')?.textContent).toBe("Seoul")
+  await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="域名服务账号"]')!.click())
+  expect([...document.body.querySelectorAll('[role="option"]')].map(item => item.textContent)).toEqual(["选择账号", "cf-main"])
 })

@@ -7,6 +7,7 @@ import { Select } from '../ui/select'
 import { Switch } from '../ui/switch'
 import type { Server } from '../proxy-path/types'
 import { ddnsAddressChoices, type DDNSInterface } from './ddns-addresses'
+import { ServerPickerSelect } from './ServerPickerSelect'
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any>; requestV2?: (path: string, init?: RequestInit) => Promise<any> }
 type Credential = { id: number; name: string; provider: string; enabled: boolean; verified_at?: string; zones?: { zone_name: string }[] }
@@ -361,10 +362,10 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
     <fieldset disabled={!canManage || busy} className="return-latency-fields">
       <div className="inbound-editor-grid">
         {!serverLocked && <FormField label="服务器" required>
-          <Select aria-label="DDNS 服务器" required value={draft.server_id || 0} onChange={event => setDraft({ ...draft, server_id: Number(event.target.value), interface_name: '', interface_address: '' })}>
-            <option value={0}>选择服务器</option>
-            {servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}
-          </Select>
+          <ServerPickerSelect ariaLabel="DDNS 服务器" required servers={servers} value={draft.server_id || 0} onChange={serverID => {
+            if (serverID !== draft.server_id) { setInterfaces([]); setReadStatus('') }
+            setDraft({ ...draft, server_id: serverID, interface_name: '', interface_address: '' })
+          }} />
         </FormField>}
         <FormField label="名称" required>
           <input aria-label="DDNS 名称" required maxLength={60} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
@@ -374,6 +375,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
             <option value={0}>选择账号</option>
             {usable.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
           </Select>
+          {!usable.length && <p className="field-hint">没有可用账号。请先在“域名解析”中添加并验证账号。</p>}
         </FormField>
         <FormField label="解析域名" required hint="写入并持续更新的域名。">
           <input aria-label="解析域名" required value={draft.domain} onChange={event => setDraft({ ...draft, domain: event.target.value })} autoCapitalize="none" autoCorrect="off" spellCheck={false} />

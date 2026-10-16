@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
@@ -167,10 +168,36 @@ func TestReturnLatencyPageData(t *testing.T) {
 	if err := db.CreateServer(context.Background(), server); err != nil {
 		t.Fatal(err)
 	}
+	verified := time.Now()
+	for _, credential := range []*model.DNSCredential{
+		{Name: "ddns-ready", Provider: model.DNSProviderCloudflare, ZoneName: "example.com", Enabled: true, VerifiedAt: &verified, Zones: []model.DNSCredentialZone{{ZoneName: "example.com"}}},
+		{Name: "ddns-unverified", Provider: model.DNSProviderCloudflare, ZoneName: "example.net", Enabled: true, Zones: []model.DNSCredentialZone{{ZoneName: "example.net"}}},
+	} {
+		if err := db.CreateDNSCredential(context.Background(), credential); err != nil {
+			t.Fatal(err)
+		}
+	}
 	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=return-latency", token, nil, http.StatusOK)
 	rows, ok := page["servers"].([]any)
 	if !ok || len(rows) != 1 || rows[0].(map[string]any)["name"] != "return-probe" {
 		t.Fatalf("missing return latency server: %#v", page)
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "latency-operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	operator := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "latency-operator", "password": "long-user-password"}, http.StatusOK)
+	for _, sessionToken := range []string{token, operator["token"].(string)} {
+		page = request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=return-latency", sessionToken, nil, http.StatusOK)
+		credentials, ok := page["dns_credentials"].([]any)
+		if !ok || len(credentials) != 1 {
+			t.Fatalf("return latency DNS accounts = %#v", page["dns_credentials"])
+		}
+		item := credentials[0].(map[string]any)
+		zones, _ := item["zones"].([]any)
+		if item["name"] != "ddns-ready" || item["verified_at"] == nil || len(zones) != 1 || zones[0].(map[string]any)["zone_name"] != "example.com" {
+			t.Fatalf("return latency DNS account = %#v", item)
+		}
+		if _, leaked := item["last_error"]; leaked {
+			t.Fatalf("DDNS account option exposes management fields: %#v", item)
+		}
 	}
 	request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "latency-viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "latency-viewer", "password": "long-user-password"}, http.StatusOK)

@@ -413,3 +413,38 @@ func (s *Server) apiProbeDDNS(w http.ResponseWriter, r *http.Request) {
 	}
 	v2Write(w, r, 200, map[string]any{"applied": true}, nil)
 }
+
+type ddnsCredentialZoneOption struct {
+	ZoneName string `json:"zone_name"`
+}
+
+type ddnsCredentialOption struct {
+	ID         int64                      `json:"id"`
+	Name       string                     `json:"name"`
+	Provider   model.DNSProvider          `json:"provider"`
+	Enabled    bool                       `json:"enabled"`
+	VerifiedAt *time.Time                 `json:"verified_at,omitempty"`
+	Zones      []ddnsCredentialZoneOption `json:"zones"`
+}
+
+// ddnsCredentialOptions lists the DNS accounts a DDNS record may reference.
+// Operators manage DDNS records but not DNS accounts, so only enabled,
+// verified accounts are listed and only the fields the picker needs.
+func (s *Server) ddnsCredentialOptions(ctx context.Context) ([]ddnsCredentialOption, error) {
+	credentials, err := s.store.ListDNSCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ddnsCredentialOption, 0, len(credentials))
+	for _, credential := range credentials {
+		if !credential.Enabled || credential.VerifiedAt == nil {
+			continue
+		}
+		zones := make([]ddnsCredentialZoneOption, 0, len(credential.Zones))
+		for _, zone := range credential.Zones {
+			zones = append(zones, ddnsCredentialZoneOption{ZoneName: zone.ZoneName})
+		}
+		out = append(out, ddnsCredentialOption{ID: credential.ID, Name: credential.Name, Provider: credential.Provider, Enabled: true, VerifiedAt: credential.VerifiedAt, Zones: zones})
+	}
+	return out, nil
+}

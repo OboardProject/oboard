@@ -23,6 +23,7 @@ export interface CustomSelectProps {
   required?: boolean
   selectedLabel?: React.ReactNode
   menuHeader?: React.ReactNode
+  menuMinWidth?: number
   emptyMessage?: React.ReactNode
 }
 
@@ -49,6 +50,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   required = false,
   selectedLabel,
   menuHeader,
+  menuMinWidth = 0,
   emptyMessage = '没有匹配的选项',
 }) => {
   const [isOpen, setIsOpen] = useState(false)
@@ -79,13 +81,13 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       return Math.max(max, raw.length)
     }, 0)
     const estimatedMinWidth = Math.min(240, Math.max(120, longestLabelLen * 9 + 40))
-    const width = Math.min(Math.max(rect.width, estimatedMinWidth), window.innerWidth - viewportPadding * 2)
+    const width = Math.min(Math.max(rect.width, estimatedMinWidth, menuMinWidth), window.innerWidth - viewportPadding * 2)
     const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding - width)
     const top = placement === 'bottom'
       ? rect.bottom + gutter
       : Math.max(viewportPadding, rect.top - gutter - maxHeight)
     setMenuPosition({ top, left, width, maxHeight, placement })
-  }, [menuHeader, options])
+  }, [menuHeader, menuMinWidth, options])
 
   const openMenu = useCallback((preferredIndex = selectedIndex) => {
     if (disabled || (options.length === 0 && !menuHeader)) return
