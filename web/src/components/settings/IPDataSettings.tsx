@@ -85,7 +85,8 @@ function KeyDialog({ provider, client, notify, onSaved, onClose }: { provider: P
     if (busy) return
     setBusy('test'); setError('')
     try {
-      const result = await client.request('/ip-data/keys/test', { method: 'POST', body: JSON.stringify({ provider: provider.name }) })
+      const key = value.trim()
+      const result = await client.request('/ip-data/keys/test', { method: 'POST', body: JSON.stringify(key ? { provider: provider.name, key } : { provider: provider.name }) })
       setTest(result?.result || null)
       onSaved(await client.request('/ip-data/keys'))
     } catch (e: any) { setError(e?.message || '测试失败') }

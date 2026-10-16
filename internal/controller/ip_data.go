@@ -179,8 +179,14 @@ func (s *Server) ipDataTest(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Provider string `json:"provider"`
+		Key      string `json:"key"`
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	req.Key = strings.TrimSpace(req.Key)
+	if req.Key != "" && (len(req.Key) > 512 || strings.ContainsAny(req.Key, " \t\r\n")) {
+		fail(w, errors.New("API Key 格式无效"), 400)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
@@ -204,7 +210,7 @@ func (s *Server) ipDataTest(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("未知数据源"), 400)
 		return
 	}
-	write(w, 200, map[string]any{"result": service.Test(ctx, req.Provider, "1.1.1.1")})
+	write(w, 200, map[string]any{"result": service.Test(ctx, req.Provider, "1.1.1.1", req.Key)})
 }
 
 type ipDataLookupInput struct {

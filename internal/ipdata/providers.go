@@ -125,50 +125,7 @@ var specs = map[string]spec{
 			}
 			return req, err
 		},
-		decode: func(ip string, body []byte, _ bool, out *Source) error {
-			var v struct {
-				IP         string `json:"ip"`
-				Error      string `json:"error"`
-				Bogon      bool   `json:"is_bogon"`
-				Proxy      *bool  `json:"is_proxy"`
-				VPN        *bool  `json:"is_vpn"`
-				Tor        *bool  `json:"is_tor"`
-				Datacenter *bool  `json:"is_datacenter"`
-				Abuser     *bool  `json:"is_abuser"`
-				Company    struct {
-					Name string `json:"name"`
-				} `json:"company"`
-				ASN struct {
-					ASN int64  `json:"asn"`
-					Org string `json:"org"`
-				} `json:"asn"`
-				Location struct {
-					CountryCode string `json:"country_code"`
-					Country     string `json:"country"`
-					State       string `json:"state"`
-					City        string `json:"city"`
-				} `json:"location"`
-			}
-			if err := json.Unmarshal(body, &v); err != nil || v.Bogon {
-				return errors.New("invalid")
-			}
-			if v.Error != "" {
-				if strings.Contains(strings.ToLower(v.Error), "limit") {
-					return errQuota
-				}
-				return errors.New("provider error")
-			}
-			if v.IP != "" && v.IP != ip {
-				return errors.New("address mismatch")
-			}
-			if v.ASN.ASN > 0 {
-				out.ASN = "AS" + strconv.FormatInt(v.ASN.ASN, 10)
-			}
-			out.ASName, out.Organization = v.ASN.Org, v.Company.Name
-			out.CountryCode, out.Country, out.Region, out.City = v.Location.CountryCode, v.Location.Country, v.Location.State, v.Location.City
-			out.Proxy, out.VPN, out.Tor, out.Hosting, out.Abuser = v.Proxy, v.VPN, v.Tor, v.Datacenter, v.Abuser
-			return requireAttribution(out)
-		}},
+		decode: decodeIPapiIs},
 	ProviderIPWhois: {attribution: true, budget: func(keyed bool) int { return pick(keyed, 100000, 300) },
 		request: func(ctx context.Context, ip, key string) (*http.Request, error) {
 			if key == "" {
@@ -309,6 +266,185 @@ var specs = map[string]spec{
 			normalizeAttribution(out)
 			return nil
 		}},
+}
+
+// flexBool accepts a detection flag that ipapi.is documents as a boolean or
+// any other truthy value. A strict *bool rejects the whole document.
+type flexBool struct {
+	set bool
+	v   bool
+}
+
+func (b *flexBool) UnmarshalJSON(raw []byte) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	switch raw[0] {
+	case 't', 'T':
+		b.set, b.v = true, true
+	case 'f', 'F':
+		b.set, b.v = true, false
+	case '"':
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return err
+		}
+		b.set = true
+		b.v = text != "" && !strings.EqualFold(text, "false") && text != "0"
+	case '{', '[':
+		b.set, b.v = true, true
+	default:
+		var n float64
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return err
+		}
+		b.set, b.v = true, n != 0
+	}
+	return nil
+}
+
+func (b flexBool) ptr() *bool {
+	if !b.set {
+		return nil
+	}
+	v := b.v
+	return &v
+}
+
+func decodeIPapiIs(ip string, body []byte, _ bool, out *Source) error {
+	var v struct {
+		IP         string          `json:"ip"`
+		Error      string          `json:"error"`
+		Code       string          `json:"error_code"`
+		Bogon      bool            `json:"is_bogon"`
+		Proxy      flexBool        `json:"is_proxy"`
+		VPN        flexBool        `json:"is_vpn"`
+		Tor        flexBool        `json:"is_tor"`
+		Datacenter flexBool        `json:"is_datacenter"`
+		Abuser     flexBool        `json:"is_abuser"`
+		Company    json.RawMessage `json:"company"`
+		ASN        json.RawMessage `json:"asn"`
+		Location   json.RawMessage `json:"location"`
+		City       string          `json:"city"`
+		Region     string          `json:"region"`
+		Country    string          `json:"country"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil || v.Bogon {
+		return errors.New("invalid")
+	}
+	if v.Error != "" || v.Code != "" {
+		if ipapiQuota(v.Code, v.Error) {
+			return errQuota
+		}
+		return errors.New("provider error")
+	}
+	if v.IP != "" && v.IP != ip {
+		return errors.New("address mismatch")
+	}
+	if err := assignIPapiCompany(v.Company, out); err != nil {
+		return err
+	}
+	if err := assignIPapiASN(v.ASN, out); err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(v.Location)) > 0 && string(bytes.TrimSpace(v.Location)) != "null" {
+		var loc struct {
+			CountryCode string `json:"country_code"`
+			Country     string `json:"country"`
+			State       string `json:"state"`
+			City        string `json:"city"`
+		}
+		if err := json.Unmarshal(v.Location, &loc); err != nil {
+			return errors.New("invalid")
+		}
+		out.CountryCode, out.Country, out.Region, out.City = loc.CountryCode, loc.Country, loc.State, loc.City
+	} else {
+		out.Country, out.Region, out.City = v.Country, v.Region, v.City
+	}
+	out.Proxy, out.VPN, out.Tor, out.Hosting, out.Abuser = v.Proxy.ptr(), v.VPN.ptr(), v.Tor.ptr(), v.Datacenter.ptr(), v.Abuser.ptr()
+	normalizeAttribution(out)
+	if out.ASN == "" && out.CountryCode == "" && out.Country == "" && out.Region == "" && out.City == "" &&
+		out.Proxy == nil && out.VPN == nil && out.Tor == nil && out.Hosting == nil && out.Abuser == nil {
+		return errors.New("missing attribution")
+	}
+	return nil
+}
+
+func ipapiQuota(code, message string) bool {
+	switch strings.ToUpper(code) {
+	case "ERR_QUOTA_EXCEEDED", "ERR_FREE_TIER_EXHAUSTED":
+		return true
+	}
+	msg := strings.ToLower(message)
+	return strings.Contains(msg, "limit") || strings.Contains(msg, "quota") || strings.Contains(msg, "exhausted")
+}
+
+func assignIPapiCompany(raw json.RawMessage, out *Source) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	switch raw[0] {
+	case '"':
+		return json.Unmarshal(raw, &out.Organization)
+	case '{':
+		var company struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(raw, &company); err != nil {
+			return errors.New("invalid")
+		}
+		out.Organization = company.Name
+	case '[':
+		var companies []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(raw, &companies); err != nil {
+			return errors.New("invalid")
+		}
+		if len(companies) > 0 {
+			out.Organization = companies[0].Name
+		}
+	}
+	return nil
+}
+
+func assignIPapiASN(raw json.RawMessage, out *Source) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	switch raw[0] {
+	case '"':
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return errors.New("invalid")
+		}
+		asn, name, _ := strings.Cut(strings.TrimSpace(text), " ")
+		out.ASN, out.ASName = asn, name
+	case '{':
+		var asn struct {
+			ASN int64  `json:"asn"`
+			Org string `json:"org"`
+		}
+		if err := json.Unmarshal(raw, &asn); err != nil {
+			return errors.New("invalid")
+		}
+		if asn.ASN > 0 {
+			out.ASN = "AS" + strconv.FormatInt(asn.ASN, 10)
+		}
+		out.ASName = asn.Org
+	default:
+		var n int64
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return errors.New("invalid")
+		}
+		if n > 0 {
+			out.ASN = "AS" + strconv.FormatInt(n, 10)
+		}
+	}
+	return nil
 }
 
 func pick(keyed bool, withKey, without int) int {

@@ -38,3 +38,23 @@ it("groups sources by role and saves a key without echoing it", async () => {
   expect(JSON.parse(String(post[1]?.body))).toEqual({ keys: { abuseipdb: "abuse-key" }, clear: [] })
   expect(input.value).toBe("")
 })
+
+it("tests the key typed in the dialog before it is saved", async () => {
+  const request = vi.fn(async (path: string) => path === "/ip-data/keys/test"
+    ? { result: { provider: "ipapi_is", status: "ok", asn: "AS13335", country_code: "AU" } }
+    : { providers, offline: { available: true } })
+  await act(async () => root.render(<IPDataSettings client={{ request }} notify={vi.fn()} />))
+  const open = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "填写 Key" && b.closest(".settings-row")?.textContent?.includes("AbuseIPDB"))!
+  await act(async () => open.click())
+  const input = document.body.querySelector<HTMLInputElement>(".ip-data-key-dialog input[type=password]")!
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!
+    setter.call(input, "typed-key")
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  const test = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "测试连接")!
+  await act(async () => test.click())
+  const posted = request.mock.calls.find(([path]) => path === "/ip-data/keys/test")!
+  expect(JSON.parse(String(posted[1]?.body))).toEqual({ provider: "abuseipdb", key: "typed-key" })
+  expect(document.body.textContent).toContain("测试成功：AS13335 · AU")
+})

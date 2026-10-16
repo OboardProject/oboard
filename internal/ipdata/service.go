@@ -238,8 +238,9 @@ func (s *Service) Health() []ProviderHealth {
 }
 
 // Test bypasses cache and cooldown for one provider so an administrator can
-// verify a key; it still counts against the local daily budget.
-func (s *Service) Test(ctx context.Context, provider, ip string) Source {
+// verify a key; it still counts against the local daily budget. A non-empty
+// keyOverride is used for this call only and is not stored or cached.
+func (s *Service) Test(ctx context.Context, provider, ip, keyOverride string) Source {
 	s.mu.Lock()
 	delete(s.cooling, provider)
 	for k := range s.cache {
@@ -248,7 +249,7 @@ func (s *Service) Test(ctx context.Context, provider, ip string) Source {
 		}
 	}
 	s.mu.Unlock()
-	return s.fetch(ctx, provider, ip)
+	return s.fetch(ctx, provider, ip, strings.TrimSpace(keyOverride))
 }
 
 func (s *Service) Lookup(ctx context.Context, ip string, scope Scope) Report {
@@ -279,7 +280,7 @@ func (s *Service) Lookup(ctx context.Context, ip string, scope Scope) Report {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = s.fetch(ctx, name, ip)
+			results[i] = s.fetch(ctx, name, ip, "")
 		}()
 	}
 	wg.Wait()
@@ -329,7 +330,7 @@ func (s *Service) rollDay(at time.Time) {
 	}
 }
 
-func (s *Service) fetch(ctx context.Context, provider, ip string) Source {
+func (s *Service) fetch(ctx context.Context, provider, ip, keyOverride string) Source {
 	at := time.Now()
 	r := Source{Provider: provider, Status: StatusUnavailable, CheckedAt: at.UTC().Format(time.RFC3339)}
 	sp, ok := specs[provider]
@@ -339,11 +340,20 @@ func (s *Service) fetch(ctx context.Context, provider, ip string) Source {
 	}
 	s.mu.Lock()
 	key := s.keys[provider]
+	ephemeral := keyOverride != "" && keyOverride != key
+	if keyOverride != "" {
+		key = keyOverride
+	}
 	r.Keyed = key != ""
 	cacheKey := provider + "|" + strconv.FormatBool(r.Keyed) + "|" + ip
-	if cached, ok := s.cache[cacheKey]; ok && at.Before(cached.until) {
-		s.mu.Unlock()
-		return cached.source
+	if ephemeral {
+		cacheKey = provider + "|override|" + ip
+	}
+	if !ephemeral {
+		if cached, ok := s.cache[cacheKey]; ok && at.Before(cached.until) {
+			s.mu.Unlock()
+			return cached.source
+		}
 	}
 	if sp.keyRequired && key == "" {
 		s.mu.Unlock()
@@ -383,21 +393,28 @@ func (s *Service) fetch(ctx context.Context, provider, ip string) Source {
 	s.last[provider] = r
 	switch r.Status {
 	case StatusOK:
-		ttl := 6 * time.Hour
-		if sp.attribution && !sp.quality {
-			ttl = 24 * time.Hour
+		if !ephemeral {
+			ttl := 6 * time.Hour
+			if sp.attribution && !sp.quality {
+				ttl = 24 * time.Hour
+			}
+			if len(s.cache) >= 8192 {
+				s.cache = map[string]cacheEntry{}
+			}
+			s.cache[cacheKey] = cacheEntry{r, at.Add(ttl)}
 		}
-		if len(s.cache) >= 8192 {
-			s.cache = map[string]cacheEntry{}
-		}
-		s.cache[cacheKey] = cacheEntry{r, at.Add(ttl)}
 		delete(s.cooling, provider)
-	case StatusQuotaExhausted:
-		s.cooling[provider] = cooldown{until: at.Add(15 * time.Minute), status: r.Status, err: r.Error}
-	case StatusInvalidKey:
-		s.cooling[provider] = cooldown{until: at.Add(30 * time.Minute), status: r.Status, err: r.Error}
+	case StatusQuotaExhausted, StatusInvalidKey:
+		if ephemeral {
+			break
+		}
+		pause := 15 * time.Minute
+		if r.Status == StatusInvalidKey {
+			pause = 30 * time.Minute
+		}
+		s.cooling[provider] = cooldown{until: at.Add(pause), status: r.Status, err: r.Error}
 	default:
-		if ctx.Err() == nil {
+		if !ephemeral && ctx.Err() == nil {
 			s.cooling[provider] = cooldown{until: at.Add(time.Minute), status: r.Status, err: r.Error}
 		}
 	}

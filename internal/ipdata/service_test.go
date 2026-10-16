@@ -2,6 +2,7 @@ package ipdata
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -140,5 +141,56 @@ func TestDecodersRejectMissingFields(t *testing.T) {
 	svc := New(nil)
 	if svc.Lookup(context.Background(), "127.0.0.1", Scope{Attribution: true}).Attribution.Status != "unknown" {
 		t.Fatal("private IP looked up")
+	}
+}
+
+func TestIPapiIsDecodesKeyedAndAnonymousResponses(t *testing.T) {
+	var keyed Source
+	keyedBody := `{"ip":"1.1.1.1","is_proxy":false,"is_vpn":"NordVPN","is_tor":false,"is_datacenter":true,"is_abuser":false,"is_crawler":"GoogleBot","company":{"name":"APNIC"},"asn":{"asn":13335,"org":"Cloudflare, Inc."},"location":{"country_code":"au","country":"Australia","state":"Queensland","city":"Brisbane"}}`
+	if err := specs[ProviderIPapiIs].decode("1.1.1.1", []byte(keyedBody), true, &keyed); err != nil {
+		t.Fatal(err)
+	}
+	if keyed.ASN != "AS13335" || keyed.ASName != "Cloudflare, Inc." || keyed.Organization != "APNIC" || keyed.CountryCode != "AU" || keyed.City != "Brisbane" || keyed.VPN == nil || !*keyed.VPN || keyed.Proxy == nil || *keyed.Proxy || keyed.Hosting == nil || !*keyed.Hosting {
+		t.Fatalf("keyed=%+v", keyed)
+	}
+	var anon Source
+	anonBody := `{"ip":"1.1.1.1","is_bogon":false,"company":"APNIC Research and Development","asn":"AS13335 Cloudflare, Inc.","city":"Brisbane","region":"Queensland","country":"Australia","lat":-27.46,"lon":153.02,"timezone":"Australia/Brisbane","docs":"https://ipapi.is/free-tier.html?ref=api"}`
+	if err := specs[ProviderIPapiIs].decode("1.1.1.1", []byte(anonBody), false, &anon); err != nil {
+		t.Fatal(err)
+	}
+	if anon.ASN != "AS13335" || anon.ASName != "Cloudflare, Inc." || anon.Organization != "APNIC Research and Development" || anon.Country != "Australia" || anon.CountryCode != "" || anon.Region != "Queensland" || anon.City != "Brisbane" || anon.Proxy != nil || anon.VPN != nil || anon.Hosting != nil {
+		t.Fatalf("anonymous=%+v", anon)
+	}
+	var flags Source
+	if err := specs[ProviderIPapiIs].decode("1.1.1.1", []byte(`{"ip":"1.1.1.1","is_proxy":false,"is_datacenter":true,"company":null,"asn":null,"location":null}`), true, &flags); err != nil {
+		t.Fatal(err)
+	}
+	if flags.ASN != "" || flags.Hosting == nil || !*flags.Hosting || flags.Proxy == nil || *flags.Proxy {
+		t.Fatalf("flags=%+v", flags)
+	}
+	var quota Source
+	if err := specs[ProviderIPapiIs].decode("1.1.1.1", []byte(`{"error":"quota exceeded","error_code":"ERR_QUOTA_EXCEEDED"}`), true, &quota); !errors.Is(err, errQuota) {
+		t.Fatalf("quota err=%v", err)
+	}
+}
+
+func TestIPapiIsTestSendsUnsavedKey(t *testing.T) {
+	var bodies []string
+	svc := New(nil)
+	svc.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host != "api.ipapi.is" {
+			return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+		}
+		raw, _ := io.ReadAll(req.Body)
+		bodies = append(bodies, string(raw))
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"ip":"1.1.1.1","is_proxy":false,"is_vpn":false,"is_tor":false,"is_datacenter":true,"is_abuser":false,"asn":{"asn":13335,"org":"Cloudflare, Inc."},"location":{"country_code":"AU","city":"Brisbane"}}`)), Header: http.Header{}}, nil
+	})
+	got := svc.Test(context.Background(), ProviderIPapiIs, "1.1.1.1", "test-key")
+	if len(bodies) != 1 || !strings.Contains(bodies[0], `"key":"test-key"`) || got.Status != StatusOK || got.ASN != "AS13335" || got.CountryCode != "AU" || got.Hosting == nil || !*got.Hosting {
+		t.Fatalf("bodies=%v got=%+v", bodies, got)
+	}
+	again := svc.Lookup(context.Background(), "1.1.1.1", Scope{Attribution: true})
+	if len(bodies) < 2 || strings.Contains(bodies[len(bodies)-1], "test-key") || again.Attribution.Sources[1].Status != StatusOK {
+		t.Fatalf("unsaved key leaked or was cached: %+v sources=%+v", bodies, again.Attribution.Sources)
 	}
 }
