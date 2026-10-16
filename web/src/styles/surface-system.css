@@ -787,3 +787,22 @@ textarea:focus-visible,
   font-weight: 500;
 }
 .dash-more:hover:not(:disabled) { color: var(--text-strong); background: transparent; }
+
+/* Dialog scroll regions: slim thumb on a transparent track, revealed on hover. */
+.dialog-layer :is(.dialog-body, .dialog-chrome-body, .server-workspace-body) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 38%, transparent) transparent;
+}
+.dialog-layer :is(.dialog-body, .dialog-chrome-body, .server-workspace-body):hover {
+  scrollbar-color: color-mix(in srgb, var(--muted) 60%, transparent) transparent;
+}
+@supports not (scrollbar-color: auto) {
+  .dialog-layer :is(.dialog-body, .dialog-chrome-body, .server-workspace-body)::-webkit-scrollbar { width: 8px; height: 8px; }
+  .dialog-layer :is(.dialog-body, .dialog-chrome-body, .server-workspace-body)::-webkit-scrollbar-track { background: transparent; }
+  .dialog-layer :is(.dialog-body, .dialog-chrome-body, .server-workspace-body)::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: var(--radius-full);
+    background: color-mix(in srgb, var(--muted) 38%, transparent);
+    background-clip: content-box;
+  }
+}
