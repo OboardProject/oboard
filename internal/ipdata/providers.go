@@ -43,10 +43,10 @@ type ProviderInfo struct {
 
 // Catalog lists every source that accepts a key, in priority order.
 var Catalog = []ProviderInfo{
-	{Name: ProviderIPinfo, Label: "IPinfo", Roles: []string{RoleAttribution}, KeyLabel: "Access Token", Keyless: "未填写时使用免 Key 接口，额度较低", SignupURL: "https://ipinfo.io/signup"},
-	{Name: ProviderIPapiIs, Label: "ipapi.is", Roles: []string{RoleAttribution, RoleQuality}, KeyLabel: "API Key", Keyless: "未填写时每日额度很低，且不返回代理/VPN 检测", SignupURL: "https://ipapi.is/"},
-	{Name: ProviderIPWhois, Label: "IPWhois", Roles: []string{RoleAttribution}, KeyLabel: "API Key", Keyless: "未填写时使用免费接口 ipwho.is", SignupURL: "https://ipwhois.io/"},
-	{Name: ProviderProxycheck, Label: "Proxycheck", Roles: []string{RoleQuality, RoleAttribution}, KeyLabel: "API Key", Keyless: "未填写时每日约 100 次", SignupURL: "https://proxycheck.io/"},
+	{Name: ProviderIPinfo, Label: "IPinfo", Roles: []string{RoleAttribution}, KeyLabel: "Access Token", Keyless: "未填写时使用免 Key 接口，每 UTC 日 1000 次", SignupURL: "https://ipinfo.io/signup"},
+	{Name: ProviderIPapiIs, Label: "ipapi.is", Roles: []string{RoleAttribution, RoleQuality}, KeyLabel: "API Key", Keyless: "未填写时每 UTC 日 30 次，且不返回代理/VPN 检测", SignupURL: "https://ipapi.is/"},
+	{Name: ProviderIPWhois, Label: "IPWhois", Roles: []string{RoleAttribution}, KeyLabel: "API Key", Keyless: "未填写时使用免费接口 ipwho.is，每 UTC 日 1000 次", SignupURL: "https://ipwhois.io/"},
+	{Name: ProviderProxycheck, Label: "Proxycheck", Roles: []string{RoleQuality, RoleAttribution}, KeyLabel: "API Key", Keyless: "未填写时每 UTC 日 100 次", SignupURL: "https://proxycheck.io/"},
 	{Name: ProviderAbuseIPDB, Label: "AbuseIPDB", Roles: []string{RoleQuality}, KeyRequired: true, KeyLabel: "API Key", SignupURL: "https://www.abuseipdb.com/register"},
 	{Name: ProviderNextTrace, Label: "NextTrace", Roles: []string{RoleRoute}, KeyLabel: "API Token", Keyless: "未填写时使用官方免费接口（v3）", SignupURL: "https://www.nxtrace.org/"},
 }
@@ -66,7 +66,7 @@ var countryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
 type spec struct {
 	attribution, quality bool
 	keyRequired          bool
-	budget               func(keyed bool) int
+	budget               func(keyed bool) int // published keyless daily cap; 0 once a key is configured
 	request              func(ctx context.Context, ip, key string) (*http.Request, error)
 	decode               func(ip string, body []byte, keyed bool, out *Source) error
 }
@@ -74,7 +74,7 @@ type spec struct {
 var errQuota = errors.New("quota")
 
 var specs = map[string]spec{
-	ProviderIPinfo: {attribution: true, budget: func(keyed bool) int { return pick(keyed, 100000, 800) },
+	ProviderIPinfo: {attribution: true, budget: keylessDaily(1000),
 		request: func(ctx context.Context, ip, key string) (*http.Request, error) {
 			if key == "" {
 				return http.NewRequestWithContext(ctx, http.MethodGet, "https://ipinfo.io/"+ip+"/json", nil)
@@ -112,7 +112,7 @@ var specs = map[string]spec{
 			}
 			return requireAttribution(out)
 		}},
-	ProviderIPapiIs: {attribution: true, quality: true, budget: func(keyed bool) int { return pick(keyed, 950, 25) },
+	ProviderIPapiIs: {attribution: true, quality: true, budget: keylessDaily(30),
 		request: func(ctx context.Context, ip, key string) (*http.Request, error) {
 			payload := map[string]string{"q": ip}
 			if key != "" {
@@ -126,7 +126,7 @@ var specs = map[string]spec{
 			return req, err
 		},
 		decode: decodeIPapiIs},
-	ProviderIPWhois: {attribution: true, budget: func(keyed bool) int { return pick(keyed, 100000, 300) },
+	ProviderIPWhois: {attribution: true, budget: keylessDaily(1000),
 		request: func(ctx context.Context, ip, key string) (*http.Request, error) {
 			if key == "" {
 				return http.NewRequestWithContext(ctx, http.MethodGet, "https://ipwho.is/"+ip, nil)
@@ -167,7 +167,7 @@ var specs = map[string]spec{
 			out.CountryCode, out.Country, out.Region, out.City = v.CountryCode, v.Country, v.Region, v.City
 			return requireAttribution(out)
 		}},
-	ProviderProxycheck: {quality: true, attribution: true, budget: func(keyed bool) int { return pick(keyed, 900, 90) },
+	ProviderProxycheck: {quality: true, attribution: true, budget: keylessDaily(100),
 		request: func(ctx context.Context, ip, key string) (*http.Request, error) {
 			endpoint := "https://proxycheck.io/v3/" + ip + "?tag=oboard"
 			if key != "" {
@@ -223,7 +223,7 @@ var specs = map[string]spec{
 			normalizeAttribution(out)
 			return nil
 		}},
-	ProviderAbuseIPDB: {quality: true, keyRequired: true, budget: func(bool) int { return 900 },
+	ProviderAbuseIPDB: {quality: true, keyRequired: true, budget: keylessDaily(0),
 		request: func(ctx context.Context, ip, key string) (*http.Request, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.abuseipdb.com/api/v2/check?ipAddress="+url.QueryEscape(ip)+"&maxAgeInDays=30", nil)
 			if err == nil {
@@ -447,11 +447,13 @@ func assignIPapiASN(raw json.RawMessage, out *Source) error {
 	return nil
 }
 
-func pick(keyed bool, withKey, without int) int {
-	if keyed {
-		return withKey
+func keylessDaily(limit int) func(bool) int {
+	return func(keyed bool) int {
+		if keyed {
+			return 0
+		}
+		return limit
 	}
-	return without
 }
 
 func boundedScore(v *int) *int {

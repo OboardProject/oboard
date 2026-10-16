@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -141,6 +142,49 @@ func TestDecodersRejectMissingFields(t *testing.T) {
 	svc := New(nil)
 	if svc.Lookup(context.Background(), "127.0.0.1", Scope{Attribution: true}).Attribution.Status != "unknown" {
 		t.Fatal("private IP looked up")
+	}
+}
+
+func TestPublishedKeylessBudgetsAndUncappedKeys(t *testing.T) {
+	want := map[string]int{ProviderIPinfo: 1000, ProviderIPapiIs: 30, ProviderIPWhois: 1000, ProviderProxycheck: 100}
+	for name, limit := range want {
+		if got := specs[name].budget(false); got != limit {
+			t.Fatalf("%s keyless budget=%d", name, got)
+		}
+		if got := specs[name].budget(true); got != 0 {
+			t.Fatalf("%s keyed budget=%d", name, got)
+		}
+	}
+	if specs[ProviderAbuseIPDB].budget(true) != 0 {
+		t.Fatal("AbuseIPDB invented a plan quota")
+	}
+	fake := newFake()
+	svc := New(nil)
+	svc.HTTP.Transport = fake.transport()
+	svc.SetKeys(Keys{ProviderIPWhois: "paid-plan"})
+	svc.mu.Lock()
+	svc.day = time.Now().UTC().Format("2006-01-02")
+	svc.used[ProviderIPWhois] = 5000
+	svc.used[ProviderIPapiIs] = 30
+	svc.mu.Unlock()
+	report := svc.Lookup(context.Background(), "1.1.1.1", Scope{Attribution: true})
+	if fake.calls["ipwhois.pro"] != 1 {
+		t.Fatalf("keyed lookup was capped locally: %+v", fake.calls)
+	}
+	var whois, ipapi Source
+	for _, src := range report.Attribution.Sources {
+		switch src.Provider {
+		case ProviderIPWhois:
+			whois = src
+		case ProviderIPapiIs:
+			ipapi = src
+		}
+	}
+	if whois.Status == StatusQuotaExhausted {
+		t.Fatalf("keyed provider quota=%+v", whois)
+	}
+	if ipapi.Status != StatusQuotaExhausted || fake.calls["api.ipapi.is"] != 0 {
+		t.Fatalf("keyless cap not applied: %+v calls=%+v", ipapi, fake.calls)
 	}
 }
 

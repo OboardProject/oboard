@@ -132,6 +132,7 @@ type ProviderHealth struct {
 	Configured    bool   `json:"configured"`
 	UsedToday     int    `json:"used_today"`
 	DailyBudget   int    `json:"daily_budget"`
+	UsageTracked  bool   `json:"usage_tracked"`
 	CooldownUntil string `json:"cooldown_until,omitempty"`
 	LastStatus    string `json:"last_status,omitempty"`
 	LastError     string `json:"last_error,omitempty"`
@@ -224,6 +225,7 @@ func (s *Service) Health() []ProviderHealth {
 	for _, item := range Catalog {
 		h := ProviderHealth{Name: item.Name, Configured: s.keys[item.Name] != ""}
 		if sp, ok := specs[item.Name]; ok {
+			h.UsageTracked = true
 			h.UsedToday, h.DailyBudget = s.used[item.Name], sp.budget(h.Configured)
 		}
 		if c, ok := s.cooling[item.Name]; ok && time.Now().Before(c.until) {
@@ -376,7 +378,7 @@ func (s *Service) fetch(ctx context.Context, provider, ip, keyOverride string) S
 		}
 	}
 	s.rollDay(at)
-	if s.used[provider] >= sp.budget(r.Keyed) {
+	if limit := sp.budget(r.Keyed); limit > 0 && s.used[provider] >= limit {
 		s.mu.Unlock()
 		r.Status, r.Error = StatusQuotaExhausted, "今日本地查询预算已用完"
 		return r

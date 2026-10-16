@@ -9,7 +9,7 @@ import { ipDataStatusText } from '../ip-data/labels'
 type Request = (path: string, init?: RequestInit) => Promise<any>
 type Provider = {
   name: string; label: string; roles: string[]; key_required: boolean; key_label: string; keyless?: string; signup_url: string
-  configured: boolean; used_today: number; daily_budget: number; cooldown_until?: string; last_status?: string; last_error?: string; last_checked_at?: string
+  configured: boolean; usage_tracked?: boolean; used_today: number; daily_budget: number; cooldown_until?: string; last_status?: string; last_error?: string; last_checked_at?: string
 }
 type TestResult = { provider: string; status: string; error?: string; asn?: string; as_name?: string; country_code?: string; country?: string }
 type Props = { client: { request: Request }; notify: (message: string, tone?: string) => void }
@@ -20,6 +20,13 @@ const groups = [
   { role: 'quality', title: 'IP 质量信息', description: '代理、VPN、Tor、机房和滥用由多个来源分别判断后投票；任一来源不可用时自动跳过。' },
   { role: 'route', title: '路由数据', description: '路由监控以 Agent 的 NextTrace 结果为主；缺失的跳由主控 NextTrace 补全，仍缺失时使用 IP 归属来源的 ASN。' },
 ]
+
+function usageLabel(p: Provider): string {
+  if (!p.usage_tracked) return ''
+  if (p.configured) return `今日 ${p.used_today} 次`
+  if (p.daily_budget > 0) return `今日 ${p.used_today}/${p.daily_budget}`
+  return ''
+}
 
 function providerState(p: Provider): { tone: string; text: string } {
   if (p.cooldown_until && new Date(p.cooldown_until) > new Date()) return { tone: 'warning', text: `暂停至 ${new Date(p.cooldown_until).toLocaleTimeString()}` }
@@ -46,10 +53,11 @@ export function IPDataSettings({ client, notify }: Props) {
     {groups.map(group => <SettingsGroup key={group.role} title={group.title} description={group.description}>
       {loading ? <p role="status" className="muted">正在读取数据源…</p> : providers.filter(p => p.roles[0] === group.role).map(p => {
         const state = providerState(p)
+        const usage = usageLabel(p)
         return <SettingsRow key={p.name} label={p.label} description={[p.roles.map(role => roleText[role]).join(' · '), p.key_required ? '必须填写 Key' : p.keyless].filter(Boolean).join('。')}>
           <div className="ip-data-provider-control">
             <span className={`status-pill ${state.tone}`.trim()}>{state.text}</span>
-            {p.daily_budget > 0 && <small className="muted">今日 {p.used_today}/{p.daily_budget}</small>}
+            {usage && <small className="muted">{usage}</small>}
             <button type="button" className="ghost" onClick={() => setEditing(p)}><KeyRound size={14} aria-hidden="true" />{p.configured ? '管理 Key' : '填写 Key'}</button>
           </div>
         </SettingsRow>

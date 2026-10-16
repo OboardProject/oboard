@@ -10,9 +10,10 @@ beforeEach(() => { (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; host = d
 afterEach(() => { act(() => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false })
 
 const providers = [
-  { name: "ipinfo", label: "IPinfo", roles: ["attribution"], key_required: false, key_label: "Access Token", keyless: "未填写时使用免 Key 接口", signup_url: "https://ipinfo.io/signup", configured: true, used_today: 3, daily_budget: 100000 },
-  { name: "abuseipdb", label: "AbuseIPDB", roles: ["quality"], key_required: true, key_label: "API Key", signup_url: "https://www.abuseipdb.com/register", configured: false, used_today: 0, daily_budget: 900 },
-  { name: "nexttrace", label: "NextTrace", roles: ["route"], key_required: false, key_label: "API Token", keyless: "免费接口", signup_url: "https://www.nxtrace.org/", configured: false, used_today: 0, daily_budget: 0 },
+  { name: "ipinfo", label: "IPinfo", roles: ["attribution"], key_required: false, key_label: "Access Token", keyless: "未填写时使用免 Key 接口，每 UTC 日 1000 次", signup_url: "https://ipinfo.io/signup", configured: true, usage_tracked: true, used_today: 3, daily_budget: 0 },
+  { name: "ipwhois", label: "IPWhois", roles: ["attribution"], key_required: false, key_label: "API Key", keyless: "未填写时使用免费接口 ipwho.is，每 UTC 日 1000 次", signup_url: "https://ipwhois.io/", configured: false, usage_tracked: true, used_today: 2, daily_budget: 1000 },
+  { name: "abuseipdb", label: "AbuseIPDB", roles: ["quality"], key_required: true, key_label: "API Key", signup_url: "https://www.abuseipdb.com/register", configured: false, usage_tracked: true, used_today: 0, daily_budget: 0 },
+  { name: "nexttrace", label: "NextTrace", roles: ["route"], key_required: false, key_label: "API Token", keyless: "免费接口", signup_url: "https://www.nxtrace.org/", configured: true, usage_tracked: false, used_today: 0, daily_budget: 0 },
 ]
 
 it("groups sources by role and saves a key without echoing it", async () => {
@@ -23,6 +24,10 @@ it("groups sources by role and saves a key without echoing it", async () => {
   expect(text).toContain("IP 质量信息")
   expect(text).toContain("路由数据")
   expect(text).toContain("已配置 Key")
+  expect(text).toContain("今日 3 次")
+  expect(text).toContain("今日 2/1000")
+  expect(text).not.toContain("今日 3/")
+  expect(text).not.toContain("今日 0/")
   expect(text).toContain("离线库（ip2region）")
   const open = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "填写 Key" && b.closest(".settings-row")?.textContent?.includes("AbuseIPDB"))!
   await act(async () => open.click())

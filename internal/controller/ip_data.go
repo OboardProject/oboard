@@ -97,7 +97,7 @@ func (s *Server) ipDataProviders(ctx context.Context) map[string]any {
 	rows := []map[string]any{}
 	for _, info := range ipdata.Catalog {
 		h := health[info.Name]
-		rows = append(rows, map[string]any{"name": info.Name, "label": info.Label, "roles": info.Roles, "key_required": info.KeyRequired, "key_label": info.KeyLabel, "keyless": info.Keyless, "signup_url": info.SignupURL, "configured": h.Configured, "used_today": h.UsedToday, "daily_budget": h.DailyBudget, "cooldown_until": h.CooldownUntil, "last_status": h.LastStatus, "last_error": h.LastError, "last_checked_at": h.LastCheckedAt})
+		rows = append(rows, map[string]any{"name": info.Name, "label": info.Label, "roles": info.Roles, "key_required": info.KeyRequired, "key_label": info.KeyLabel, "keyless": info.Keyless, "signup_url": info.SignupURL, "configured": h.Configured, "usage_tracked": h.UsageTracked, "used_today": h.UsedToday, "daily_budget": h.DailyBudget, "cooldown_until": h.CooldownUntil, "last_status": h.LastStatus, "last_error": h.LastError, "last_checked_at": h.LastCheckedAt})
 	}
 	return map[string]any{"providers": rows, "offline": map[string]any{"available": s.geoIP != nil, "provider": ipdata.ProviderOffline, "error": s.geoIPStatus.Error}}
 }
