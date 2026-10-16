@@ -28747,6 +28747,33 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   border-color: var(--border);
 }
 .return-latency-server-list { display: block; }
+.probe-ddns-summary { margin: 0 0 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.probe-ddns-groups { display: grid; gap: 12px; }
+.probe-ddns-group { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-solid); overflow: hidden; }
+.probe-ddns-group-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px 8px 8px; background: var(--surface-2); }
+.probe-ddns-group-toggle { display: inline-flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 0 8px; border: 0; background: transparent; box-shadow: none; color: var(--text-strong); font-size: 14px; }
+.probe-ddns-group-toggle strong { font-weight: 600; overflow-wrap: anywhere; text-align: left; }
+.probe-ddns-chevron { flex-shrink: 0; color: var(--muted); transition: transform 0.15s ease; }
+.probe-ddns-group-toggle[aria-expanded="true"] .probe-ddns-chevron { transform: rotate(90deg); }
+.probe-ddns-group-count { font-size: 13px; font-variant-numeric: tabular-nums; }
+.probe-ddns-group-add { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; min-height: 34px; padding: 0 10px; font-size: 13px; }
+.probe-ddns-group-body { border-top: 1px solid var(--border); }
+.probe-ddns-group-body .network-probe-table-scroll { border: 0; border-radius: 0; }
+.probe-ddns-group-body .network-probe-table { table-layout: fixed; }
+.probe-ddns-group-body .network-probe-table th:nth-child(1) { width: 26%; }
+.probe-ddns-group-body .network-probe-table th:nth-child(2) { width: 18%; }
+.probe-ddns-group-body .network-probe-table th:nth-child(3) { width: 14%; }
+.probe-ddns-group-body .network-probe-table th:nth-child(4) { width: 11%; }
+.probe-ddns-group-body .network-probe-table th:nth-child(5) { width: 13%; }
+.probe-ddns-group-body .network-probe-table td:first-child { min-width: 0; }
+.probe-ddns-group-empty { margin: 0; padding: 14px 16px; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .probe-ddns-chevron { transition: none; } }
+@media (max-width: 860px) {
+  .probe-ddns-group-head { padding: 6px 10px 6px 4px; }
+  .probe-ddns-group-toggle, .probe-ddns-group-add { min-height: 44px; }
+  .return-latency-page .probe-ddns-group-body .network-probe-table-scroll { padding: 10px; }
+  .return-latency-page .probe-ddns-group-body .network-probe-table :is(.probe-task-card) { background: var(--surface-solid); }
+}
 @media (max-width: 860px) {
   .return-latency-page .network-probe-header {
     align-items: stretch;

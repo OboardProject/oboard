@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronRight, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
 import { Dialog } from '../ui/dialog'
 import { FormField } from '../ui/form-field'
 import { Select } from '../ui/select'
@@ -43,14 +44,26 @@ async function v2(client: Client, path: string, init?: RequestInit) {
   return result.data ?? result
 }
 
+const formatInterval = (seconds: number) => {
+  if (!seconds) return '未设置'
+  if (seconds % 3600 === 0) return `每 ${seconds / 3600} 小时`
+  if (seconds % 60 === 0) return `每 ${seconds / 60} 分钟`
+  return `每 ${seconds} 秒`
+}
+
+type ServerGroup = { id: number; server?: Server; name: string; records: ProbeDDNSRecord[] }
+
 export function ProbeDDNS({ client, servers, credentials, canManage }: { client: Client; servers: Server[]; credentials: Credential[]; canManage: boolean }) {
   const [records, setRecords] = useState<ProbeDDNSRecord[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [editing, setEditing] = useState<ProbeDDNSRecord | null>(null)
+  const [editing, setEditing] = useState<{ record: ProbeDDNSRecord; serverLocked: boolean } | null>(null)
   const [deleting, setDeleting] = useState<ProbeDDNSRecord | null>(null)
+  const [query, setQuery] = useState('')
+  const [scope, setScope] = useState<'configured' | 'all'>('configured')
+  const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const refresh = useCallback(async () => {
     try {
       const result = await v2(client, '/probe-ddns')
@@ -70,6 +83,7 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
       await v2(client, '/probe-ddns', { method: 'POST', body: JSON.stringify({ action: 'save', request_id: crypto.randomUUID(), input: inputOf(record) }) })
       setEditing(null)
       setNotice(record.id ? 'DDNS 记录已保存。' : 'DDNS 记录已创建。')
+      setCollapsed(current => { const next = new Set(current); next.delete(record.server_id); return next })
       await refresh()
     } catch (cause: any) {
       setError(cause?.message || '保存失败，请重试')
@@ -92,31 +106,93 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
       setBusy(false)
     }
   }
-  const serverName = (id: number) => servers.find(server => server.id === id)?.name || `服务器 #${id}`
-  return <div className="return-latency-tasks">
+  const groups = useMemo<ServerGroup[]>(() => {
+    const byServer = new Map<number, ProbeDDNSRecord[]>()
+    for (const record of records) byServer.set(record.server_id, [...(byServer.get(record.server_id) || []), record])
+    const known = servers.map(server => ({ id: server.id, server, name: server.name, records: byServer.get(server.id) || [] }))
+    const orphaned = [...byServer.keys()].filter(id => !servers.some(server => server.id === id)).map(id => ({ id, name: `服务器 #${id}`, records: byServer.get(id) || [] }))
+    return [...known, ...orphaned]
+  }, [records, servers])
+  const needle = query.trim().toLowerCase()
+  const visibleGroups = groups.flatMap(group => {
+    if (scope === 'configured' && !group.records.length) return []
+    if (!needle || group.name.toLowerCase().includes(needle)) return [group]
+    const matched = group.records.filter(record => `${record.name} ${record.domain} ${record.current_address || ''}`.toLowerCase().includes(needle))
+    return matched.length ? [{ ...group, records: matched }] : []
+  })
+  const configuredServers = groups.filter(group => group.records.length).length
+  const failedCount = records.filter(record => record.enabled && record.status === 'failed').length
+  const toggle = (id: number) => setCollapsed(current => {
+    const next = new Set(current)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+  const create = (serverID: number, serverLocked: boolean) => setEditing({ record: emptyRecord(serverID), serverLocked })
+  return <div className="return-latency-tasks probe-ddns">
     <div className="return-latency-section-head">
       <div><h3>DDNS</h3><p className="muted">按服务器维护动态解析。入口可以选用这里的域名作为连接地址。</p></div>
-      <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing(emptyRecord(servers[0]?.id || 0))}><Plus size={15} aria-hidden="true" />新建 DDNS</button>
+      <div className="return-latency-toolbar">
+        <button type="button" className="primary" disabled={!canManage || !servers.length} onClick={() => create(servers[0]?.id || 0, false)}><Plus size={15} aria-hidden="true" />新建 DDNS</button>
+        <button type="button" className="ghost" disabled={busy || loading} onClick={() => { setLoading(true); void refresh() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
+      </div>
     </div>
     {notice && <p className="muted" role="status">{notice}</p>}
     {error && <p className="danger-text" role="alert">{error}</p>}
-    {loading && !records.length ? <p className="muted" role="status">正在加载 DDNS 记录…</p> : !records.length ? <div className="latency-empty-state"><p>还没有 DDNS 记录</p><p className="muted">选择服务器、域名账号和检查间隔。需要固定网卡地址时，先读取该服务器的网卡。</p></div> : <div className="network-probe-table-scroll" tabIndex={0} role="region" aria-label="DDNS 记录"><table className="network-probe-table">
-      <thead><tr><th scope="col">名称 / 域名</th><th scope="col">服务器</th><th scope="col">地址来源</th><th scope="col">当前解析</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
-      <tbody>{records.map(record => <tr key={record.id}>
-        <td><strong>{record.name}</strong><span className="probe-task-target">{record.domain}</span></td>
-        <td data-label="服务器">{serverName(record.server_id)}</td>
-        <td data-label="地址来源">{record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}{record.exclude_private ? ' · 排除内网' : ''}</td>
-        <td data-label="当前解析">{record.current_address || '—'}</td>
-        <td data-label="状态"><span className={`probe-task-badge${record.status === 'ok' ? ' is-on' : ''}`}>{record.enabled ? (statusText[record.status || 'pending'] || record.status) : '已停用'}</span>{record.error ? <small className="danger-text">{record.error}</small> : null}</td>
-        <td><div className="probe-task-card-actions">
-          <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => setEditing(record)}>编辑</button>
-          <button type="button" className="ghost" disabled={!canManage || busy || !record.enabled} onClick={() => void mutate('run', record)}>立即更新</button>
-          <button type="button" className="ghost danger" aria-label={`删除 ${record.name}`} disabled={!canManage || busy} onClick={() => setDeleting(record)}><Trash2 size={14} aria-hidden="true" />删除</button>
-        </div></td>
-      </tr>)}</tbody>
-    </table></div>}
-    <Dialog isOpen={Boolean(editing)} onClose={() => { if (!busy) setEditing(null) }} title={editing?.id ? '编辑 DDNS' : '新建 DDNS'} size="lg">
-      {editing && <ProbeDDNSForm record={editing} servers={servers} credentials={credentials} client={client} busy={busy} canManage={canManage} onCancel={() => setEditing(null)} onSubmit={save} />}
+    {records.length > 0 && <p className="muted probe-ddns-summary">{configuredServers} 台服务器 · {records.length} 条记录{failedCount ? <> · <span className="danger-text">{failedCount} 条更新失败</span></> : null}</p>}
+    <div className="return-latency-filters">
+      <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索 DDNS" placeholder="搜索服务器、名称或域名" value={query} onChange={event => setQuery(event.target.value)} /></div>
+      <Select aria-label="服务器范围" value={scope} onChange={event => setScope(event.target.value as 'configured' | 'all')}>
+        <option value="configured">已配置 DDNS 的服务器</option>
+        <option value="all">全部服务器</option>
+      </Select>
+    </div>
+    {loading && !records.length ? <p className="muted" role="status">正在加载 DDNS 记录…</p>
+      : !groups.length ? <p className="muted">暂无服务器，请先在服务器管理中添加。</p>
+      : !records.length && scope === 'configured' && !needle ? <div className="latency-empty-state">
+        <p>还没有 DDNS 记录</p>
+        <p className="muted">选择服务器、域名账号和检查间隔。需要固定网卡地址时，先读取该服务器的网卡。</p>
+        <button type="button" className="ghost" onClick={() => setScope('all')}>查看全部服务器</button>
+      </div>
+      : !visibleGroups.length ? <div className="latency-empty-state"><p>没有匹配的服务器或记录</p><button type="button" className="ghost" onClick={() => { setQuery(''); setScope('configured') }}>清除筛选</button></div>
+      : <div className="probe-ddns-groups">{visibleGroups.map(group => {
+        const open = !collapsed.has(group.id) || Boolean(needle)
+        const failed = group.records.filter(record => record.enabled && record.status === 'failed').length
+        const state = !group.server ? 'unregistered' : !group.server.agent_id ? 'unregistered' : group.server.status === 'online' ? 'online' : 'offline'
+        const panelID = `probe-ddns-server-${group.id}`
+        return <section key={group.id} className="probe-ddns-group" aria-label={group.name}>
+          <header className="probe-ddns-group-head">
+            <button type="button" className="probe-ddns-group-toggle" aria-expanded={open} aria-controls={panelID} onClick={() => toggle(group.id)}>
+              <ChevronRight size={16} aria-hidden="true" className="probe-ddns-chevron" />
+              {group.server ? <RegionFlag code={serverRegionCode(group.server)} size={18} /> : null}
+              <strong>{group.name}</strong>
+            </button>
+            <span className={`probe-server-status ${state}`}>{!group.server ? '已移除' : state === 'online' ? '在线' : state === 'offline' ? '离线' : '未接入'}</span>
+            <span className="muted probe-ddns-group-count">{group.records.length} 条</span>
+            {failed ? <span className="probe-server-status offline">{failed} 条失败</span> : null}
+            {group.server && <button type="button" className="ghost probe-ddns-group-add" disabled={!canManage || busy} aria-label={`为 ${group.name} 添加 DDNS`} onClick={() => create(group.id, true)}><Plus size={14} aria-hidden="true" />添加</button>}
+          </header>
+          {open && <div id={panelID} className="probe-ddns-group-body">
+            {!group.records.length ? <p className="muted probe-ddns-group-empty">这台服务器还没有 DDNS 记录。</p> : <div className="network-probe-table-scroll" tabIndex={0} role="region" aria-label={`${group.name} 的 DDNS 记录`}><table className="network-probe-table">
+              <thead><tr><th scope="col">名称 / 域名</th><th scope="col">地址来源</th><th scope="col">当前解析</th><th scope="col">检查间隔</th><th scope="col">状态</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
+              <tbody>{group.records.map(record => <tr key={record.id} className="probe-task-card">
+                <td><strong>{record.name}</strong><span className="probe-task-target">{record.domain}</span></td>
+                <td data-label="地址来源">{record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}{record.exclude_private ? ' · 排除内网' : ''}</td>
+                <td data-label="当前解析">{record.current_address || '—'}</td>
+                <td data-label="检查间隔">{formatInterval(record.interval_seconds)}</td>
+                <td data-label="状态"><span className={`probe-task-badge${record.enabled && record.status === 'ok' ? ' is-on' : ''}`}>{record.enabled ? (statusText[record.status || 'pending'] || record.status) : '已停用'}</span>{record.error ? <small className="danger-text">{record.error}</small> : null}</td>
+                <td><div className="probe-task-card-actions">
+                  <button type="button" className="ghost" aria-label={`编辑 ${record.name}`} disabled={!canManage || busy} onClick={() => setEditing({ record, serverLocked: false })}><Pencil size={14} aria-hidden="true" />编辑</button>
+                  <button type="button" className="ghost" disabled={!canManage || busy || !record.enabled} onClick={() => void mutate('run', record)}>立即更新</button>
+                  <button type="button" className="ghost danger" aria-label={`删除 ${record.name}`} disabled={!canManage || busy} onClick={() => setDeleting(record)}><Trash2 size={14} aria-hidden="true" />删除</button>
+                </div></td>
+              </tr>)}</tbody>
+            </table></div>}
+          </div>}
+        </section>
+      })}</div>}
+    <Dialog isOpen={Boolean(editing)} onClose={() => { if (!busy) setEditing(null) }} title={editing?.record.id ? '编辑 DDNS' : editing?.serverLocked ? `为 ${servers.find(server => server.id === editing.record.server_id)?.name || '服务器'} 添加 DDNS` : '新建 DDNS'} size="lg">
+      {editing && <ProbeDDNSForm record={editing.record} servers={servers} credentials={credentials} client={client} busy={busy} canManage={canManage} serverLocked={editing.serverLocked} onCancel={() => setEditing(null)} onSubmit={save} />}
     </Dialog>
     <Dialog isOpen={Boolean(deleting)} onClose={() => { if (!busy) setDeleting(null) }} title="删除 DDNS 记录" footer={<>
       <button type="button" className="ghost" disabled={busy} onClick={() => setDeleting(null)}>取消</button>
