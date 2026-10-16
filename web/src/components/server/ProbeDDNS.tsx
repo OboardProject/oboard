@@ -51,6 +51,11 @@ const formatInterval = (seconds: number) => {
   return `每 ${seconds} 秒`
 }
 
+const addressParts = (text?: string) => (text || '').split(/[，,]/).map(item => item.trim()).filter(Boolean).map(item => {
+  const [type, ...rest] = item.split(/\s+/)
+  return rest.length && /^(A|AAAA)$/i.test(type) ? { type: type.toUpperCase(), value: rest.join(' ') } : { type: '', value: item }
+})
+
 type ServerGroup = { id: number; server?: Server; name: string; records: ProbeDDNSRecord[] }
 
 export function ProbeDDNS({ client, servers, credentials, canManage }: { client: Client; servers: Server[]; credentials: Credential[]; canManage: boolean }) {
@@ -155,7 +160,9 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
         <button type="button" className="ghost" onClick={() => setScope('all')}>查看全部服务器</button>
       </div>
       : !visibleGroups.length ? <div className="latency-empty-state"><p>没有匹配的服务器或记录</p><button type="button" className="ghost" onClick={() => { setQuery(''); setScope('configured') }}>清除筛选</button></div>
-      : <div className="probe-ddns-groups">{visibleGroups.map(group => {
+      : <div className="probe-ddns-groups">
+        <div className="probe-ddns-columns" aria-hidden="true"><span>名称 / 域名</span><span>当前解析 / 地址来源</span><span>检查间隔</span><span>状态</span><span className="is-actions">操作</span></div>
+        {visibleGroups.map(group => {
         const open = !collapsed.has(group.id) || Boolean(needle)
         const failed = group.records.filter(record => record.enabled && record.status === 'failed').length
         const state = !group.server ? 'unregistered' : !group.server.agent_id ? 'unregistered' : group.server.status === 'online' ? 'online' : 'offline'
@@ -173,21 +180,21 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
             {group.server && <button type="button" className="ghost probe-ddns-group-add" disabled={!canManage || busy} aria-label={`为 ${group.name} 添加 DDNS`} onClick={() => create(group.id, true)}><Plus size={14} aria-hidden="true" />添加</button>}
           </header>
           {open && <div id={panelID} className="probe-ddns-group-body">
-            {!group.records.length ? <p className="muted probe-ddns-group-empty">这台服务器还没有 DDNS 记录。</p> : <div className="network-probe-table-scroll" tabIndex={0} role="region" aria-label={`${group.name} 的 DDNS 记录`}><table className="network-probe-table">
-              <thead><tr><th scope="col">名称 / 域名</th><th scope="col">地址来源</th><th scope="col">当前解析</th><th scope="col">检查间隔</th><th scope="col">状态</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
-              <tbody>{group.records.map(record => <tr key={record.id} className="probe-task-card">
-                <td><strong>{record.name}</strong><span className="probe-task-target">{record.domain}</span></td>
-                <td data-label="地址来源">{record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}{record.exclude_private ? ' · 排除内网' : ''}</td>
-                <td data-label="当前解析">{record.current_address || '—'}</td>
-                <td data-label="检查间隔">{formatInterval(record.interval_seconds)}</td>
-                <td data-label="状态"><span className={`probe-task-badge${record.enabled && record.status === 'ok' ? ' is-on' : ''}`}>{record.enabled ? (statusText[record.status || 'pending'] || record.status) : '已停用'}</span>{record.error ? <small className="danger-text">{record.error}</small> : null}</td>
-                <td><div className="probe-task-card-actions">
-                  <button type="button" className="ghost" aria-label={`编辑 ${record.name}`} disabled={!canManage || busy} onClick={() => setEditing({ record, serverLocked: false })}><Pencil size={14} aria-hidden="true" />编辑</button>
-                  <button type="button" className="ghost" disabled={!canManage || busy || !record.enabled} onClick={() => void mutate('run', record)}>立即更新</button>
-                  <button type="button" className="ghost danger" aria-label={`删除 ${record.name}`} disabled={!canManage || busy} onClick={() => setDeleting(record)}><Trash2 size={14} aria-hidden="true" />删除</button>
-                </div></td>
-              </tr>)}</tbody>
-            </table></div>}
+            {!group.records.length ? <p className="muted probe-ddns-group-empty">这台服务器还没有 DDNS 记录。</p> : <ul className="probe-ddns-rows" aria-label={`${group.name} 的 DDNS 记录`}>{group.records.map(record => <li key={record.id} className="probe-ddns-row">
+              <div className="probe-ddns-cell is-name"><strong>{record.name}</strong><span className="probe-task-target">{record.domain}</span></div>
+              <div className="probe-ddns-cell">
+                <span className="probe-ddns-label">当前解析</span>
+                {addressParts(record.current_address).length ? <span className="probe-ddns-addresses">{addressParts(record.current_address).map(part => <span key={part.value}><span className="probe-ddns-type">{part.type}</span>{part.value}</span>)}</span> : <span className="muted">尚未解析</span>}
+                <small className="muted">{record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}{record.exclude_private ? ' · 排除内网' : ''}</small>
+              </div>
+              <div className="probe-ddns-cell"><span className="probe-ddns-label">检查间隔</span>{formatInterval(record.interval_seconds)}</div>
+              <div className="probe-ddns-cell"><span className="probe-ddns-label">状态</span><span className={`probe-task-badge${record.enabled && record.status === 'ok' ? ' is-on' : ''}`}>{record.enabled ? (statusText[record.status || 'pending'] || record.status) : '已停用'}</span>{record.error ? <small className="danger-text">{record.error}</small> : null}</div>
+              <div className="probe-ddns-cell is-actions"><div className="probe-task-card-actions">
+                <button type="button" className="ghost" aria-label={`编辑 ${record.name}`} disabled={!canManage || busy} onClick={() => setEditing({ record, serverLocked: false })}><Pencil size={14} aria-hidden="true" />编辑</button>
+                <button type="button" className="ghost" disabled={!canManage || busy || !record.enabled} onClick={() => void mutate('run', record)}>立即更新</button>
+                <button type="button" className="ghost danger" aria-label={`删除 ${record.name}`} disabled={!canManage || busy} onClick={() => setDeleting(record)}><Trash2 size={14} aria-hidden="true" />删除</button>
+              </div></div>
+            </li>)}</ul>}
           </div>}
         </section>
       })}</div>}

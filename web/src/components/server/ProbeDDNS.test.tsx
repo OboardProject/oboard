@@ -18,12 +18,18 @@ it("groups DDNS records under their server and hides servers without records by 
   await act(async () => root.render(<ProbeDDNS client={{ request: vi.fn(), requestV2 }} servers={servers} credentials={[]} canManage />))
   expect(groupNames()).toEqual(["Tokyo", "Seoul", "服务器 #9"])
   const tokyo = document.body.querySelector('.probe-ddns-group[aria-label="Tokyo"]')!
-  expect([...tokyo.querySelectorAll("tbody strong")].map(item => item.textContent)).toEqual(["a", "c"])
+  expect([...tokyo.querySelectorAll(".probe-ddns-row strong")].map(item => item.textContent)).toEqual(["a", "c"])
   await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="服务器范围"]')!.click())
   await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(item => item.textContent === "全部服务器")!.click())
   expect(groupNames()).toEqual(["Tokyo", "Osaka", "Seoul", "服务器 #9"])
   const toggle = tokyo.querySelector<HTMLButtonElement>(".probe-ddns-group-toggle")!
   await act(async () => toggle.click())
   expect(toggle.getAttribute("aria-expanded")).toBe("false")
-  expect(tokyo.querySelector("table")).toBeNull()
+  expect(tokyo.querySelector(".probe-ddns-rows")).toBeNull()
+})
+
+it("shows every resolved address on its own line", async () => {
+  const requestV2 = vi.fn(async () => ({ records: [{ ...record(1, 1, "a"), current_address: "A 13.231.255.51，AAAA 2406:da14::1" }] }))
+  await act(async () => root.render(<ProbeDDNS client={{ request: vi.fn(), requestV2 }} servers={servers} credentials={[]} canManage />))
+  expect([...document.body.querySelectorAll(".probe-ddns-addresses > span")].map(item => item.textContent)).toEqual(["A13.231.255.51", "AAAA2406:da14::1"])
 })

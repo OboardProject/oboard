@@ -28758,21 +28758,32 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .probe-ddns-group-count { font-size: 13px; font-variant-numeric: tabular-nums; }
 .probe-ddns-group-add { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; min-height: 34px; padding: 0 10px; font-size: 13px; }
 .probe-ddns-group-body { border-top: 1px solid var(--border); }
-.probe-ddns-group-body .network-probe-table-scroll { border: 0; border-radius: 0; }
-.probe-ddns-group-body .network-probe-table { table-layout: fixed; }
-.probe-ddns-group-body .network-probe-table th:nth-child(1) { width: 26%; }
-.probe-ddns-group-body .network-probe-table th:nth-child(2) { width: 18%; }
-.probe-ddns-group-body .network-probe-table th:nth-child(3) { width: 14%; }
-.probe-ddns-group-body .network-probe-table th:nth-child(4) { width: 11%; }
-.probe-ddns-group-body .network-probe-table th:nth-child(5) { width: 13%; }
-.probe-ddns-group-body .network-probe-table td:first-child { min-width: 0; }
+.probe-ddns { --ddns-columns: minmax(160px, 1.2fr) minmax(220px, 1.6fr) minmax(88px, 0.6fr) minmax(110px, 0.8fr) 15.5rem; }
+.probe-ddns-columns, .probe-ddns-row { display: grid; grid-template-columns: var(--ddns-columns); gap: 16px; align-items: center; padding: 0 16px; }
+.probe-ddns-columns { padding-top: 0; padding-bottom: 0; margin-bottom: -4px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.probe-ddns-columns .is-actions, .probe-ddns-cell.is-actions { text-align: right; }
+.probe-ddns-rows { margin: 0; padding: 0; list-style: none; }
+.probe-ddns-row { padding-top: 12px; padding-bottom: 12px; font-size: 13px; }
+.probe-ddns-row + .probe-ddns-row { border-top: 1px solid var(--border); }
+.probe-ddns-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.probe-ddns-cell.is-name strong { font-weight: 600; }
+.probe-ddns-cell small { font-size: 12px; }
+.probe-ddns-cell.is-actions { align-items: stretch; }
+.probe-ddns-cell .probe-task-card-actions { justify-content: flex-end; margin: 0; padding: 0; }
+.probe-ddns-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.probe-ddns-addresses { display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.probe-ddns-addresses > span { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.probe-ddns-type { flex-shrink: 0; min-width: 34px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .probe-ddns-group-empty { margin: 0; padding: 14px 16px; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { .probe-ddns-chevron { transition: none; } }
 @media (max-width: 860px) {
   .probe-ddns-group-head { padding: 6px 10px 6px 4px; }
   .probe-ddns-group-toggle, .probe-ddns-group-add { min-height: 44px; }
-  .return-latency-page .probe-ddns-group-body .network-probe-table-scroll { padding: 10px; }
-  .return-latency-page .probe-ddns-group-body .network-probe-table :is(.probe-task-card) { background: var(--surface-solid); }
+  .probe-ddns-columns { display: none; }
+  .probe-ddns-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px; }
+  .probe-ddns-cell.is-name, .probe-ddns-cell:nth-child(2), .probe-ddns-cell.is-actions { grid-column: 1 / -1; }
+  .probe-ddns-label { position: static; width: auto; height: auto; overflow: visible; clip-path: none; color: var(--muted); font-size: 12px; }
+  .probe-ddns-cell .probe-task-card-actions { justify-content: flex-start; }
 }
 @media (max-width: 860px) {
   .return-latency-page .network-probe-header {
