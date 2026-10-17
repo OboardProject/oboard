@@ -1,3 +1,4 @@
+import type { ToastNotify } from "../../components/ui/use-error-toast"
 import React, { useState } from 'react'
 import { BadgeCheck, Code2, Plus, Trash2 } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
@@ -11,6 +12,7 @@ import { formatTime, instanceStatusLabels, instanceStatusTone, publisherLabel, r
 import type { InstallationDetail, PluginUpdateCheck } from './types'
 
 export interface PluginDetailProps {
+  notify?: ToastNotify
   detail: InstallationDetail
   isAdmin: boolean
   canConfigure: boolean
@@ -26,7 +28,7 @@ export interface PluginDetailProps {
   onApplyUpdate: (check: PluginUpdateCheck) => Promise<boolean>
 }
 
-export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onOpenInstance, onCreateInstance, onToggleEnabled, onUninstall, onActivate, onEdit, onCheckUpdate, onApplyUpdate }: PluginDetailProps) {
+export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onOpenInstance, onCreateInstance, onToggleEnabled, onUninstall, onActivate, onEdit, onCheckUpdate, onApplyUpdate, notify }: PluginDetailProps) {
   const [view, setView] = useState('instances')
   const [newName, setNewName] = useState('')
   const [confirmUninstall, setConfirmUninstall] = useState(false)
@@ -42,7 +44,7 @@ export function PluginDetail({ detail, isAdmin, canConfigure, busy, onClose, onO
     title={<span className="plugin-dialog-title">{detail.name}{detail.version && <span className="plugin-version">{detail.version}</span>}<Badge variant={detail.enabled ? 'success' : 'secondary'}>{detail.enabled ? '已启用' : detail.published ? '已停用' : '草稿'}</Badge></span>}>
     <div className="plugin-detail">
       <p className="plugin-env-help"><code>{detail.plugin_id}</code>{detail.description ? ` · ${detail.description}` : ''}</p>
-      <PluginSource detail={detail} isAdmin={isAdmin} busy={busy} onCheck={onCheckUpdate} onApply={onApplyUpdate} />
+      <PluginSource notify={notify} detail={detail} isAdmin={isAdmin} busy={busy} onCheck={onCheckUpdate} onApply={onApplyUpdate} />
       <Tabs value={view} onValueChange={setView}>
         <TabsList className="plugin-tabs">
           <TabsTrigger value="instances">实例</TabsTrigger>

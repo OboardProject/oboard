@@ -17,6 +17,7 @@ it('ties errors to validated values across edits, secret saves and rejected subm
     values: {}, custom: [], secrets: {}, schedules: [], state: {},
     issues: ['REGION', 'INSTANCE'].map(field => ({ field, code: 'CONFIGURATION_REQUIRED', message: '必填项尚未填写' })),
   }
+  const notify = vi.fn()
   const request = vi.fn(async (path: string, options?: RequestInit) => {
     if (path.endsWith('/environment')) throw Object.assign(new Error('配置无效'), {
       details: { issues: [{ field: 'environment.REGION', code: 'INVALID_ENVIRONMENT', message: '地域无效' }] },
@@ -50,7 +51,7 @@ it('ties errors to validated values across edits, secret saves and rejected subm
   try {
     await act(async () => root.render(<DialogContext.Provider value={{ confirm: vi.fn(async () => true), alert: vi.fn(), prompt: vi.fn() }}><InstanceDialog instanceID={1} installation={installation} request={request as RequestFn}
       servers={[]} channels={[]} users={[]} plans={[]} customTypes={[]} canConfigure canAuthorize canExecute={false}
-      notify={vi.fn()} onChanged={vi.fn()} onOpenRun={vi.fn()} onClose={vi.fn()} /></DialogContext.Provider>))
+      notify={notify} onChanged={vi.fn()} onOpenRun={vi.fn()} onClose={vi.fn()} /></DialogContext.Provider>))
     expect(input('ECS 地域 ID').getAttribute('aria-invalid')).toBe('true')
     await type(input('ECS 地域 ID'), 'cn-hongkong')
     expect(input('ECS 地域 ID').hasAttribute('aria-invalid')).toBe(false)
@@ -66,6 +67,8 @@ it('ties errors to validated values across edits, secret saves and rejected subm
     expect(JSON.parse(String(save[1]?.body)).values).toEqual({ REGION: 'cn-hongkong' })
     expect(input('ECS 地域 ID').getAttribute('aria-invalid')).toBe('true')
     expect(container.textContent).toContain('地域无效')
+    expect(notify).toHaveBeenCalledWith('配置无效', 'error')
+    expect(container.textContent).not.toContain('配置无效')
     await type(input('ECS 地域 ID'), 'cn-shanghai')
     expect(input('ECS 地域 ID').hasAttribute('aria-invalid')).toBe(false)
     expect(container.textContent).not.toContain('地域无效')

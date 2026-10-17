@@ -1,3 +1,4 @@
+import { useErrorToast } from "../ui/use-error-toast"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, ListTree, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react"
 import { Dialog } from "../ui/dialog"
@@ -79,7 +80,7 @@ function exitState(pool: VPNGatePool, state: PoolServer): { tone: string; text: 
 
 export function VPNGatePage({ client, servers, canManage, notify }: { client: Client; servers: ServerRef[]; canManage: boolean; notify?: (message: string, tone?: "success" | "error" | "warning" | "info") => void }) {
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [error, setError] = useState("")
+  const [, setError] = useErrorToast(notify)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
@@ -144,7 +145,6 @@ export function VPNGatePage({ client, servers, canManage, notify }: { client: Cl
     </div>
 
     {ipinfoMissing && <div className="vpngate-callout" role="note"><AlertTriangle size={16} aria-hidden="true" /><span>IPinfo 未填写 Key，出口运营商改用免 Key 接口与备用来源识别，额度较低；识别失败时限定了运营商的出口池会跳过该节点。可在“设置 › 节点 › IP 与路由数据”填写。</span></div>}
-    {error && !editing && !deleting && <p className="danger-text" role="alert">{error}</p>}
 
     {loading && !overview ? <p className="muted" role="status">正在加载…</p> : !pools.length ? <div className="vpngate-empty">
       <h3>还没有出口池</h3>
@@ -198,14 +198,13 @@ export function VPNGatePage({ client, servers, canManage, notify }: { client: Cl
       <button type="button" className="ghost" disabled={busy} onClick={() => setEditing(null)}>取消</button>
       <button type="submit" form="vpngate-pool-form" className="primary" disabled={!poolCanSubmit(editing, busy)}>{busy ? "保存中…" : "保存"}</button>
     </> : null}>
-      {editing && <PoolForm pool={editing} busy={busy} error={error} onChange={setEditing} onSubmit={() => void mutate("save", editing, editing.id ? "已保存，将按新条件重新挑选节点" : "出口池已创建，在代理拓扑中添加「VPNGate 出口」即可使用")} />}
+      {editing && <PoolForm pool={editing} busy={busy} onChange={setEditing} onSubmit={() => void mutate("save", poolInput(editing), editing.id ? "已保存，将按新条件重新挑选节点" : "出口池已创建，在代理拓扑中添加「VPNGate 出口」即可使用")} />}
     </Dialog>
     <Dialog isOpen={Boolean(deleting)} onClose={() => { if (!busy) setDeleting(null) }} title="删除出口池" size="sm" busy={busy} footer={<>
       <button type="button" className="ghost" disabled={busy} onClick={() => setDeleting(null)}>取消</button>
       <button type="button" className="danger" disabled={busy} onClick={() => deleting && void mutate("delete", { id: deleting.id }, "出口池已删除")}>{busy ? "删除中…" : "删除"}</button>
     </>}>
       <p>删除「{deleting?.name}」及其挑选记录？此操作不可撤销。</p>
-      {error && <p role="alert" className="danger-text">{error}</p>}
     </Dialog>
     <Dialog isOpen={Boolean(detailServer)} onClose={() => setDetail(null)} title={detailPool && detail ? `${detailPool.name} · ${serverName(detail.serverID)}` : "节点详情"} size="xl">
       {detailServer && detailPool && <PoolServerDetail pool={detailPool} state={detailServer} />}
@@ -261,11 +260,20 @@ function PoolServerDetail({ pool, state }: { pool: VPNGatePool; state: PoolServe
   </div>
 }
 
+function poolInput(pool: VPNGatePool): VPNGatePool {
+  return {
+    id: pool.id, name: pool.name, countries: pool.countries, operator_asns: pool.operator_asns,
+    network: pool.network, select_mode: pool.select_mode, max_rtt_ms: pool.max_rtt_ms,
+    min_quality_score: pool.min_quality_score, hot_standby: pool.hot_standby, pool_size: pool.pool_size,
+    switch_policy: pool.switch_policy, refresh_minutes: pool.refresh_minutes, enabled: pool.enabled,
+  }
+}
+
 function poolCanSubmit(pool: VPNGatePool, busy: boolean) {
   return !busy && pool.name.trim() !== "" && pool.pool_size >= pool.hot_standby + 1
 }
 
-function PoolForm({ pool, busy, error, onChange, onSubmit }: { pool: VPNGatePool; busy: boolean; error: string; onChange: (pool: VPNGatePool) => void; onSubmit: () => void }) {
+function PoolForm({ pool, busy, onChange, onSubmit }: { pool: VPNGatePool; busy: boolean; onChange: (pool: VPNGatePool) => void; onSubmit: () => void }) {
   const [countries, setCountries] = useState(pool.countries.join(", "))
   const [asns, setASNs] = useState(pool.operator_asns.join(", "))
   const split = (value: string) => value.split(/[\s,，、]+/).map(item => item.trim()).filter(Boolean)
@@ -340,6 +348,5 @@ function PoolForm({ pool, busy, error, onChange, onSubmit }: { pool: VPNGatePool
       </div>
     </fieldset>
     {sizeInvalid && <p role="alert" className="danger-text">候选节点数不能少于热备数加 1。</p>}
-    {error && <p role="alert" className="danger-text">{error}</p>}
   </form>
 }

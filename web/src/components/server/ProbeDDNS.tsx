@@ -1,3 +1,4 @@
+import { useErrorToast, type ToastNotify } from "../ui/use-error-toast"
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ChevronRight, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
@@ -60,9 +61,9 @@ const addressParts = (text?: string) => (text || '').split(/[，,]/).map(item =>
 
 type ServerGroup = { id: number; server?: Server; name: string; records: ProbeDDNSRecord[] }
 
-export function ProbeDDNS({ client, servers, credentials, canManage }: { client: Client; servers: Server[]; credentials: Credential[]; canManage: boolean }) {
+export function ProbeDDNS({ client, servers, credentials, canManage, notify }: { client: Client; servers: Server[]; credentials: Credential[]; canManage: boolean; notify?: ToastNotify }) {
   const [records, setRecords] = useState<ProbeDDNSRecord[]>([])
-  const [error, setError] = useState('')
+  const [, setError] = useErrorToast(notify)
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -72,6 +73,7 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
   const [scope, setScope] = useState<'configured' | 'all'>('configured')
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set())
   const refresh = useCallback(async () => {
+    setError('')
     try {
       const result = await v2(client, '/probe-ddns')
       setRecords(result.records || [])
@@ -145,7 +147,6 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
       </div>
     </div>
     {notice && <p className="muted" role="status">{notice}</p>}
-    {error && <p className="danger-text" role="alert">{error}</p>}
     {records.length > 0 && <p className="muted probe-ddns-summary">{configuredServers} 台服务器 · {records.length} 条记录{failedCount ? <> · <span className="danger-text">{failedCount} 条更新失败</span></> : null}</p>}
     <div className="return-latency-filters">
       <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索 DDNS" placeholder="搜索服务器、名称或域名" value={query} onChange={event => setQuery(event.target.value)} /></div>
@@ -201,7 +202,7 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
         </section>
       })}</div>}
     <Dialog isOpen={Boolean(editing)} onClose={() => { if (!busy) setEditing(null) }} title={editing?.record.id ? '编辑 DDNS' : editing?.serverLocked ? `为 ${servers.find(server => server.id === editing.record.server_id)?.name || '服务器'} 添加 DDNS` : '新建 DDNS'} size="lg">
-      {editing && <ProbeDDNSForm record={editing.record} servers={servers} credentials={credentials} client={client} busy={busy} canManage={canManage} serverLocked={editing.serverLocked} onCancel={() => setEditing(null)} onSubmit={save} />}
+      {editing && <ProbeDDNSForm notify={notify} record={editing.record} servers={servers} credentials={credentials} client={client} busy={busy} canManage={canManage} serverLocked={editing.serverLocked} onCancel={() => setEditing(null)} onSubmit={save} />}
     </Dialog>
     <Dialog isOpen={Boolean(deleting)} onClose={() => { if (!busy) setDeleting(null) }} title="删除 DDNS 记录" footer={<>
       <button type="button" className="ghost" disabled={busy} onClick={() => setDeleting(null)}>取消</button>
@@ -212,8 +213,9 @@ export function ProbeDDNS({ client, servers, credentials, canManage }: { client:
   </div>
 }
 
-export function InboundDDNSField({ serverID, recordID, domain, client, credentials, onChange }: {
+export function InboundDDNSField({ serverID, recordID, domain, client, credentials, onChange, notify }: {
   serverID: number
+  notify?: ToastNotify
   recordID?: number
   domain?: string
   client: Client
@@ -222,10 +224,11 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
 }) {
   const [records, setRecords] = useState<ProbeDDNSRecord[]>([])
   const [creating, setCreating] = useState(false)
-  const [error, setError] = useState('')
+  const [, setError] = useErrorToast(notify)
   const [busy, setBusy] = useState(false)
   const load = useCallback(async () => {
     if (!serverID) { setRecords([]); return }
+    setError('')
     try {
       const result = await v2(client, '/probe-ddns')
       setRecords((result.records || []).filter((record: ProbeDDNSRecord) => record.server_id === serverID))
@@ -269,9 +272,8 @@ export function InboundDDNSField({ serverID, recordID, domain, client, credentia
     </div>
     {selected && <p className="field-hint">当前 Host 将使用 {selected.domain}。{selected.error ? ` 最近一次更新失败：${selected.error}` : ''}</p>}
     {!selected && domain && <p className="field-hint">已选记录暂时不在这台服务器的列表中。</p>}
-    {error && <p className="danger-text" role="alert">{error}</p>}
     <Dialog isOpen={creating} onClose={() => { if (!busy) setCreating(false) }} title="新建 DDNS" size="lg">
-      <ProbeDDNSForm record={emptyRecord(serverID)} servers={[]} credentials={credentials} client={client} busy={busy} canManage serverLocked onCancel={() => setCreating(false)} onSubmit={create} />
+      <ProbeDDNSForm notify={notify} record={emptyRecord(serverID)} servers={[]} credentials={credentials} client={client} busy={busy} canManage serverLocked onCancel={() => setCreating(false)} onSubmit={create} />
     </Dialog>
   </div>
 }
@@ -296,7 +298,7 @@ function inputOf(record: ProbeDDNSRecord) {
   }
 }
 
-export function ProbeDDNSForm({ record, servers, credentials, client, busy, canManage, serverLocked, onCancel, onSubmit }: {
+export function ProbeDDNSForm({ record, servers, credentials, client, busy, canManage, serverLocked, onCancel, onSubmit, notify }: {
   record: ProbeDDNSRecord
   servers: Server[]
   credentials: Credential[]
@@ -305,6 +307,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
   canManage: boolean
   serverLocked?: boolean
   onCancel: () => void
+  notify?: ToastNotify
   onSubmit: (record: ProbeDDNSRecord) => Promise<void>
 }) {
   const [draft, setDraft] = useState(record)
@@ -343,7 +346,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
       setInterfaces(next)
       setReadStatus(next.length ? `已读取 ${next.length} 个网卡` : 'Agent 未返回网卡')
     } catch (cause: any) {
-      setReadStatus(cause?.message || '读取网卡失败')
+      notify?.(cause?.message || '读取网卡失败', 'error')
     } finally {
       setReading(false)
     }
@@ -369,7 +372,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
       next.record_types = selectedChoice.family === 'ipv4' ? 'a' : 'aaaa'
       next.address_family = selectedChoice.family
     }
-    void onSubmit(next).catch((cause: { message?: string }) => setFormError(cause?.message || '保存失败，请重试'))
+    void onSubmit(next).catch(() => undefined)
   }
   return <form onSubmit={submit}>
     <fieldset disabled={!canManage || busy} className="return-latency-fields">

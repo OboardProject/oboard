@@ -1,3 +1,4 @@
+import { useErrorToast, type ToastNotify } from "../../components/ui/use-error-toast"
 import React, { useEffect, useRef, useState } from 'react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -6,12 +7,13 @@ import * as api from './api'
 import { describeError, errorMessage, formatTime, runStatusLabels, runTerminal, runTone, triggerLabels } from './domain'
 import type { RequestFn, Run, RunLog } from './types'
 
-export function RunDialog({ id, request, canCancel, onClose }: { id: number; request: RequestFn; canCancel: boolean; onClose: () => void }) {
+export function RunDialog({ id, request, canCancel, onClose, notify }: { id: number; notify?: ToastNotify; request: RequestFn; canCancel: boolean; onClose: () => void }) {
   const [run, setRun] = useState<Run | null>(null)
   const [logs, setLogs] = useState<RunLog[]>([])
-  const [error, setError] = useState('')
+  const [error, setError] = useErrorToast(notify)
   const [busy, setBusy] = useState(false)
   const lastSeq = useRef(0)
+  const [revision, setRevision] = useState(0)
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -34,18 +36,17 @@ export function RunDialog({ id, request, canCancel, onClose }: { id: number; req
     }
     void load()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
-  }, [id, request])
+  }, [id, request, revision])
 
   const cancel = async () => {
-    setBusy(true)
+    setBusy(true); setError('')
     try { setRun((await api.cancelRun(request, id)).run) } catch (e) { setError(errorMessage(e, '取消失败')) } finally { setBusy(false) }
   }
 
   return <Dialog isOpen onClose={onClose} title={`执行 #${id}`} size="lg" placement="right" drawerSize="wide"
     footer={run && !runTerminal(run.status) && canCancel ? <Button variant="outline" busy={busy} disabled={run.cancel_requested} onClick={() => void cancel()}>{run.cancel_requested ? '已请求取消' : '取消执行'}</Button> : undefined}>
     <div className="plugin-run-detail">
-      {error && <p role="alert" className="plugin-field-error">{error}</p>}
-      {!run ? <p className="text-sm text-muted-foreground" role="status">正在读取…</p> : <>
+      {!run ? error ? <Button variant="outline" onClick={() => { setError(''); setRevision(value => value + 1) }}>重新加载</Button> : <p className="text-sm text-muted-foreground" role="status">正在读取…</p> : <>
         <div className="plugin-run-summary">
           <Badge variant={runTone(run.status)}>{runStatusLabels[run.status] || run.status}</Badge>
           <span>{run.plugin_key} {run.plugin_version}</span>

@@ -1,3 +1,4 @@
+import { useErrorToast, type ToastNotify } from "../ui/use-error-toast"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Activity, ListTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
@@ -36,10 +37,10 @@ function StatusBadge({ task }: { task: Monitor }) {
   return <span className={`probe-task-badge ${statusTone[status] || ""}`.trim()}>{statusText[status] || status}</span>
 }
 
-export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot }: { client: Client; servers: Server[]; kind: Monitor["kind"]; canManage: boolean; toolbarSlot?: HTMLElement | null }) {
+export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, notify }: { client: Client; servers: Server[]; kind: Monitor["kind"]; canManage: boolean; toolbarSlot?: HTMLElement | null; notify?: ToastNotify }) {
   const [items, setItems] = useState<Monitor[]>([])
   const [providers, setProviders] = useState<Record<string, boolean>>({})
-  const [error, setError] = useState("")
+  const [, setError] = useErrorToast(notify)
   const [notice, setNotice] = useState("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -50,7 +51,7 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot }:
   const [detailID, setDetailID] = useState<number | null>(null)
   const [versions, setVersions] = useState<Route[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [historyError, setHistoryError] = useState("")
+  const [, setHistoryError] = useErrorToast(notify)
   const [more, setMore] = useState(false)
   const request = useCallback(async (path: string, init?: RequestInit) => {
     if (client.requestV2) return client.requestV2(path, init)
@@ -96,17 +97,15 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot }:
   const visible = needle ? all.filter(item => `${item.name} ${item.target} ${serverName(item.server_id)}`.toLowerCase().includes(needle)) : all
   const missingProviders = kind === "ip_quality" && !loading ? ["ipinfo", "abuseipdb"].filter(name => providers[name] === false) : []
   const create = () => { setError(""); setNotice(""); setEditing({ id: 0, revision: 0, server_id: servers.length === 1 ? servers[0].id : 0, name: "", kind, target: "", mode: kind === "route" ? "icmp" : "", port: 0, interval_seconds: kind === "route" ? 900 : 86400, enabled: true }) }
-  const dialogOpen = Boolean(editing || deleting || detail)
   const targetText = (task: Monitor) => `${task.target || "服务器公网 IPv4"}${task.mode === "tcp" ? `:${task.port} · TCP` : task.mode === "icmp" ? " · ICMP" : ""}`
 
   const toolbar = <>
     <button type="button" className="primary" disabled={!canManage} onClick={create}><Plus size={15} aria-hidden="true" />创建{title}任务</button>
-    <button type="button" className="ghost" onClick={() => void refresh()} disabled={loading}><RefreshCw size={15} aria-hidden="true" />刷新</button>
+    <button type="button" className="ghost" onClick={() => { setError(""); void refresh() }} disabled={loading}><RefreshCw size={15} aria-hidden="true" />刷新</button>
   </>
 
   return <section aria-label={title} aria-busy={loading} className="return-latency-tasks probe-monitors">
     {toolbarSlot ? createPortal(toolbar, toolbarSlot) : <div className="return-latency-toolbar">{toolbar}</div>}
-    {error && !dialogOpen && <p className="danger-text" role="alert">{error}</p>}
     {notice && <p className="muted" role="status">{notice}</p>}
     {missingProviders.length > 0 && <p className="muted probe-monitor-note">{missingProviders.map(name => providerName[name]).join("、")} 未填写 Key，已自动使用备用来源。管理员可在“设置 › 节点 › IP 与路由数据”中填写。</p>}
     {all.length > 0 && <div className="return-latency-filters">
@@ -135,14 +134,13 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot }:
     </table></div>}
 
     <Dialog isOpen={Boolean(editing)} onClose={() => { if (!busy) setEditing(null) }} title={`${editing?.id ? "编辑" : "创建"}${title}任务`} size="lg" className="probe-task-dialog" busy={busy}>
-      {editing && <MonitorForm task={editing} servers={servers} busy={busy} error={error} onChange={setEditing} onCancel={() => setEditing(null)} onSubmit={() => void mutate("save", editing)} />}
+      {editing && <MonitorForm task={editing} servers={servers} busy={busy} onChange={setEditing} onCancel={() => setEditing(null)} onSubmit={() => void mutate("save", editing)} />}
     </Dialog>
     <Dialog isOpen={Boolean(deleting)} onClose={() => { if (!busy) setDeleting(null) }} title="删除监控任务" size="sm" busy={busy} footer={<>
       <button type="button" className="ghost" disabled={busy} onClick={() => setDeleting(null)}>取消</button>
       <button type="button" className="danger" disabled={busy} onClick={() => deleting && void mutate("delete", deleting)}>{busy ? "删除中…" : "确认删除"}</button>
     </>}>
       <p>删除「{deleting?.name}」{kind === "route" ? "及其全部路由历史" : "及其检测结果"}？</p>
-      {error && <p role="alert" className="danger-text">{error}</p>}
     </Dialog>
     <Dialog isOpen={Boolean(detail)} onClose={() => setDetailID(null)} title={detail ? `${detail.name} · 检测结果` : "检测结果"} size="xl" className="probe-monitor-detail-dialog">
       {detail && <div className="probe-monitor-detail">
@@ -152,9 +150,8 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot }:
           <div><dt>最近结果</dt><dd><StatusBadge task={detail} /></dd></div>
           <div><dt>检测时间</dt><dd>{date(detail.checked_at)}</dd></div>
         </dl>
-        {error && <p role="alert" className="danger-text">{error}</p>}
         {detail.error && <p className="muted" role="status">{detail.error}</p>}
-        {detail.kind === "route" ? <RouteHistory detail={detail} versions={versions} loading={historyLoading} error={historyError} more={more} onMore={() => void loadMore()} /> : <QualityResult result={detail.result} />}
+        {detail.kind === "route" ? <RouteHistory detail={detail} versions={versions} loading={historyLoading} more={more} onMore={() => void loadMore()} /> : <QualityResult result={detail.result} />}
       </div>}
     </Dialog>
   </section>
@@ -167,7 +164,7 @@ function ResultSummary({ task }: { task: Monitor }) {
   return null
 }
 
-function MonitorForm({ task, servers, busy, error, onChange, onCancel, onSubmit }: { task: Monitor; servers: Server[]; busy: boolean; error: string; onChange: (task: Monitor) => void; onCancel: () => void; onSubmit: () => void }) {
+function MonitorForm({ task, servers, busy, onChange, onCancel, onSubmit }: { task: Monitor; servers: Server[]; busy: boolean; onChange: (task: Monitor) => void; onCancel: () => void; onSubmit: () => void }) {
   const route = task.kind === "route"
   const locked = task.id > 0
   const [minutes, setMinutes] = useState<number | "">(Math.round(task.interval_seconds / 60))
@@ -214,7 +211,6 @@ function MonitorForm({ task, servers, busy, error, onChange, onCancel, onSubmit 
         <Switch checked={task.enabled} ariaLabel="启用该任务" onChange={enabled => onChange({ ...task, enabled })} />
       </label>}
       <p className="muted">{route ? "以 NextTrace 归属数据为主，缺失的跳由主控 NextTrace 与 IP 归属数据源补全。首次结果作为基线，之后仅在 ASN 路径变化时新增记录；有未回应跳或归属仍无法补全时不判定变化。" : "归属信息以 IPinfo 为准并与其他来源交叉校验；质量信息由多个来源投票。任一来源不可用时自动降级。"}</p>
-      {error && <p className="danger-text" role="alert">{error}</p>}
       <div className="return-latency-form-actions">
         <button type="button" className="ghost" onClick={onCancel}>取消</button>
         <button type="submit" className="primary" disabled={!canSubmit}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? "保存中…" : locked ? "保存任务" : "创建任务"}</button>
@@ -223,10 +219,9 @@ function MonitorForm({ task, servers, busy, error, onChange, onCancel, onSubmit 
   </form>
 }
 
-function RouteHistory({ detail, versions, loading, error, more, onMore }: { detail: Monitor; versions: Route[]; loading: boolean; error: string; more: boolean; onMore: () => void }) {
+function RouteHistory({ detail, versions, loading, more, onMore }: { detail: Monitor; versions: Route[]; loading: boolean; more: boolean; onMore: () => void }) {
   const pending = detail.result && !detail.result.asn_path ? detail.result as Trace : null
   return <div className="probe-route-history" aria-busy={loading}>
-    {error && <p role="alert" className="danger-text">{error}</p>}
     {pending && <details className="probe-route-version is-pending"><summary><span>最近一次未完整确认的路径</span><small className="muted">不参与变化判定</small></summary><RouteHops trace={pending} /></details>}
     <h4>ASN 路径记录</h4>
     {!versions.length ? <p className="muted">{loading ? "正在读取路由历史…" : "尚无完整的 ASN 路径记录。"}</p> : versions.map((version, index) => <details key={version.id} className="probe-route-version" open={index === 0}>

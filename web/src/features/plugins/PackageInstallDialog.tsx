@@ -1,3 +1,4 @@
+import { useErrorToast, type ToastNotify } from "../../components/ui/use-error-toast"
 import React, { useState } from 'react'
 import { AlertTriangle, BadgeCheck, FileArchive, GitBranch } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
@@ -42,7 +43,7 @@ export function DiffList({ diff }: { diff: PermissionDiff }) {
   </dl>
 }
 
-export function PackageInstallDialog({ request, onClose, onInstalled }: { request: RequestFn; onClose: () => void; onInstalled: (installationID: number, reviewRequired: boolean) => void }) {
+export function PackageInstallDialog({ request, onClose, onInstalled, notify }: { request: RequestFn; notify?: ToastNotify; onClose: () => void; onInstalled: (installationID: number, reviewRequired: boolean) => void }) {
   const [mode, setMode] = useState<'upload' | 'github'>('upload')
   const [fileName, setFileName] = useState('')
   const [packageBase64, setPackageBase64] = useState('')
@@ -50,7 +51,7 @@ export function PackageInstallDialog({ request, onClose, onInstalled }: { reques
   const [ref, setRef] = useState('')
   const [preview, setPreview] = useState<PackagePreview | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [, setError] = useErrorToast(notify)
 
   const source = (): PackageSource => mode === 'upload'
     ? { kind: 'upload', package_base64: packageBase64 }
@@ -133,7 +134,7 @@ export function PackageInstallDialog({ request, onClose, onInstalled }: { reques
         </section>}
         <Button variant="link" onClick={() => setPreview(null)}>更换插件包</Button>
       </div>}
-      {error && <p role="alert" className="plugin-field-error">{error}</p>}
+
     </div>
   </Dialog>
 }

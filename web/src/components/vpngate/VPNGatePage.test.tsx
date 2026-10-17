@@ -39,3 +39,56 @@ it("warns that an operator filter cannot work without IPinfo and marks an empty 
   expect(document.body.textContent).toContain("1 台暂停出站")
   expect(button("新建出口池").disabled).toBe(true)
 })
+
+it("saves edits without overview metadata and keeps the draft open on failure", async () => {
+  let fail = true
+  const notify = vi.fn()
+  const requestV2 = vi.fn(async (_path: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      if (fail) throw new Error("保存失败，请重试")
+      return { applied: true }
+    }
+    return { pools: [{ ...pool, created_at: "2026-10-15T00:00:00Z", updated_at: "2026-10-16T00:00:00Z", servers: [live] }], catalog: {}, providers: { ipinfo: true } }
+  })
+  await act(async () => root.render(<VPNGatePage client={{ request: vi.fn(), requestV2 }} servers={[]} canManage notify={notify} />))
+  await act(async () => button("编辑").click())
+  const name = document.body.querySelector<HTMLInputElement>('[aria-label="名称"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "日本 NTT 新名称")
+    name.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  const save = () => document.getElementById("vpngate-pool-form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
+  await act(async () => { save() })
+  expect(notify).toHaveBeenCalledWith("保存失败，请重试", "error")
+  expect(document.body.querySelector<HTMLInputElement>('[aria-label="名称"]')?.value).toBe("日本 NTT 新名称")
+  expect(document.body.textContent).not.toContain("保存失败，请重试")
+  const call = requestV2.mock.calls.find(([, init]) => init?.method === "POST")!
+  expect(JSON.parse(String(call[1]?.body))).toMatchObject({ action: "save", input: { id: 3, name: "日本 NTT 新名称" } })
+  expect(Object.keys(JSON.parse(String(call[1]?.body)).input).sort()).toEqual(["id", "name", "countries", "operator_asns", "network", "select_mode", "max_rtt_ms", "min_quality_score", "hot_standby", "pool_size", "switch_policy", "refresh_minutes", "enabled"].sort())
+  fail = false
+  await act(async () => { save() })
+  expect(notify).toHaveBeenCalledWith("已保存，将按新条件重新挑选节点", "success")
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)) })
+  expect(document.getElementById("vpngate-pool-form")).toBeNull()
+})
+
+it("does not repeat a polling failure until the overview recovers", async () => {
+  vi.useFakeTimers()
+  try {
+    let fail = true
+    const notify = vi.fn()
+    const requestV2 = vi.fn(async () => {
+      if (fail) throw new Error("目录加载失败")
+      return { pools: [], catalog: {}, providers: {} }
+    })
+    await act(async () => root.render(<VPNGatePage client={{ request: vi.fn(), requestV2 }} servers={[]} canManage notify={notify} />))
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000) })
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify).toHaveBeenCalledWith("目录加载失败", "error")
+    fail = false
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+    fail = true
+    await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+    expect(notify).toHaveBeenCalledTimes(2)
+  } finally { vi.useRealTimers() }
+})

@@ -3112,9 +3112,9 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       ? <Dashboard data={data} loading={loading} displayName={displayName} client={client} canCleanup={canManageAdministratorAccounts(sessionUser?.role || data.session?.role || 'viewer')} onCleaned={load} />
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
-  if (tab === 'return-latency') return <ReturnLatencyPage servers={data.servers || []} credentials={data.dns_credentials || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
+  if (tab === 'return-latency') return <ReturnLatencyPage notify={notify} servers={data.servers || []} credentials={data.dns_credentials || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} patchPageData={patchPageData} />
-  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} focusRequest={proxyInboundFocus} />
+  if (tab === 'proxy-paths') return <ProxyPathsWorkspace notify={notify} data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} focusRequest={proxyInboundFocus} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
@@ -9926,7 +9926,7 @@ function inboundEntryAddress(data: any, entry: Inbound) {
 
 type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'vpngate' | 'routing' | 'family_split_template'
 
-function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData, focusRequest }: any) {
+function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData, focusRequest, notify }: any) {
   const [servers, setServers] = useState<Server[]>(data.servers || [])
   useEffect(() => { setServers(data.servers || []) }, [data.servers])
   const visibleData = useMemo(() => ({ ...data, servers }), [data, servers])
@@ -9952,7 +9952,7 @@ function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchP
     {conflicts.length > 0 && <div className="error"><strong>下发前需要处理：</strong>{conflicts.map((x, i) => <div key={i}>{x}</div>)}</div>}
     <div className="proxy-shell">
       <ProxyGraphBoundary onRetry={load}>
-        <ProxyOverview data={visibleData} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} patchPageData={patchPageData} focusRequest={focusRequest} onServerSnapshot={(server: Server) => setServers(current => upsertServerSnapshot(current, server))} />
+        <ProxyOverview notify={notify} data={visibleData} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} patchPageData={patchPageData} focusRequest={focusRequest} onServerSnapshot={(server: Server) => setServers(current => upsertServerSnapshot(current, server))} />
       </ProxyGraphBoundary>
     </div>
   </Panel>
@@ -10071,7 +10071,7 @@ type TransportDialogRequest = {
 	currentMode?: PathTransportMode
   resolve: (value: TransportSelection | null) => void
 }
-export function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest }: any) {
+export function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest, notify }: any) {
   const dialogs = useDialogs()
   const servers: Server[] = data.servers || []
   const entries: Inbound[] = data.inbounds || []
@@ -12614,8 +12614,8 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
       </div>
     </div>
     <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
-    <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
-    <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
+    <AnimatePresence>{entryDraft && <EntryDraftDialog notify={notify} mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
+    <AnimatePresence>{editEntry && <EntryDraftDialog notify={notify} mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>
     <AnimatePresence>{familySplitEditor && <FamilySplitTemplateEditor data={data} client={client} load={load} chainMethods={proxyPathChainMethods} initialTemplateID={familySplitEditor.templateID} onClose={() => setFamilySplitEditor(null)} onSelect={familySplitEditor.select ? id => { setRoutingDraft(old => old ? { ...old, family_split_template_id: id, action: 'family_split' } : old); setFamilySplitEditor(null) } : undefined} />}</AnimatePresence>
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
@@ -14533,7 +14533,7 @@ function newEntryDNSDefaults(data: any) {
   return { dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_record_types: 'auto' as DNSRecordTypes }
 }
 
-function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, client, onCancel, onSubmit, onPaddingUpdated }: { mode?: 'create' | 'edit'; draft: any; setDraft: React.Dispatch<React.SetStateAction<any | null>>; data: any; servers: Server[]; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void>; onPaddingUpdated?: (result: Record<string, any>) => void }) {
+function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, client, onCancel, onSubmit, onPaddingUpdated, notify }: { notify?: (message: string, tone?: ToastKind) => void; mode?: 'create' | 'edit'; draft: any; setDraft: React.Dispatch<React.SetStateAction<any | null>>; data: any; servers: Server[]; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void>; onPaddingUpdated?: (result: Record<string, any>) => void }) {
   const server = servers.find(s => s.id === Number(draft.server_id)) || servers[0]
   const protocol = draft.protocol as Protocol
   const [presetID, setPresetID] = useState(() => inferInboundPreset(protocol, draft.config_json))
@@ -14842,7 +14842,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             {entryMode === 'custom' && <FormField label="自定义入口地址" required hint="可填写域名、IPv4 或 IPv6，例如 NAT 网关或中转机地址。">
               <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="1.2.3.4 或 origin.example.net" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="url" />
             </FormField>}
-            <InboundDDNSField serverID={Number(draft.server_id || 0)} recordID={Number(draft.ddns_record_id || 0) || undefined} domain={String(draft.ddns_domain || '')} client={client} credentials={dnsCredentials} onChange={record => update(record ? { ddns_record_id: record.id, ddns_domain: record.domain } : { ddns_record_id: null, ddns_domain: '' })} />
+            <InboundDDNSField notify={notify} serverID={Number(draft.server_id || 0)} recordID={Number(draft.ddns_record_id || 0) || undefined} domain={String(draft.ddns_domain || '')} client={client} credentials={dnsCredentials} onChange={record => update(record ? { ddns_record_id: record.id, ddns_domain: record.domain } : { ddns_record_id: null, ddns_domain: '' })} />
             <div className="inbound-host-preview">
               <div><span>Host（server）</span><strong>{hostDisplay}</strong></div>
               <div><span>DNS 解析</span><strong>{dnsActive && String(draft.dns_domain || '').trim() ? `${recordLabel} · ${draft.dns_domain}` : dnsActive ? `${recordLabel} · 待填写域名` : '不创建'}</strong></div>

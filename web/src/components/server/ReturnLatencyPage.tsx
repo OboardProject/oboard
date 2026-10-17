@@ -1,3 +1,4 @@
+import type { ToastNotify } from "../ui/use-error-toast"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Activity, History, Pencil, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
 import { Dialog } from '../ui/dialog'
@@ -23,7 +24,8 @@ const formatInterval = (seconds: number) => {
 const probeTabs = ['targets', 'nodes', 'routes', 'quality', 'ddns'] as const
 type ProbeTab = typeof probeTabs[number]
 
-export function ReturnLatencyPage({ servers, client, loading, canManage, onRefresh, renderHistory, credentials = [] }: {
+export function ReturnLatencyPage({ servers, client, loading, canManage, onRefresh, renderHistory, credentials = [], notify }: {
+  notify?: ToastNotify
   servers: Server[]
   client: Client
   loading?: boolean
@@ -233,8 +235,8 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         </table></div>}
       </section>}
 
-      {(view === 'routes' || view === 'quality') && <section id={`probe-${view}-panel`} role="tabpanel" aria-labelledby={`probe-${view}-tab`}><ProbeMonitors key={view} client={client} servers={servers} kind={view === 'routes' ? 'route' : 'ip_quality'} canManage={canManage} toolbarSlot={monitorToolbar} /></section>}
-      {view === 'ddns' && <section id="probe-ddns-panel" role="tabpanel" aria-labelledby="probe-ddns-tab"><ProbeDDNS client={client} servers={servers} credentials={credentials} canManage={canManage} /></section>}
+      {(view === 'routes' || view === 'quality') && <section id={`probe-${view}-panel`} role="tabpanel" aria-labelledby={`probe-${view}-tab`}><ProbeMonitors key={view} client={client} servers={servers} kind={view === 'routes' ? 'route' : 'ip_quality'} canManage={canManage} toolbarSlot={monitorToolbar} notify={notify} /></section>}
+      {view === 'ddns' && <section id="probe-ddns-panel" role="tabpanel" aria-labelledby="probe-ddns-tab"><ProbeDDNS notify={notify} client={client} servers={servers} credentials={credentials} canManage={canManage} /></section>}
       {view === 'nodes' && <section id="probe-nodes-panel" role="tabpanel" aria-labelledby="probe-nodes-tab" className="return-latency-servers">
         <div className="return-latency-filters">
           <div className="return-latency-search">

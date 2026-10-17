@@ -1,3 +1,4 @@
+import { useErrorToast, type ToastNotify } from "../../components/ui/use-error-toast"
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, GitBranch, RefreshCw } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
@@ -8,6 +9,7 @@ import { errorMessage, formatTime, repositoryLabel, shortHash, sourceRefLabel } 
 import type { InstallationDetail, PluginUpdateCheck } from './types'
 
 export interface PluginSourceProps {
+  notify?: ToastNotify
   detail: InstallationDetail
   isAdmin: boolean
   busy: boolean
@@ -17,11 +19,11 @@ export interface PluginSourceProps {
 
 // PluginSource records where a GitHub plugin came from and lets an
 // administrator update it from that same repository and ref.
-export function PluginSource({ detail, isAdmin, busy, onCheck, onApply }: PluginSourceProps) {
+export function PluginSource({ detail, isAdmin, busy, onCheck, onApply, notify }: PluginSourceProps) {
   const [check, setCheck] = useState<PluginUpdateCheck | null>(null)
   const [checking, setChecking] = useState(false)
   const [applying, setApplying] = useState(false)
-  const [error, setError] = useState('')
+  const [, setError] = useErrorToast(notify)
   const [reviewOpen, setReviewOpen] = useState(false)
   const latestCall = useRef(0)
 
@@ -74,7 +76,6 @@ export function PluginSource({ detail, isAdmin, busy, onCheck, onApply }: Plugin
     </div>
     {isAdmin && <div className="plugin-source-status" role="status">
       {checking && !check && <span className="plugin-env-help">正在检查更新…</span>}
-      {error && <span className="plugin-field-error">{error}</span>}
       {check?.status === 'up_to_date' && <span className="plugin-source-ok"><CheckCircle2 size={14} aria-hidden="true" />已是最新 · {formatTime(check.checked_at)} 检查</span>}
       {check?.status === 'pinned' && <span className="plugin-env-help">固定在某个提交，不会有新版本。</span>}
       {check?.status === 'update_available' && preview && <>

@@ -1,3 +1,4 @@
+import { useErrorToast } from "../../components/ui/use-error-toast"
 import React, { useCallback, useEffect, useState } from 'react'
 import { Play, RotateCcw } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
@@ -65,7 +66,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
   const [issues, setIssues] = useState<Record<string, string>>({})
   const [validatedDraft, setValidatedDraft] = useState<{ values: Record<string, unknown>; custom: CustomVar[] }>({ values: {}, custom: [] })
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useErrorToast(notify)
   const [runs, setRuns] = useState<Run[]>([])
   const [pages, setPages] = useState<InstancePage[]>([])
   const [pageID, setPageID] = useState('')
@@ -89,11 +90,13 @@ export function InstanceDialog(props: InstanceDialogProps) {
   }, [])
 
   const load = useCallback(async () => {
+    setError('')
     try { applyInstance(await api.getInstance(request, instanceID)); setError('') } catch (e) { setError(errorMessage(e, '读取实例失败')) }
   }, [applyInstance, instanceID, request])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => {
+    setError('')
     if (view === 'runs') void api.listInstanceRuns(request, instanceID).then(page => setRuns(page.runs || []), e => setError(errorMessage(e, '读取执行记录失败')))
     if (view === 'pages') void api.listPages(request, instanceID).then(page => {
       const items = page.pages || []
@@ -161,7 +164,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
 
   if (!instance) {
     return <Dialog isOpen onClose={onClose} title="插件实例" size="lg" placement="right" drawerSize="wide">
-      {error ? <p role="alert" className="plugin-field-error">{error}</p> : <p className="text-sm text-muted-foreground" role="status">正在读取…</p>}
+      {error ? <Button variant="outline" onClick={() => void load()}>重新加载</Button> : <p className="text-sm text-muted-foreground" role="status">正在读取…</p>}
     </Dialog>
   }
 
@@ -179,7 +182,6 @@ export function InstanceDialog(props: InstanceDialogProps) {
   return <Dialog isOpen onClose={() => void requestClose()} size="xl" placement="right" drawerSize="wide" footer={footer}
     title={<span className="plugin-dialog-title">{instance.name}<Badge variant={instanceStatusTone(instance.status)}>{instanceStatusLabels[instance.status] || instance.status}</Badge></span>}>
     <div className="plugin-instance">
-      {error && <p role="alert" className="plugin-field-error">{error}</p>}
       {instance.auto_paused && <div className="plugin-callout danger"><p>连续失败 {instance.failure_streak} 次后已自动暂停。修复原因后点击「恢复」。</p></div>}
       {instance.permission_review_required && <div className="plugin-callout warning"><p>新版本申请了新的权限，管理员审核授权前实例不会运行。</p></div>}
       <Tabs value={view} onValueChange={value => setView(value as View)}>

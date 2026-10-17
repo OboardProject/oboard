@@ -46,3 +46,17 @@ it("shows attribution and quality separately, with votes and degraded sources", 
   expect(document.body.textContent).toContain("IPWhois 国家 AU")
   expect(document.body.textContent).toContain("未配置 API Key")
 })
+
+it.each(["route", "ip_quality"] as const)("toasts a failed %s edit while preserving its draft", async kind => {
+  const notify = vi.fn()
+  const requestV2 = vi.fn(async (_path: string, init?: RequestInit) => {
+    if (init?.method === "POST") throw new Error("任务保存失败")
+    return { monitors: [{ ...task, kind, interval_seconds: 3600 }], providers: {} }
+  })
+  await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={servers} kind={kind} canManage notify={notify} />))
+  await act(async () => button("编辑").click())
+  await act(async () => document.body.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  expect(notify).toHaveBeenCalledWith("任务保存失败", "error")
+  expect(document.body.querySelector<HTMLInputElement>('[aria-label="任务名称"]')?.value).toBe(task.name)
+  expect(document.body.textContent).not.toContain("任务保存失败")
+})

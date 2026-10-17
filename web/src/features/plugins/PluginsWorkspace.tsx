@@ -1,3 +1,4 @@
+import { useErrorToast } from "../../components/ui/use-error-toast"
 import './plugins.css'
 import React, { useCallback, useEffect, useState } from 'react'
 import { Code2, Cpu, GitBranch, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
@@ -37,7 +38,7 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
   const [users, setUsers] = useState<UserOption[]>([])
   const [plans, setPlans] = useState<PlanOption[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
+  const [, setLoadError] = useErrorToast(notify)
   const [busy, setBusy] = useState(false)
   const [detail, setDetail] = useState<InstallationDetail | null>(null)
   const [instanceID, setInstanceID] = useState<number | null>(null)
@@ -47,7 +48,7 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
   const [editor, setEditor] = useState<EditorState>(null)
 
   const refresh = useCallback(async () => {
-    setLoading(true)
+    setLoading(true); setLoadError('')
     try {
       const [list, status, runPage] = await Promise.all([
         api.listInstallations(request),
@@ -112,7 +113,6 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
         <TabsTrigger value="library">已安装</TabsTrigger>
         <TabsTrigger value="runs">执行记录</TabsTrigger>
       </TabsList>
-      {loadError && <p role="alert" className="plugin-field-error">{loadError}</p>}
       <TabsContent value="library">
         {loading && !plugins.length ? <p className="plugin-env-help p-4" role="status">正在加载插件…</p>
           : plugins.length === 0 ? <SignalEmptyState title="还没有插件" description="从 .obplugin 包或 GitHub 仓库安装，或在编辑器中新建。安装后需要配置并由管理员授权才能运行。" />
@@ -151,7 +151,7 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
       </TabsContent>
     </Tabs>
 
-    {detail && !instanceID && !editor && <PluginDetail detail={detail} isAdmin={isAdmin} canConfigure={canOperate} busy={busy} onClose={() => setDetail(null)}
+    {detail && !instanceID && !editor && <PluginDetail notify={notify} detail={detail} isAdmin={isAdmin} canConfigure={canOperate} busy={busy} onClose={() => setDetail(null)}
       onOpenInstance={setInstanceID}
       onCreateInstance={name => void act(async () => { const created = await api.createInstance(request, detail.id, name); await reloadDetail(); setInstanceID(created.id) }, '已创建实例，请完成配置与授权')}
       onToggleEnabled={() => void act(async () => { setDetail(await api.setInstallationEnabled(request, detail.id, !detail.enabled)); void refresh() }, detail.enabled ? '已停用插件' : '已启用插件')}
@@ -177,9 +177,9 @@ export function PluginsWorkspace({ tab, data, client, notify, onNavigate }: Plug
       customTypes={catalog?.custom_types || []} canConfigure={canOperate} canExecute={canOperate} canAuthorize={isAdmin} notify={notify}
       onChanged={() => void reloadDetail()} onOpenRun={setRunID} onClose={() => setInstanceID(null)} />}
 
-    {runID && <RunDialog key={runID} id={runID} request={request} canCancel={canOperate} onClose={() => setRunID(null)} />}
+    {runID && <RunDialog notify={notify} key={runID} id={runID} request={request} canCancel={canOperate} onClose={() => setRunID(null)} />}
 
-    {installOpen && <PackageInstallDialog request={request} onClose={() => setInstallOpen(false)} onInstalled={(id, reviewRequired) => {
+    {installOpen && <PackageInstallDialog notify={notify} request={request} onClose={() => setInstallOpen(false)} onInstalled={(id, reviewRequired) => {
       setInstallOpen(false)
       notify(reviewRequired ? '已安装新版本，新增权限需要重新审核授权' : '安装完成，请创建实例并完成配置与授权', 'success')
       void refresh()

@@ -70,3 +70,18 @@ it("creates a prefix from an existing NIC address and submits the selected inter
   await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ interface_name: "eth1", interface_prefix: "2001:db8:1234::/48", interface_address: "", address_family: "ipv6", record_types: "aaaa" }))
 })
+
+it("toasts a failed edit once and keeps the DDNS form open", async () => {
+  const notify = vi.fn()
+  const requestV2 = vi.fn(async (_path: string, init?: RequestInit) => {
+    if (init?.method === "POST") throw new Error("DDNS 保存失败")
+    return { records: [{ ...record(1, 1, "a"), dns_credential_id: 1 }] }
+  })
+  await act(async () => root.render(<ProbeDDNS client={{ request: vi.fn(), requestV2 }} servers={servers} credentials={[]} canManage notify={notify} />))
+  await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="编辑 a"]')!.click())
+  await act(async () => document.body.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  expect(notify).toHaveBeenCalledTimes(1)
+  expect(notify).toHaveBeenCalledWith("DDNS 保存失败", "error")
+  expect(document.body.querySelector<HTMLInputElement>('[aria-label="DDNS 名称"]')?.value).toBe("a")
+  expect(document.body.textContent).not.toContain("DDNS 保存失败")
+})
