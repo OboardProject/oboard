@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ddnsAddressChoices } from './ddns-addresses'
+import { ddnsAddressChoices, ddnsPrefixFromAddress } from './ddns-addresses'
 
 const interfaces = [
   { name: 'lo', up: true, running: true, loopback: true, addresses: ['127.0.0.1/8'] },
@@ -21,4 +21,15 @@ describe('ddnsAddressChoices', () => {
   it('filters by family', () => {
     expect(ddnsAddressChoices(interfaces, 'ipv6', true).map(choice => choice.address)).toEqual(['2001:db8::8/64'])
   })
+})
+
+it('generates network prefixes using the reported mask for both address families', () => {
+  expect(ddnsPrefixFromAddress('203.0.113.8/24')).toBe('203.0.113.0/24')
+  expect(ddnsPrefixFromAddress('203.0.113.138/25')).toBe('203.0.113.128/25')
+  expect(ddnsPrefixFromAddress('2001:db8:1234:abcd::8/48')).toBe('2001:db8:1234::/48')
+  expect(ddnsPrefixFromAddress('2001:db8:1234:abcd::8/57')).toBe('2001:db8:1234:ab80::/57')
+  expect(ddnsPrefixFromAddress('2001:db8::8/128')).toBe('2001:db8::8/128')
+  expect(ddnsPrefixFromAddress('203.0.113.8')).toBe('203.0.113.8/32')
+  expect(ddnsPrefixFromAddress('2001:db8::8/0')).toBe('::/0')
+  for (const invalid of ['203.0.113.8/33', '2001:db8::8/129', '203.0.113.8/', '203.0.113.8/24/1']) expect(ddnsPrefixFromAddress(invalid)).toBeNull()
 })

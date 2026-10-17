@@ -6,7 +6,7 @@ import { FormField } from '../ui/form-field'
 import { Select } from '../ui/select'
 import { Switch } from '../ui/switch'
 import type { Server } from '../proxy-path/types'
-import { ddnsAddressChoices, type DDNSInterface } from './ddns-addresses'
+import { ddnsAddressChoices, ddnsPrefixFromAddress, type DDNSInterface } from './ddns-addresses'
 import { ServerPickerSelect } from './ServerPickerSelect'
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any>; requestV2?: (path: string, init?: RequestInit) => Promise<any> }
@@ -318,6 +318,10 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
   const usable = credentials.filter(item => item.enabled && item.verified_at)
   const provider = usable.find(item => item.id === Number(draft.dns_credential_id || 0))?.provider
   const choices = useMemo(() => ddnsAddressChoices(interfaces, draft.address_family || '', draft.exclude_private), [interfaces, draft.address_family, draft.exclude_private])
+  const prefixChoices = choices.flatMap(choice => {
+    const prefix = ddnsPrefixFromAddress(choice.address)
+    return prefix ? [{ ...choice, prefix }] : []
+  })
   const selectedChoice = choices.find(choice => choice.interfaceName === draft.interface_name && choice.address === draft.interface_address)
   const readInterfaces = async () => {
     if (!draft.server_id || reading) return
@@ -434,11 +438,22 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
         </div>
         {readStatus && <p className={choices.length ? 'field-hint' : 'danger-text'} role={choices.length ? 'status' : 'alert'}>{readStatus}</p>}
         <FormField label="取址方式">
-          <Select aria-label="取址方式" value={prefixMode ? 'prefix' : 'exact'} onChange={event => { setPrefixMode(event.target.value === 'prefix'); setDraft({ ...draft, interface_address: '', interface_prefix: '' }) }}>
+          <Select aria-label="取址方式" value={prefixMode ? 'prefix' : 'exact'} onChange={event => { setPrefixMode(event.target.value === 'prefix'); setDraft({ ...draft, interface_address: '', interface_prefix: event.target.value === 'prefix' && selectedChoice ? ddnsPrefixFromAddress(selectedChoice.address) || '' : '' }) }}>
             <option value="exact">固定地址</option><option value="prefix">匹配地址前缀</option>
           </Select>
         </FormField>
-        {prefixMode ? <div className="inbound-editor-grid">
+        {prefixMode ? <>
+          <FormField label="从现有 IP 生成前缀" hint="使用网卡上报的掩码生成，可在下方调整。">
+            <Select aria-label="从现有 IP 生成前缀" value="" disabled={!prefixChoices.length} onChange={event => {
+              const choice = prefixChoices[Number(event.target.value)]
+              if (!choice || event.target.value === '') return
+              setDraft({ ...draft, interface_name: choice.interfaceName, interface_address: '', interface_prefix: choice.prefix, address_family: choice.family, record_types: choice.family === 'ipv4' ? 'a' : 'aaaa' })
+            }}>
+              <option value="">{prefixChoices.length ? '选择现有 IP' : '请先读取网卡或调整地址过滤条件'}</option>
+              {prefixChoices.map((choice, index) => <option key={choice.interfaceName + choice.address} value={index}>{choice.interfaceName} · {choice.address} → {choice.prefix}</option>)}
+            </Select>
+          </FormField>
+          <div className="inbound-editor-grid">
           <FormField label="网卡" required>
             <Select aria-label="前缀匹配网卡" required value={draft.interface_name || ''} onChange={event => setDraft({ ...draft, interface_name: event.target.value })}>
               <option value="">请先读取网卡</option>
@@ -449,7 +464,7 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
           <FormField label="地址前缀" required hint="填写 CIDR，例如 203.0.113.0/24 或 2001:db8::/48。只有一个地址匹配时才更新；无匹配或多个匹配会保留原解析。">
             <input aria-label="地址前缀" required maxLength={80} value={draft.interface_prefix || ''} placeholder="203.0.113.0/24" onChange={event => setDraft({ ...draft, interface_prefix: event.target.value, record_types: event.target.value.includes(':') ? 'aaaa' : 'a' })} />
           </FormField>
-        </div> : <>
+        </div></> : <>
         <FormField label="网卡地址" required={interfaces.length > 0} hint={draft.interface_address ? `已保存 ${draft.interface_name} ${draft.interface_address}` : '读取后从列表选择，不能手工填写。'}>
           <Select aria-label="网卡地址" value={selectedChoice ? `${selectedChoice.interfaceName}\u001f${selectedChoice.address}` : ''} onChange={event => {
             const choice = choices.find(item => `${item.interfaceName}\u001f${item.address}` === event.target.value)

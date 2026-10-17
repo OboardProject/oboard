@@ -66,3 +66,32 @@ function expandIPv6(value: string): number[] | null {
   if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return null
   return [...left, ...Array(missing).fill(0), ...right]
 }
+
+export function ddnsPrefixFromAddress(value: string): string | null {
+  const parsed = classifyDDNSAddress(value)
+  if (!parsed) return null
+  const [address, mask, ...extra] = value.trim().split('/')
+  const width = parsed.family === 'ipv4' ? 32 : 128
+  if (extra.length || (mask !== undefined && !/^\d+$/.test(mask))) return null
+  const bits = mask === undefined ? width : Number(mask)
+  if (bits > width) return null
+  const unit = parsed.family === 'ipv4' ? 8 : 16
+  const parts = parsed.family === 'ipv4' ? address.split('.').map(Number) : expandIPv6(address.replace(/^\[|\]$/g, ''))!
+  const network = parts.map((part, index) => {
+    const kept = Math.max(0, Math.min(unit, bits - index * unit))
+    return Math.floor(part / 2 ** (unit - kept)) * 2 ** (unit - kept)
+  })
+  if (parsed.family === 'ipv4') return network.join('.') + '/' + bits
+  let bestStart = -1
+  let bestLength = 1
+  for (let i = 0; i < network.length;) {
+    if (network[i] !== 0) { i++; continue }
+    let end = i
+    while (end < network.length && network[end] === 0) end++
+    if (end - i > bestLength) { bestStart = i; bestLength = end - i }
+    i = end
+  }
+  const hex = network.map(part => part.toString(16))
+  const prefix = bestStart < 0 ? hex.join(':') : hex.slice(0, bestStart).join(':') + '::' + hex.slice(bestStart + bestLength).join(':')
+  return prefix + '/' + bits
+}

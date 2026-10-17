@@ -56,3 +56,17 @@ it("picks the DDNS server by region and lists verified DNS accounts", async () =
   await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ interface_prefix: "203.0.113.0/24", interface_address: "", record_types: "a" }))
  })
+
+it("creates a prefix from an existing NIC address and submits the selected interface", async () => {
+  const submit = vi.fn(async () => {})
+  const request = vi.fn(async () => ({ task: { id: 1, status: "succeeded", result_json: JSON.stringify({ interfaces: [
+    { name: "eth1", up: true, running: true, loopback: false, addresses: ["203.0.113.138/25", "2001:db8:1234:abcd::8/48"] },
+  ] }) } }))
+  await act(async () => root.render(<ProbeDDNSForm record={{ ...record(1, 1, "carrier"), record_types: "a", interface_name: "eth0", interface_prefix: "198.51.100.0/24" }} servers={servers} credentials={[]} client={{ request }} busy={false} canManage onCancel={vi.fn()} onSubmit={submit} />))
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "读取网卡")!.click())
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="从现有 IP 生成前缀"]')!.click())
+  await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes("2001:db8:1234:abcd::8/48"))!.click())
+  expect(host.querySelector<HTMLInputElement>('[aria-label="地址前缀"]')?.value).toBe("2001:db8:1234::/48")
+  await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ interface_name: "eth1", interface_prefix: "2001:db8:1234::/48", interface_address: "", address_family: "ipv6", record_types: "aaaa" }))
+})
