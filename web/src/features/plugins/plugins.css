@@ -8,7 +8,7 @@
 .dialog.plugin-secret-dialog { width: min(560px, calc(100vw - 32px)); max-width: none; }
 .plugin-secret-dialog .dialog-chrome-body { display: grid; align-content: start; gap: var(--space-3); }
 .plugin-secret-dialog .plugin-env-help { margin: 0; }
-.plugin-secret-dialog .plugin-secret-input { width: 100%; min-width: 0; }
+.plugin-secret-dialog .plugin-secret-input { width: calc(100% - 8px); min-width: 0; margin: 0 4px 4px; }
 .plugin-field-error { font-size: 13px; line-height: 1.5; color: var(--color-danger); overflow-wrap: anywhere; }
 .plugin-required { margin-left: 2px; color: var(--color-danger); }
 .plugin-version { margin-left: var(--space-2); font-size: 13px; font-weight: 500; color: var(--text-muted); }
