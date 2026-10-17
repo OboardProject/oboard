@@ -33,16 +33,25 @@ export function GrantEditor({ detail, grant, servers, channels, users, plans, en
   const [draft, setDraft] = useState<Grant>(() => initialGrant(detail.permissions, grant))
   const hosts = detail.http_hosts || []
   const serverOptions = useMemo(() => servers.map(server => ({ value: server.id, label: `${server.name}${server.online ? '' : '（离线）'}`, keywords: server.region_code })), [servers])
-  const toggle = (line: PermissionLine, on: boolean) => {
-    const next = { ...draft.capabilities }
+  const applyToggle = (next: Grant['capabilities'], line: PermissionLine, on: boolean) => {
     if (!on) delete next[line.capability]
     else if (line.resource === 'server') next[line.capability] = { servers: envServerIDs.map(Number).filter(Boolean) }
     else if (line.resource === 'http_host') next[line.capability] = { hosts: [...hosts] }
     else if (line.resource === 'user') next[line.capability] = { users: [] }
     else if (line.resource === 'plan') next[line.capability] = { plans: [] }
     else next[line.capability] = {}
+  }
+  const toggle = (line: PermissionLine, on: boolean) => {
+    const next = { ...draft.capabilities }
+    applyToggle(next, line, on)
     setDraft({ capabilities: next })
   }
+  const toggleAll = (on: boolean) => {
+    const next = { ...draft.capabilities }
+    for (const line of detail.permissions) if (!on || !next[line.capability]) applyToggle(next, line, on)
+    setDraft({ capabilities: next })
+  }
+  const enabledCount = detail.permissions.filter(line => draft.capabilities[line.capability]).length
   const setScope = (capability: string, patch: Partial<Grant['capabilities'][string]>) =>
     setDraft({ capabilities: { ...draft.capabilities, [capability]: { ...draft.capabilities[capability], ...patch } } })
   const missing = detail.permissions.filter(line => {
@@ -63,6 +72,11 @@ export function GrantEditor({ detail, grant, servers, channels, users, plans, en
       <p>有效权限 = 清单声明 ∩ 本授权 ∩ 资源范围 ∩ 运行策略，每次调用都会重新检查。环境变量中选择的服务器不是授权。</p>
     </div>
     {grant && !grant.current && <div className="plugin-callout warning"><ShieldAlert size={16} aria-hidden="true" /><p>当前授权属于旧版本，保存后才会用于新版本。</p></div>}
+    {detail.permissions.length > 0 && <div className="plugin-grant-bulk">
+      <span className="plugin-env-help">已开启 {enabledCount}/{detail.permissions.length} 项</span>
+      <Button type="button" size="sm" variant="outline" disabled={busy || enabledCount === detail.permissions.length} onClick={() => toggleAll(true)}>全部开启</Button>
+      <Button type="button" size="sm" variant="outline" disabled={busy || enabledCount === 0} onClick={() => toggleAll(false)}>全部关闭</Button>
+    </div>}
     <ul className="plugin-permission-list">
       {detail.permissions.map(line => {
         const scope = draft.capabilities[line.capability]

@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/button'
 import { Dialog } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
+import { useSettingsEditorClose } from '../../components/settings/useSettingsEditorClose'
 import * as api from './api'
 import { EnvironmentForm } from './EnvironmentForm'
 import { GrantEditor } from './GrantEditor'
@@ -47,6 +48,12 @@ function serverIDsInValues(installation: InstallationDetail, values: Record<stri
   for (const field of installation.manifest?.environment || []) add(field.type, values[field.name])
   for (const item of custom) add(item.type, item.value)
   return [...ids]
+}
+
+function stableJSON(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item as Record<string, unknown>).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)))
+    : item)
 }
 
 export function InstanceDialog(props: InstanceDialogProps) {
@@ -146,6 +153,12 @@ export function InstanceDialog(props: InstanceDialogProps) {
     }
   }
 
+  const dirty = Boolean(instance) && canConfigure && (
+    stableJSON(values) !== stableJSON(instance?.values || {})
+    || stableJSON(custom.filter(item => item.name)) !== stableJSON(instance?.custom || [])
+    || (nameDraft !== '' && nameDraft !== instance?.name))
+  const requestClose = useSettingsEditorClose({ busy, dirty, onClose })
+
   if (!instance) {
     return <Dialog isOpen onClose={onClose} title="插件实例" size="lg" placement="right" drawerSize="wide">
       {error ? <p role="alert" className="plugin-field-error">{error}</p> : <p className="text-sm text-muted-foreground" role="status">正在读取…</p>}
@@ -154,14 +167,16 @@ export function InstanceDialog(props: InstanceDialogProps) {
 
   const manifest = installation.manifest
   const runnable = instance.status === 'ready' || instance.status === 'degraded'
+  const saveConfig = () => void act(async () => applyInstance(await api.saveEnvironment(request, instance.id, instance.revision, values, custom.filter(item => item.name))), '配置已保存')
   const footer = <>
     {canExecute && <Button variant="outline" disabled={busy || !runnable} title={runnable ? undefined : instanceStatusLabels[instance.status]}
       onClick={() => void act(async () => { const result = await api.runInstance(request, instance.id, newIdempotencyKey('manual')); onOpenRun(result.run.id) }, '已提交运行')}><Play size={15} />立即运行</Button>}
     {canConfigure && instance.auto_paused && <Button variant="outline" disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { resume: true })), '已恢复实例')}><RotateCcw size={15} />恢复</Button>}
     {canConfigure && <Button variant={instance.enabled ? 'ghost' : 'default'} disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { enabled: !instance.enabled })), instance.enabled ? '已停用实例' : '已启用实例')}>{instance.enabled ? '停用' : '启用'}</Button>}
+    {canConfigure && view === 'config' && <Button busy={busy} disabled={!dirty} onClick={saveConfig}>{dirty ? '保存配置' : '已保存'}</Button>}
   </>
 
-  return <Dialog isOpen onClose={onClose} size="xl" placement="right" drawerSize="wide" footer={footer}
+  return <Dialog isOpen onClose={() => void requestClose()} size="xl" placement="right" drawerSize="wide" footer={footer}
     title={<span className="plugin-dialog-title">{instance.name}<Badge variant={instanceStatusTone(instance.status)}>{instanceStatusLabels[instance.status] || instance.status}</Badge></span>}>
     <div className="plugin-instance">
       {error && <p role="alert" className="plugin-field-error">{error}</p>}
@@ -186,9 +201,6 @@ export function InstanceDialog(props: InstanceDialogProps) {
           <EnvironmentForm fields={manifest?.environment || []} values={values} onChange={setValues} custom={custom} onCustomChange={canConfigure ? setCustom : undefined}
             customTypes={customTypes} servers={servers} secrets={instance.secrets} onSetSecret={canAuthorize ? name => { setSecretName(name); setSecretValue('') } : undefined}
             issues={issuesForDraft(issues, validatedDraft, { values, custom })} disabled={!canConfigure || busy} />
-          {canConfigure && <div className="plugin-actions">
-            <Button busy={busy} onClick={() => void act(async () => applyInstance(await api.saveEnvironment(request, instance.id, instance.revision, values, custom.filter(item => item.name))), '配置已保存')}>保存配置</Button>
-          </div>}
         </TabsContent>
         <TabsContent value="grant">
           {canAuthorize ? <GrantEditor key={`${instance.grant?.revision || 0}-${instance.grant?.package_id || 0}`} detail={installation} grant={instance.grant} servers={servers} channels={channels} users={users} plans={plans}

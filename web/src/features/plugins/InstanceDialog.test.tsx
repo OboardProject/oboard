@@ -2,6 +2,7 @@
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import { DialogContext } from '../../components/ui/dialog-context'
 import { InstanceDialog } from './InstanceDialog'
 import type { InstallationDetail, RequestFn } from './types'
 
@@ -47,9 +48,9 @@ it('ties errors to validated values across edits, secret saves and rejected subm
     })
   }
   try {
-    await act(async () => root.render(<InstanceDialog instanceID={1} installation={installation} request={request as RequestFn}
+    await act(async () => root.render(<DialogContext.Provider value={{ confirm: vi.fn(async () => true), alert: vi.fn(), prompt: vi.fn() }}><InstanceDialog instanceID={1} installation={installation} request={request as RequestFn}
       servers={[]} channels={[]} users={[]} plans={[]} customTypes={[]} canConfigure canAuthorize canExecute={false}
-      notify={vi.fn()} onChanged={vi.fn()} onOpenRun={vi.fn()} onClose={vi.fn()} />))
+      notify={vi.fn()} onChanged={vi.fn()} onOpenRun={vi.fn()} onClose={vi.fn()} /></DialogContext.Provider>))
     expect(input('ECS 地域 ID').getAttribute('aria-invalid')).toBe('true')
     await type(input('ECS 地域 ID'), 'cn-hongkong')
     expect(input('ECS 地域 ID').hasAttribute('aria-invalid')).toBe(false)
