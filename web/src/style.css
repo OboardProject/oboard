@@ -9356,9 +9356,13 @@ body:has(.controller-update-immersive-layer) {
 }
 
 .dialog-layer.controller-update-immersive-layer {
+  inset: 0;
+  height: auto;
   background: #f8f9fb;
   color-scheme: light;
   padding: 0;
+  place-items: stretch;
+  overflow: hidden;
 }
 
 .dialog-layer.controller-update-immersive-layer > .dialog-backdrop {
@@ -9402,6 +9406,7 @@ body:has(.controller-update-immersive-layer) {
   overflow: auto;
   background: #050505;
   isolation: isolate;
+  overscroll-behavior: none;
 }
 
 .controller-update-lightfield canvas {

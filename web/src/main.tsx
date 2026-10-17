@@ -4953,7 +4953,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
     </div>
     <footer className="dialog-actions controller-update-install-actions"><button type="button" className="ghost" onClick={closeConfirm}>取消</button><button type="button" className="primary" onClick={() => onInstall(!createBackup)}>{createBackup ? '备份并更新' : '安装更新'}</button></footer>
   </MotionDialogPanel>
-  return <ModalSurface onClose={waiting || phase === 'complete' ? () => {} : onCancel} rootClassName="controller-update-immersive-layer" panelClassName="controller-update-immersive" ariaLabel={title}>
+  return <ModalSurface onClose={waiting || phase === 'complete' ? () => {} : onCancel} rootClassName="controller-update-immersive-layer" panelClassName="controller-update-immersive" surfaceMotion="none" ariaLabel={title}>
     <ControllerUpdateLightfield mode={animationMode} reduceMotion={Boolean(reduceMotion)}>
       <header className="controller-update-immersive-head">
         <div><span className="controller-update-eyebrow">OBOARD / SYSTEM UPDATE</span><h2>{title}</h2><p>{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>
