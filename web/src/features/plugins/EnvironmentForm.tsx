@@ -189,7 +189,7 @@ function CustomVariables({ custom, onChange, types, servers, secrets, onSetSecre
     {custom.map((item, index) => {
       const field: EnvField = { name: item.name, type: item.type, label: item.name || '新变量' }
       const localError = nameError(item.name)
-      const serverError = item.name ? issues[item.name] || issues[`custom.${index}`] : issues[`custom.${index}`]
+      const serverError = item.name ? issues[item.name] || issues[`custom.${item.name}`] || issues[`custom.${index}`] : issues[`custom.${index}`]
       return <div key={index} className="plugin-custom-row">
         <div className="plugin-custom-row-head">
           <Input aria-label="变量名" placeholder="VARIABLE_NAME" value={item.name} disabled={disabled} aria-invalid={Boolean(localError) || undefined}

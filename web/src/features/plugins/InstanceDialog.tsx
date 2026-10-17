@@ -12,7 +12,7 @@ import { PageView } from './PageView'
 import { ScheduleEditor } from './ScheduleEditor'
 import {
   describeError, errorIssues, errorMessage, formatBytes, formatTime, instanceStatusLabels, instanceStatusTone,
-  issuesByField, newIdempotencyKey, runStatusLabels, runTone, triggerLabels,
+  issuesByField, issuesForDraft, newIdempotencyKey, runStatusLabels, runTone, triggerLabels,
 } from './domain'
 import type {
   AuditEvent, CustomVar, EnvType, Grant, InstallationDetail, InstanceDetail, InstancePage,   NotificationChannelOption, PlanOption, RequestFn, Run, ServerOption, StateEntry, ToastTone, UserOption,
@@ -56,6 +56,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [custom, setCustom] = useState<CustomVar[]>([])
   const [issues, setIssues] = useState<Record<string, string>>({})
+  const [validatedDraft, setValidatedDraft] = useState<{ values: Record<string, unknown>; custom: CustomVar[] }>({ values: {}, custom: [] })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [runs, setRuns] = useState<Run[]>([])
@@ -69,6 +70,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
 
   const applyInstance = useCallback((next: InstanceDetail, preserveDraft = false) => {
     setInstance(next)
+    setValidatedDraft({ values: next.values || {}, custom: next.custom || [] })
     if (preserveDraft) {
       setIssues(issuesByField(next.issues))
       return
@@ -134,7 +136,10 @@ export function InstanceDialog(props: InstanceDialogProps) {
       onChanged()
     } catch (e) {
       const fieldIssues = errorIssues(e)
-      if (fieldIssues.length) setIssues(issuesByField(fieldIssues))
+      if (fieldIssues.length) {
+        setIssues(issuesByField(fieldIssues))
+        setValidatedDraft({ values, custom })
+      }
       setError(errorMessage(e, '操作失败'))
     } finally {
       setBusy(false)
@@ -180,7 +185,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
           </div>}
           <EnvironmentForm fields={manifest?.environment || []} values={values} onChange={setValues} custom={custom} onCustomChange={canConfigure ? setCustom : undefined}
             customTypes={customTypes} servers={servers} secrets={instance.secrets} onSetSecret={canAuthorize ? name => { setSecretName(name); setSecretValue('') } : undefined}
-            issues={issues} disabled={!canConfigure || busy} />
+            issues={issuesForDraft(issues, validatedDraft, { values, custom })} disabled={!canConfigure || busy} />
           {canConfigure && <div className="plugin-actions">
             <Button busy={busy} onClick={() => void act(async () => applyInstance(await api.saveEnvironment(request, instance.id, instance.revision, values, custom.filter(item => item.name))), '配置已保存')}>保存配置</Button>
           </div>}

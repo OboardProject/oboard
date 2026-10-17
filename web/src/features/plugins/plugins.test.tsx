@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { EnvironmentForm } from './EnvironmentForm'
 import { GrantEditor } from './GrantEditor'
 import { PluginSource } from './PluginSource'
-import { describeError, errorIssues, fieldActive, issuesByField } from './domain'
+import { describeError, errorIssues, fieldActive, issuesByField, issuesForDraft } from './domain'
 import type { EnvField, InstallationDetail, PluginUpdateCheck, ServerOption } from './types'
 
 beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
@@ -45,6 +45,16 @@ it('maps structured API errors to field issues and readable text', () => {
   expect(issuesByField(errorIssues(error))).toEqual({ THRESHOLD: '超出范围' })
   expect(describeError('SERVER_OFFLINE')).toBe('目标服务器离线')
   expect(describeError('UNKNOWN_CODE', 'raw')).toBe('raw')
+})
+
+it('retains unchanged errors and invalidates custom errors by name or index', () => {
+  const validated = { values: { REGION: '' }, custom: [{ name: 'TARGET', type: 'server' as const, value: '1' }] }
+  const issues = { REGION: '必填项尚未填写', 'custom.TARGET': '服务器不存在', 'custom.0': '服务器不存在' }
+  expect(issuesForDraft(issues, validated, validated)).toEqual(issues)
+  expect(issuesForDraft(issues, validated, {
+    values: { REGION: 'cn-hongkong' }, custom: [{ name: 'TARGET', type: 'server', value: '2' }],
+  })).toEqual({})
+  expect(issuesForDraft(issues, validated, { values: { REGION: '' }, custom: [] })).toEqual({ REGION: issues.REGION })
 })
 
 it('renders only active fields, never a secret value, and honours server filters', async () => {

@@ -1,4 +1,4 @@
-import type { EnvField, FieldIssue, Risk } from './types'
+import type { CustomVar, EnvField, FieldIssue, Risk } from './types'
 
 export const instanceStatusLabels: Record<string, string> = {
   ready: '就绪',
@@ -163,6 +163,22 @@ export function issuesByField(issues: FieldIssue[] | undefined) {
     if (!out[key]) out[key] = issue.message
   }
   return out
+}
+
+export function issuesForDraft(
+  issues: Record<string, string>,
+  validated: { values: Record<string, unknown>; custom: CustomVar[] },
+  draft: { values: Record<string, unknown>; custom: CustomVar[] },
+) {
+  const valueAt = (snapshot: typeof draft, field: string) => {
+    if (field.startsWith('custom.')) {
+      const name = field.slice('custom.'.length)
+      return /^\d+$/.test(name) ? snapshot.custom[Number(name)] : snapshot.custom.find(item => item.name === name)
+    }
+    return snapshot.custom.find(item => item.name === field) || snapshot.values[field]
+  }
+  return Object.fromEntries(Object.entries(issues).filter(([field]) =>
+    JSON.stringify(valueAt(validated, field)) === JSON.stringify(valueAt(draft, field))))
 }
 
 export function errorIssues(error: unknown): FieldIssue[] {
