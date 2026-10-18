@@ -292,3 +292,22 @@
   .inbound-host-preview > div + div { border-left: 0; border-top: 1px solid var(--border); }
   .inbound-editor-blocker { flex-basis: 100%; }
 }
+
+.ddns-bind-grid { align-items: start; }
+
+.ddns-bind-grid > .form-field .form-field-meta { min-height: 24px; align-items: center; }
+
+.ddns-bind-grid > .inbound-editor-switch,
+.ddns-bind-grid > .ddns-interface-read,
+.ddns-bind-grid > .ddns-grid-full { grid-column: 1 / -1; }
+
+.ddns-interface-read {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ddns-interface-read > button { flex: 0 0 auto; }
+.ddns-interface-read > p { margin: 0; font-size: 13px; }

@@ -422,31 +422,29 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
         <span><strong>绑定网卡地址</strong><small>不绑定则使用服务器当前公网地址。可固定一个地址，或按前缀跟随网卡地址变化。</small></span>
         <Switch checked={bound} ariaLabel="绑定网卡地址" onChange={checked => { setBindInterface(checked); setDraft({ ...draft, interface_name: checked ? draft.interface_name : '', interface_address: checked ? draft.interface_address : '', exclude_private: checked ? true : draft.exclude_private }) }} />
       </div>
-      {bound && <>
-        <div className="inbound-editor-grid">
-          <FormField label="地址族">
-            <Select aria-label="地址族" value={draft.address_family || ''} onChange={event => setDraft({ ...draft, address_family: event.target.value as ProbeDDNSRecord['address_family'], interface_address: '' })}>
-              <option value="">IPv4 和 IPv6</option>
-              <option value="ipv4">仅 IPv4</option>
-              <option value="ipv6">仅 IPv6</option>
-            </Select>
-          </FormField>
-          <div className="inbound-editor-switch">
-            <span><strong>排除内网地址</strong><small>开启后不会发布私网、链路本地或运营商级 NAT 地址。</small></span>
-            <Switch checked={draft.exclude_private} ariaLabel="排除内网地址" onChange={checked => setDraft({ ...draft, exclude_private: checked, interface_address: '' })} />
-          </div>
-        </div>
-        <div className="inline-field-action">
-          <button type="button" className="ghost" disabled={!draft.server_id || reading} onClick={() => void readInterfaces()}><RefreshCw size={15} aria-hidden="true" className={reading ? 'spin' : ''} />{reading ? '读取中…' : '读取网卡'}</button>
-        </div>
-        {readStatus && <p className={choices.length ? 'field-hint' : 'danger-text'} role={choices.length ? 'status' : 'alert'}>{readStatus}</p>}
+      {bound && <div className="inbound-editor-grid ddns-bind-grid">
         <FormField label="取址方式">
           <Select aria-label="取址方式" value={prefixMode ? 'prefix' : 'exact'} onChange={event => { setPrefixMode(event.target.value === 'prefix'); setDraft({ ...draft, interface_address: '', interface_prefix: event.target.value === 'prefix' && selectedChoice ? ddnsPrefixFromAddress(selectedChoice.address) || '' : '' }) }}>
             <option value="exact">固定地址</option><option value="prefix">匹配地址前缀</option>
           </Select>
         </FormField>
+        <FormField label="地址族">
+          <Select aria-label="地址族" value={draft.address_family || ''} onChange={event => setDraft({ ...draft, address_family: event.target.value as ProbeDDNSRecord['address_family'], interface_address: '' })}>
+            <option value="">IPv4 和 IPv6</option>
+            <option value="ipv4">仅 IPv4</option>
+            <option value="ipv6">仅 IPv6</option>
+          </Select>
+        </FormField>
+        <div className="inbound-editor-switch">
+          <span><strong>排除内网地址</strong><small>开启后不会发布私网、链路本地或运营商级 NAT 地址。</small></span>
+          <Switch checked={draft.exclude_private} ariaLabel="排除内网地址" onChange={checked => setDraft({ ...draft, exclude_private: checked, interface_address: '' })} />
+        </div>
+        <div className="ddns-interface-read">
+          <button type="button" className="ghost" disabled={!draft.server_id || reading} onClick={() => void readInterfaces()}><RefreshCw size={15} aria-hidden="true" className={reading ? 'spin' : ''} />{reading ? '读取中…' : '读取网卡'}</button>
+          {readStatus && <p className={choices.length ? 'field-hint' : 'danger-text'} role={choices.length ? 'status' : 'alert'}>{readStatus}</p>}
+        </div>
         {prefixMode ? <>
-          <FormField label="从现有 IP 生成前缀" hint="使用网卡上报的掩码生成，可在下方调整。">
+          <FormField label="从现有 IP 生成前缀" full hint="使用网卡上报的掩码生成，可在下方调整。">
             <Select aria-label="从现有 IP 生成前缀" value="" disabled={!prefixChoices.length} onChange={event => {
               const choice = prefixChoices[Number(event.target.value)]
               if (!choice || event.target.value === '') return
@@ -456,7 +454,6 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
               {prefixChoices.map((choice, index) => <option key={choice.interfaceName + choice.address} value={index}>{choice.interfaceName} · {choice.address} → {choice.prefix}</option>)}
             </Select>
           </FormField>
-          <div className="inbound-editor-grid">
           <FormField label="网卡" required>
             <Select aria-label="前缀匹配网卡" required value={draft.interface_name || ''} onChange={event => setDraft({ ...draft, interface_name: event.target.value })}>
               <option value="">请先读取网卡</option>
@@ -467,20 +464,20 @@ export function ProbeDDNSForm({ record, servers, credentials, client, busy, canM
           <FormField label="地址前缀" required hint="填写 CIDR，例如 203.0.113.0/24 或 2001:db8::/48。只有一个地址匹配时才更新；无匹配或多个匹配会保留原解析。">
             <input aria-label="地址前缀" required maxLength={80} value={draft.interface_prefix || ''} placeholder="203.0.113.0/24" onChange={event => setDraft({ ...draft, interface_prefix: event.target.value, record_types: event.target.value.includes(':') ? 'aaaa' : 'a' })} />
           </FormField>
-        </div></> : <>
-        <FormField label="网卡地址" required={interfaces.length > 0} hint={draft.interface_address ? `已保存 ${draft.interface_name} ${draft.interface_address}` : '读取后从列表选择，不能手工填写。'}>
-          <Select aria-label="网卡地址" value={selectedChoice ? `${selectedChoice.interfaceName}\u001f${selectedChoice.address}` : ''} onChange={event => {
-            const choice = choices.find(item => `${item.interfaceName}\u001f${item.address}` === event.target.value)
-            if (!choice) return
-            setDraft({ ...draft, interface_name: choice.interfaceName, interface_address: choice.address, address_family: choice.family, record_types: choice.family === 'ipv4' ? 'a' : 'aaaa' })
-          }}>
-            <option value="">{choices.length ? '选择地址' : '请先读取网卡'}</option>
-            {choices.map(choice => <option key={`${choice.interfaceName}-${choice.address}`} value={`${choice.interfaceName}\u001f${choice.address}`}>{choice.interfaceName} · {choice.address}</option>)}
-          </Select>
-        </FormField>
-        {interfaces.length > 0 && draft.interface_address && !selectedChoice && <p className="danger-text" role="alert">{draft.exclude_private ? '该地址不在当前过滤结果中。若它是内网地址，本次不会发布。' : '该地址已不在最近一次读取结果中，请重新选择。'}</p>}
+        </> : <>
+          <FormField label="网卡地址" full required={interfaces.length > 0} hint={draft.interface_address ? `已保存 ${draft.interface_name} ${draft.interface_address}` : '读取后从列表选择，不能手工填写。'}>
+            <Select aria-label="网卡地址" value={selectedChoice ? `${selectedChoice.interfaceName}\u001f${selectedChoice.address}` : ''} onChange={event => {
+              const choice = choices.find(item => `${item.interfaceName}\u001f${item.address}` === event.target.value)
+              if (!choice) return
+              setDraft({ ...draft, interface_name: choice.interfaceName, interface_address: choice.address, address_family: choice.family, record_types: choice.family === 'ipv4' ? 'a' : 'aaaa' })
+            }}>
+              <option value="">{choices.length ? '选择地址' : '请先读取网卡'}</option>
+              {choices.map(choice => <option key={`${choice.interfaceName}-${choice.address}`} value={`${choice.interfaceName}\u001f${choice.address}`}>{choice.interfaceName} · {choice.address}</option>)}
+            </Select>
+          </FormField>
+          {interfaces.length > 0 && draft.interface_address && !selectedChoice && <p className="danger-text ddns-grid-full" role="alert">{draft.exclude_private ? '该地址不在当前过滤结果中。若它是内网地址，本次不会发布。' : '该地址已不在最近一次读取结果中，请重新选择。'}</p>}
         </>}
-      </>}
+      </div>}
       <div className="inbound-editor-switch">
         <span><strong>启用</strong><small>停用后保留记录，但不再更新解析。</small></span>
         <Switch checked={draft.enabled} ariaLabel="启用 DDNS" onChange={checked => setDraft({ ...draft, enabled: checked })} />
