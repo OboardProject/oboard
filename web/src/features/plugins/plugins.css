@@ -183,3 +183,16 @@
   .plugin-code-editor { min-height: 320px; }
   .plugin-record-row { padding: var(--space-3); }
 }
+
+.plugin-grant-bulk-group { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-solid); box-shadow: var(--shadow-xs); overflow: hidden; }
+.plugin-grant-bulk-group > button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 0; background: transparent; color: var(--text-strong); font-size: 13px; cursor: pointer; transition: background var(--duration-menu) var(--ease-standard); }
+.plugin-grant-bulk-group > button + button { border-left: 1px solid var(--border); }
+.plugin-grant-bulk-group > button:hover:not(:disabled) { background: var(--surface-2); }
+.plugin-grant-bulk-group > button:active:not(:disabled) { transform: scale(0.97) translateY(1px); }
+.plugin-grant-bulk-group > button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.plugin-grant-bulk-group > button:disabled { color: var(--text-muted); background: var(--surface-2); cursor: default; }
+@media (pointer: coarse) { .plugin-grant-bulk-group > button { min-height: 44px; } }
+.plugin-tab-dirty { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 999px; background: var(--color-warning); vertical-align: middle; }
+.plugin-save-state { margin-right: auto; font-size: 13px; color: var(--text-muted); }
+.plugin-save-state.dirty { color: var(--color-warning); font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .plugin-grant-bulk-group > button { transition: none; } .plugin-grant-bulk-group > button:active:not(:disabled) { transform: none; } }

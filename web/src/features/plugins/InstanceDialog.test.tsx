@@ -62,7 +62,9 @@ it('ties errors to validated values across edits, secret saves and rejected subm
     await click('保存')
     expect(input('ECS 地域 ID').value).toBe('cn-hongkong')
     expect(input('ECS 地域 ID').hasAttribute('aria-invalid')).toBe(false)
-    await click('保存配置')
+    expect(container.textContent).toContain('有未保存的更改')
+    const footerSave = [...container.querySelectorAll('button')].filter(item => item.textContent === '保存').at(-1)!
+    await act(async () => footerSave.click())
     const save = request.mock.calls.find(([path]) => path.endsWith('/environment'))!
     expect(JSON.parse(String(save[1]?.body)).values).toEqual({ REGION: 'cn-hongkong' })
     expect(input('ECS 地域 ID').getAttribute('aria-invalid')).toBe('true')

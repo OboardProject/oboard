@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { EnvironmentForm } from './EnvironmentForm'
 import { GrantEditor } from './GrantEditor'
 import { PluginSource } from './PluginSource'
 import { describeError, errorIssues, fieldActive, issuesByField, issuesForDraft } from './domain'
-import type { EnvField, InstallationDetail, PluginUpdateCheck, ServerOption } from './types'
+import type { EnvField, Grant, InstallationDetail, PluginUpdateCheck, ServerOption } from './types'
 
 beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
 afterEach(() => vi.unstubAllGlobals())
@@ -122,17 +122,19 @@ it('grants server scope from explicit selection and warns about environment serv
     http_hosts: [],
     forbidden: ['Shell 与命令执行'],
   } as unknown as InstallationDetail
-  const onSave = vi.fn()
-  const view = await render(<GrantEditor detail={detail} servers={servers} channels={[]} users={[]} plans={[]} envServerIDs={['2']} onSave={onSave} />)
+  const onChange = vi.fn()
+  function Harness() {
+    const [draft, setDraft] = React.useState<Grant>({ capabilities: {} })
+    return <GrantEditor detail={detail} draft={draft} servers={servers} channels={[]} users={[]} plans={[]} envServerIDs={['2']} onChange={next => { onChange(next); setDraft(next) }} />
+  }
+  const view = await render(<Harness />)
   try {
     expect(view.container.textContent).toContain('Shell 与命令执行')
     expect(view.container.textContent).toContain('不在任何授权范围内')
     const toggle = view.container.querySelector('input[type="checkbox"]') as HTMLInputElement
     await act(async () => toggle.click())
     expect(view.container.textContent).not.toContain('不在任何授权范围内')
-    const save = Array.from(view.container.querySelectorAll('button')).find(item => item.textContent === '保存授权') as HTMLButtonElement
-    await act(async () => save.click())
-    expect(onSave).toHaveBeenCalledWith({ capabilities: { 'network.ping': { servers: [2] } } })
+    expect(onChange).toHaveBeenLastCalledWith({ capabilities: { 'network.ping': { servers: [2] } } })
   } finally {
     await view.unmount()
   }

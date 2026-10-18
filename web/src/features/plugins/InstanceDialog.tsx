@@ -1,5 +1,5 @@
 import { useErrorToast } from "../../components/ui/use-error-toast"
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Play, RotateCcw } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import { useSettingsEditorClose } from '../../components/settings/useSettingsEditorClose'
 import * as api from './api'
 import { EnvironmentForm } from './EnvironmentForm'
-import { GrantEditor } from './GrantEditor'
+import { GrantEditor, grantMissingScopes, initialGrant } from './GrantEditor'
 import { PageView } from './PageView'
 import { ScheduleEditor } from './ScheduleEditor'
 import {
@@ -75,9 +75,16 @@ export function InstanceDialog(props: InstanceDialogProps) {
   const [secretName, setSecretName] = useState('')
   const [secretValue, setSecretValue] = useState('')
   const [nameDraft, setNameDraft] = useState('')
+  const [grantDraft, setGrantDraft] = useState<Grant>({ capabilities: {} })
+  const grantKey = useRef('')
 
   const applyInstance = useCallback((next: InstanceDetail, preserveDraft = false) => {
     setInstance(next)
+    const key = `${next.grant?.revision || 0}-${next.grant?.package_id || 0}`
+    if (key !== grantKey.current) {
+      grantKey.current = key
+      setGrantDraft(initialGrant(installation.permissions, next.grant))
+    }
     setValidatedDraft({ values: next.values || {}, custom: next.custom || [] })
     if (preserveDraft) {
       setIssues(issuesByField(next.issues))
@@ -87,7 +94,7 @@ export function InstanceDialog(props: InstanceDialogProps) {
     setCustom(next.custom || [])
     setIssues(issuesByField(next.issues))
     setNameDraft(next.name)
-  }, [])
+  }, [installation.permissions])
 
   const load = useCallback(async () => {
     setError('')
@@ -156,10 +163,12 @@ export function InstanceDialog(props: InstanceDialogProps) {
     }
   }
 
-  const dirty = Boolean(instance) && canConfigure && (
+  const nameDirty = Boolean(instance) && canConfigure && nameDraft.trim() !== '' && nameDraft.trim() !== instance?.name
+  const configDirty = Boolean(instance) && canConfigure && (
     stableJSON(values) !== stableJSON(instance?.values || {})
-    || stableJSON(custom.filter(item => item.name)) !== stableJSON(instance?.custom || [])
-    || (nameDraft !== '' && nameDraft !== instance?.name))
+    || stableJSON(custom.filter(item => item.name)) !== stableJSON(instance?.custom || []))
+  const grantDirty = Boolean(instance) && canAuthorize && stableJSON(grantDraft) !== stableJSON(initialGrant(installation.permissions, instance?.grant))
+  const dirty = nameDirty || configDirty || grantDirty
   const requestClose = useSettingsEditorClose({ busy, dirty, onClose })
 
   if (!instance) {
@@ -170,13 +179,24 @@ export function InstanceDialog(props: InstanceDialogProps) {
 
   const manifest = installation.manifest
   const runnable = instance.status === 'ready' || instance.status === 'degraded'
-  const saveConfig = () => void act(async () => applyInstance(await api.saveEnvironment(request, instance.id, instance.revision, values, custom.filter(item => item.name))), '配置已保存')
+  const grantMissing = grantDirty ? grantMissingScopes(installation.permissions, grantDraft) : []
+  const saveAll = () => void act(async () => {
+    let current = instance
+    if (nameDirty) applyInstance(current = await api.updateInstance(request, current.id, { name: nameDraft.trim() }), true)
+    if (configDirty) applyInstance(current = await api.saveEnvironment(request, current.id, current.revision, values, custom.filter(item => item.name)), true)
+    if (grantDirty) applyInstance(current = await api.setGrant(request, current.id, current.grant?.revision || 0, grantDraft), true)
+    applyInstance(current)
+  }, '已保存')
+  const dirtyTab = (on: boolean) => on ? <span className="plugin-tab-dirty" aria-label="有未保存的更改" /> : null
   const footer = <>
+    {(canConfigure || canAuthorize) && <span className={`plugin-save-state${dirty ? ' dirty' : ''}`} role="status">
+      {!dirty ? '所有更改已保存' : grantMissing.length ? '权限尚未选择资源范围' : '有未保存的更改'}
+    </span>}
     {canExecute && <Button variant="outline" disabled={busy || !runnable} title={runnable ? undefined : instanceStatusLabels[instance.status]}
       onClick={() => void act(async () => { const result = await api.runInstance(request, instance.id, newIdempotencyKey('manual')); onOpenRun(result.run.id) }, '已提交运行')}><Play size={15} />立即运行</Button>}
-    {canConfigure && instance.auto_paused && <Button variant="outline" disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { resume: true })), '已恢复实例')}><RotateCcw size={15} />恢复</Button>}
-    {canConfigure && <Button variant={instance.enabled ? 'ghost' : 'default'} disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { enabled: !instance.enabled })), instance.enabled ? '已停用实例' : '已启用实例')}>{instance.enabled ? '停用' : '启用'}</Button>}
-    {canConfigure && view === 'config' && <Button busy={busy} disabled={!dirty} onClick={saveConfig}>{dirty ? '保存配置' : '已保存'}</Button>}
+    {canConfigure && instance.auto_paused && <Button variant="outline" disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { resume: true }), true), '已恢复实例')}><RotateCcw size={15} />恢复</Button>}
+    {canConfigure && <Button variant="outline" disabled={busy} onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { enabled: !instance.enabled }), true), instance.enabled ? '已停用实例' : '已启用实例')}>{instance.enabled ? '停用' : '启用'}</Button>}
+    {(canConfigure || canAuthorize) && <Button busy={busy} disabled={!dirty || grantMissing.length > 0} onClick={saveAll}>保存</Button>}
   </>
 
   return <Dialog isOpen onClose={() => void requestClose()} size="xl" placement="right" drawerSize="wide" footer={footer}
@@ -186,8 +206,8 @@ export function InstanceDialog(props: InstanceDialogProps) {
       {instance.permission_review_required && <div className="plugin-callout warning"><p>新版本申请了新的权限，管理员审核授权前实例不会运行。</p></div>}
       <Tabs value={view} onValueChange={value => setView(value as View)}>
         <TabsList className="plugin-tabs">
-          <TabsTrigger value="config">配置</TabsTrigger>
-          <TabsTrigger value="grant">权限</TabsTrigger>
+          <TabsTrigger value="config">配置{dirtyTab(nameDirty || configDirty)}</TabsTrigger>
+          <TabsTrigger value="grant">权限{dirtyTab(grantDirty)}</TabsTrigger>
           <TabsTrigger value="schedules">计划</TabsTrigger>
           <TabsTrigger value="runs">执行</TabsTrigger>
           {!!manifest?.pages?.length && <TabsTrigger value="pages">界面</TabsTrigger>}
@@ -196,18 +216,15 @@ export function InstanceDialog(props: InstanceDialogProps) {
         </TabsList>
         <TabsContent value="config">
           {canConfigure && <div className="plugin-rename">
-            <label className="plugin-inline-field">实例名称<Input value={nameDraft} maxLength={80} onChange={event => setNameDraft(event.target.value)} /></label>
-            <Button size="sm" variant="outline" disabled={busy || !nameDraft.trim() || nameDraft === instance.name}
-              onClick={() => void act(async () => applyInstance(await api.updateInstance(request, instance.id, { name: nameDraft.trim() })), '已重命名')}>保存名称</Button>
+            <label className="plugin-inline-field">实例名称<Input value={nameDraft} maxLength={80} disabled={busy} onChange={event => setNameDraft(event.target.value)} /></label>
           </div>}
           <EnvironmentForm fields={manifest?.environment || []} values={values} onChange={setValues} custom={custom} onCustomChange={canConfigure ? setCustom : undefined}
             customTypes={customTypes} servers={servers} secrets={instance.secrets} onSetSecret={canAuthorize ? name => { setSecretName(name); setSecretValue('') } : undefined}
             issues={issuesForDraft(issues, validatedDraft, { values, custom })} disabled={!canConfigure || busy} />
         </TabsContent>
         <TabsContent value="grant">
-          {canAuthorize ? <GrantEditor key={`${instance.grant?.revision || 0}-${instance.grant?.package_id || 0}`} detail={installation} grant={instance.grant} servers={servers} channels={channels} users={users} plans={plans}
-            envServerIDs={serverIDsInValues(installation, values, custom)} busy={busy}
-            onSave={(grant: Grant) => void act(async () => applyInstance(await api.setGrant(request, instance.id, instance.grant?.revision || 0, grant)), '授权已保存')}
+          {canAuthorize ? <GrantEditor detail={installation} grant={instance.grant} draft={grantDraft} servers={servers} channels={channels} users={users} plans={plans}
+            envServerIDs={serverIDsInValues(installation, values, custom)} busy={busy} onChange={setGrantDraft}
             onRevoke={() => void act(async () => { await api.revokeGrant(request, instance.id); await load() }, '授权已撤销')} />
             : <GrantSummary instance={instance} installation={installation} />}
         </TabsContent>

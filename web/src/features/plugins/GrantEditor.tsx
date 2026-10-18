@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react'
-import { ShieldAlert, ShieldCheck } from 'lucide-react'
+import React, { useMemo } from 'react'
+import { ShieldAlert, ShieldCheck, ToggleLeft, ToggleRight } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Switch } from '../../components/ui/switch'
@@ -9,7 +9,7 @@ import type { Grant, GrantView, InstallationDetail, NotificationChannelOption, P
 
 // initialGrant proposes the narrowest useful grant: nothing is selected for
 // resource-scoped capabilities unless the current grant already holds it.
-function initialGrant(permissions: PermissionLine[], current?: GrantView): Grant {
+export function initialGrant(permissions: PermissionLine[], current?: GrantView): Grant {
   const out: Grant = { capabilities: {} }
   for (const line of permissions) {
     const existing = current?.capabilities?.[line.capability]
@@ -18,19 +18,35 @@ function initialGrant(permissions: PermissionLine[], current?: GrantView): Grant
   return out
 }
 
-export function GrantEditor({ detail, grant, servers, channels, users, plans, envServerIDs, busy, onSave, onRevoke }: {
+// grantMissingScopes lists enabled resource-scoped capabilities whose scope is
+// still empty; the Controller rejects such a grant.
+export function grantMissingScopes(permissions: PermissionLine[], draft: Grant): PermissionLine[] {
+  return permissions.filter(line => {
+    const scope = draft.capabilities[line.capability]
+    if (!scope) return false
+    if (line.resource === 'server') return !scope.servers?.length
+    if (line.resource === 'http_host') return !scope.hosts?.length
+    if (line.resource === 'notification_channel') return !scope.channels?.length
+    if (line.resource === 'user') return !scope.users?.length
+    if (line.resource === 'plan') return !scope.plans?.length
+    return false
+  })
+}
+
+export function GrantEditor({ detail, grant, draft, servers, channels, users, plans, envServerIDs, busy, onChange, onRevoke }: {
   detail: InstallationDetail
   grant?: GrantView
+  draft: Grant
   servers: ServerOption[]
   channels: NotificationChannelOption[]
   users: UserOption[]
   plans: PlanOption[]
   envServerIDs: string[]
   busy?: boolean
-  onSave: (grant: Grant) => void
+  onChange: (grant: Grant) => void
   onRevoke?: () => void
 }) {
-  const [draft, setDraft] = useState<Grant>(() => initialGrant(detail.permissions, grant))
+  const setDraft = onChange
   const hosts = detail.http_hosts || []
   const serverOptions = useMemo(() => servers.map(server => ({ value: server.id, label: `${server.name}${server.online ? '' : '（离线）'}`, keywords: server.region_code })), [servers])
   const applyToggle = (next: Grant['capabilities'], line: PermissionLine, on: boolean) => {
@@ -54,16 +70,7 @@ export function GrantEditor({ detail, grant, servers, channels, users, plans, en
   const enabledCount = detail.permissions.filter(line => draft.capabilities[line.capability]).length
   const setScope = (capability: string, patch: Partial<Grant['capabilities'][string]>) =>
     setDraft({ capabilities: { ...draft.capabilities, [capability]: { ...draft.capabilities[capability], ...patch } } })
-  const missing = detail.permissions.filter(line => {
-    const scope = draft.capabilities[line.capability]
-    if (!scope) return false
-    if (line.resource === 'server') return !scope.servers?.length
-    if (line.resource === 'http_host') return !scope.hosts?.length
-    if (line.resource === 'notification_channel') return !scope.channels?.length
-    if (line.resource === 'user') return !scope.users?.length
-    if (line.resource === 'plan') return !scope.plans?.length
-    return false
-  })
+  const missing = grantMissingScopes(detail.permissions, draft)
   const outsideGrant = envServerIDs.filter(id => !Object.values(draft.capabilities).some(scope => scope.servers?.includes(Number(id))))
 
   return <div className="plugin-grant-editor">
@@ -74,8 +81,10 @@ export function GrantEditor({ detail, grant, servers, channels, users, plans, en
     {grant && !grant.current && <div className="plugin-callout warning"><ShieldAlert size={16} aria-hidden="true" /><p>当前授权属于旧版本，保存后才会用于新版本。</p></div>}
     {detail.permissions.length > 0 && <div className="plugin-grant-bulk">
       <span className="plugin-env-help">已开启 {enabledCount}/{detail.permissions.length} 项</span>
-      <Button type="button" size="sm" variant="outline" disabled={busy || enabledCount === detail.permissions.length} onClick={() => toggleAll(true)}>全部开启</Button>
-      <Button type="button" size="sm" variant="outline" disabled={busy || enabledCount === 0} onClick={() => toggleAll(false)}>全部关闭</Button>
+      <div className="plugin-grant-bulk-group" role="group" aria-label="批量授权">
+        <button type="button" disabled={busy || enabledCount === detail.permissions.length} onClick={() => toggleAll(true)}><ToggleRight size={16} aria-hidden="true" />全部开启</button>
+        <button type="button" disabled={busy || enabledCount === 0} onClick={() => toggleAll(false)}><ToggleLeft size={16} aria-hidden="true" />全部关闭</button>
+      </div>
     </div>}
     <ul className="plugin-permission-list">
       {detail.permissions.map(line => {
@@ -132,9 +141,8 @@ export function GrantEditor({ detail, grant, servers, channels, users, plans, en
     </div>
     {outsideGrant.length > 0 && <p className="plugin-field-error">环境中选择的 {outsideGrant.length} 台服务器不在任何授权范围内，运行时会被拒绝。</p>}
     {missing.length > 0 && <p className="plugin-field-error">{missing.map(line => groupLabels[line.group] || line.label).join('、')} 尚未选择资源范围。</p>}
-    <div className="plugin-actions">
-      {onRevoke && grant && <Button type="button" variant="ghost" className="danger-text" disabled={busy} onClick={onRevoke}>撤销授权</Button>}
-      <Button type="button" busy={busy} disabled={missing.length > 0} onClick={() => onSave(draft)}>保存授权</Button>
-    </div>
+    {onRevoke && grant && <div className="plugin-actions">
+      <Button type="button" variant="ghost" className="danger-text" disabled={busy} onClick={onRevoke}>撤销授权</Button>
+    </div>}
   </div>
 }
