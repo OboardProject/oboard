@@ -92,7 +92,7 @@ export function QualityBar({ segments, label }: { segments: string[]; label: str
 
 function AttentionChips({ items, server, uninstalling, onAction }: { items: ServerAttention[]; server: Server; uninstalling?: boolean; onAction: ServerItemProps['onAction'] }) {
   const visible = items.filter(item => item.key === 'delivery' || item.key === 'time' || item.key === 'agent')
-  if (!visible.length && !uninstalling) return null
+  // Always rendered so every card in a grid row keeps the same section tracks.
   return (
     <div className="fleet-chips">
       {uninstalling ? <span className="fleet-chip is-warning" role="status"><Loader2 size={12} className="spin" aria-hidden="true" />卸载并删除中</span> : null}
