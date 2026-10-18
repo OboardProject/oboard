@@ -11,16 +11,15 @@
 
 ## 文档
 
-1. [开发规范与验证](development.md)：开发流程、运行时、权限、触发与幂等、预算、状态、HTTP、界面、测试和发布验收。
-2. [清单与环境变量](manifest.md)：`manifest.json`、13 种环境变量类型、条件字段、自定义变量与三阶段校验。
-3. [SDK 参考](sdk.md)：`main(run)`、`oboard.*`、`env`、`SecretRef`、界面快照、加密工具与错误码。
-4. [安全模型](security.md)：隔离 Runner、能力目录、授权与资源范围、HTTP 网关、Agent 诊断、密钥与审计。
-5. [打包、签名与安装](packaging.md)：`.obplugin` 格式、发布者签名、`oboard-plugin-tool`、GitHub 安装、更新与权限差异。
-6. [运维](operations.md)：安装运行环境、实例、计划与事件、执行记录、自动暂停、备份恢复。
+1. [清单与环境变量](manifest.md)：`manifest.json`、13 种环境变量类型、条件字段、自定义变量与三阶段校验。
+2. [SDK 参考](sdk.md)：`main(run)`、`oboard.*`、`env`、`SecretRef`、界面快照、加密工具与错误码。
+3. [安全模型](security.md)：隔离 Runner、能力目录、授权与资源范围、HTTP 网关、Agent 诊断、密钥与审计。
+4. [打包、签名与安装](packaging.md)：`.obplugin` 格式、发布者签名、`oboard-plugin-tool`、GitHub 安装、更新与权限差异。
+5. [运维](operations.md)：安装运行环境、实例、计划与事件、执行记录、自动暂停、备份恢复。
 
 ## 开发资源
 
-开发任何插件前先阅读 [开发规范与验证](development.md)，再按功能查阅下列声明与示例。
+开发外部 API 插件前请阅读 [开发规范与验证](development.md)：HTTP 参数类型、云 API 签名、SecretRef、回归测试、Runner 验证与发布检查。
 
 - [`sdk/plugins/oboard.d.ts`](../../sdk/plugins/oboard.d.ts)：编辑器类型声明（运行时不支持 TypeScript）。
 - [`sdk/plugins/manifest.schema.json`](../../sdk/plugins/manifest.schema.json)：清单 JSON Schema；Controller 的语义校验始终是最终依据。
