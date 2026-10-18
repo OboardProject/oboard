@@ -608,7 +608,11 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
 .fleet-page .tone-warning { color: var(--fleet-amber); }
 .fleet-page .tone-danger { color: var(--fleet-red); }
 
-.fleet-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.fleet-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.fleet-foot-end { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; margin-left: auto; }
+.fleet-foot-end > .fleet-chips { gap: 4px; }
+.fleet-foot-end > .fleet-chips:empty { display: none; }
+.fleet-foot-end .fleet-chip { min-height: 20px; padding: 0 7px; font-size: 11.5px; }
 
 .fleet-tag {
   display: inline-flex;
@@ -658,7 +662,7 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
   gap: 12px;
 }
 
-/* Cards in the same grid row share six row tracks (header, chips, meters,
+/* Cards in the same grid row share five row tracks (header, meters,
    network, quality, footer) through subgrid, so every section lines up
    horizontally even when one card has an extra address line or chip. */
 .fleet-grid > .fleet-sort-item { display: block; }
@@ -667,7 +671,7 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
   .fleet-grid { row-gap: 0; }
   .fleet-grid > .fleet-sort-item {
     display: grid;
-    grid-row: span 6;
+    grid-row: span 5;
     grid-template-rows: subgrid;
     row-gap: 0;
     margin-bottom: 12px;
@@ -709,8 +713,6 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
 .fleet-tile-title { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .fleet-tile-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin: -4px -8px 0 0; }
 
-.fleet-tile > .fleet-chips { align-content: start; padding-top: 10px; }
-.fleet-tile > .fleet-chips:empty { padding-top: 0; }
 
 .fleet-tile-meters {
   align-self: start;

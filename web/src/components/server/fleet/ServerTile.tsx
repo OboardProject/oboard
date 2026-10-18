@@ -92,7 +92,6 @@ export function QualityBar({ segments, label }: { segments: string[]; label: str
 
 function AttentionChips({ items, server, uninstalling, onAction }: { items: ServerAttention[]; server: Server; uninstalling?: boolean; onAction: ServerItemProps['onAction'] }) {
   const visible = items.filter(item => item.key === 'delivery' || item.key === 'time' || item.key === 'agent')
-  // Always rendered so every card in a grid row keeps the same section tracks.
   return (
     <div className="fleet-chips">
       {uninstalling ? <span className="fleet-chip is-warning" role="status"><Loader2 size={12} className="spin" aria-hidden="true" />卸载并删除中</span> : null}
@@ -143,7 +142,6 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, selected
           <ServerActionMenu server={server} role={role} onAction={onAction} />
         </div>
       </header>
-      <AttentionChips items={attention} server={server} uninstalling={uninstalling} onAction={onAction} />
       <div className="fleet-tile-meters">
         <Meter label="CPU" value={na ? '—' : formatPercent(cpu)} percent={na ? 0 : cpu} sub={cpuCoresLabel(server)} title={cpuModelLabel(server) || undefined} muted={na} />
         <Meter label="内存" value={na || !server.memory_total_bytes ? '—' : formatPercent(memory)} percent={na ? 0 : memory} sub={server.memory_total_bytes ? `${formatBytes(server.memory_used_bytes || 0)} / ${formatBytes(server.memory_total_bytes)}` : '—'} muted={na} />
@@ -177,7 +175,10 @@ export function ServerTile({ server, role, expectedBuild, uninstalling, selected
       <footer className="fleet-tile-foot">
         <span title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>到期 <strong className={`tone-${expiry.tone}`}>{expiry.label}</strong></span>
         <span title={server.created_at ? `入库时间 ${formatDate(server.created_at)}` : undefined}>已运行 <strong>{age || '—'}</strong></span>
-        {tags.length ? <span className="fleet-tags">{tags.map(tag => <span key={`${tag.tone}-${tag.text}`} className={`fleet-tag tone-${tag.tone || 'blue'}`}>{displayTagIcon(tag.tone)}{tag.text}</span>)}</span> : null}
+        <span className="fleet-foot-end">
+          <AttentionChips items={attention} server={server} uninstalling={uninstalling} onAction={onAction} />
+          {tags.length ? <span className="fleet-tags">{tags.map(tag => <span key={`${tag.tone}-${tag.text}`} className={`fleet-tag tone-${tag.tone || 'blue'}`}>{displayTagIcon(tag.tone)}{tag.text}</span>)}</span> : null}
+        </span>
       </footer>
     </article>
   )
