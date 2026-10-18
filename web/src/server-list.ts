@@ -1,5 +1,5 @@
 export type ServerSortMode = 'created' | 'country' | 'custom'
-export type ServerStatusFilter = 'all' | 'online' | 'offline' | 'unenrolled'
+export type ServerStatusFilter = 'all' | 'online' | 'offline' | 'unenrolled' | 'attention'
 
 export type ServerListItem = {
   id: number
@@ -93,13 +93,14 @@ export function sortServerList<T extends ServerListItem>(servers: T[], mode: Ser
     || (positions.get(Number(a.id)) ?? Number.MAX_SAFE_INTEGER) - (positions.get(Number(b.id)) ?? Number.MAX_SAFE_INTEGER))
 }
 
-export function filterServerList<T extends ServerListItem>(servers: T[], query: string, status: ServerStatusFilter, regionCode: string, resolveRegion: RegionResolver<T>) {
+export function filterServerList<T extends ServerListItem>(servers: T[], query: string, status: ServerStatusFilter, regionCode: string, resolveRegion: RegionResolver<T>, needsAttention?: (server: T) => boolean) {
   const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN')
   return servers.filter(server => {
     const normalizedStatus = String(server.status || '').trim().toLowerCase()
     if (status === 'online' && normalizedStatus !== 'online') return false
-    if (status === 'offline' && normalizedStatus !== 'offline') return false
+    if (status === 'offline' && (normalizedStatus === 'online' || !String(server.agent_id || '').trim())) return false
     if (status === 'unenrolled' && String(server.agent_id || '').trim()) return false
+    if (status === 'attention' && !needsAttention?.(server)) return false
 
     const region = resolveRegion(server)
     if (regionCode !== 'all' && region.code !== regionCode) return false

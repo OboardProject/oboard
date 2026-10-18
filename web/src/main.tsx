@@ -14,6 +14,9 @@ import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
 import { ServerMonitoringTargetDialog } from './components/server/ServerMonitoringTargetDialog'
 import { ServerInspectorPanel } from './components/server/ServerInspectorPanel'
+import { ServerTile, ServerRow, ServerListHeader } from './components/server/fleet/ServerTile'
+import { FleetSummary, FleetSearch, RegionFilter, FilterPopover, ViewToggle, fleetStats, serverNeedsAttention, type FleetView } from './components/server/fleet/FleetToolbar'
+import { buildNeedsUpdate, compactBuildLabel, cpuCoresLabel, serverDeliveryStatus } from './components/server/fleet/fleet-format'
 import { SignalRing } from './components/ui/SignalRing'
 import { SignalEmptyState } from './components/ui/SignalEmptyState'
 import { lazyDialog, lazySurface } from './components/ui/lazy-surface'
@@ -119,6 +122,7 @@ import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess 
 import './style.css'
 import './components/proxy-path/ProxyCanvas.css'
 import './styles/surface-system.css'
+import './styles/server-fleet.css'
 import './styles/inbound-editor.css'
 import './components/users/user-list.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
@@ -140,8 +144,8 @@ import {
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
-  ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick,
-  Clock, Power, WifiOff, Building2, MapPin, Code,
+  ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save,
+  Power, Code,
   Sparkles, MonitorCog, ServerCog
 } from 'lucide-react'
 
@@ -597,24 +601,6 @@ function ServerExpiryBadge({ server }: { server: Server }) {
   return <span className={`server-expiry-badge ${status.tone}`} title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>{status.label}</span>
 }
 
-function serverDeliveryStatus(server: Server) {
-  if (!server.agent_id) return null
-  const usersFallback = server.users_fallback === 'apply_core_config'
-    || server.users_pending_reason === 'agent_upgrade_required'
-    || server.users_pending_reason === 'core_config_fallback'
-  const authPending = server.authorization_confirmed === false
-  const usersPending = server.users_confirmed === false && !usersFallback
-  if (!authPending && !usersPending) return null
-  const title = [authPending ? '授权租约未确认' : '', usersPending ? '运行时用户未确认' : ''].filter(Boolean).join('；')
-  return { tone: 'danger' as const, label: '授权待同步', title }
-}
-
-function ServerDeliveryBadge({ server }: { server: Server }) {
-  const status = serverDeliveryStatus(server)
-  if (!status) return null
-  return <span className={`server-expiry-badge ${status.tone}`} title={status.title}>{status.label}</span>
-}
-
 const routeActions: Exclude<RouteAction, 'source_prefix'>[] = ['direct', 'block', 'outbound', 'external', 'proxy_path', 'family_split', 'interface']
 const outboundScopes = ['global', 'server']
 
@@ -819,335 +805,12 @@ function RegionPicker({ value, onChange, servers = [] }: { value: string; onChan
   </div>
 }
 
-function ServerRegionFilterDropdown({
-  value,
-  onChange,
-  regions,
-  total,
-}: {
-  value: string
-  onChange: (code: string) => void
-  regions: { code: string; label: string; count: number }[]
-  total: number
-}) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const [position, setPosition] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
-  const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN')
-  const isAll = value === 'all'
-  const selectedRegion = !isAll ? regions.find(region => (region.code || '') === value) : null
-  const selectedLabel = isAll ? '全部地区' : selectedRegion ? selectedRegion.label : (value ? regionLabel(value) : '待检测')
-  const selectedCode = isAll ? '' : (selectedRegion?.code || value || '')
-  const selectedCount = isAll ? total : (selectedRegion?.count ?? 0)
-
-  const filtered = useMemo(() => {
-    if (!normalizedQuery) return regions
-    return regions.filter(region => {
-      const label = region.label.toLocaleLowerCase('zh-CN')
-      const code = region.code.toLowerCase()
-      return label.includes(normalizedQuery) || code.includes(normalizedQuery)
-    })
-  }, [regions, normalizedQuery])
-
-  const showAll = !normalizedQuery || '全部'.includes(normalizedQuery) || '全部地区'.includes(normalizedQuery) || 'all'.includes(normalizedQuery)
-
-  const updatePosition = () => {
-    const trigger = triggerRef.current
-    if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    const viewportPadding = 10
-    const gutter = 8
-    const width = Math.min(360, window.innerWidth - viewportPadding * 2)
-    const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding - width)
-    const below = window.innerHeight - rect.bottom - viewportPadding - gutter
-    const above = rect.top - viewportPadding - gutter
-    const maxHeight = Math.min(380, Math.max(240, Math.max(below, above)))
-    const top = below >= 240 || below >= above ? rect.bottom + gutter : Math.max(viewportPadding, rect.top - gutter - maxHeight)
-    setPosition({ top, left, width, maxHeight })
-  }
-
-  useEffect(() => {
-    if (!open) return
-    updatePosition()
-    const reposition = () => updatePosition()
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement
-      if (!triggerRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false)
-        triggerRef.current?.focus()
-      }
-    }
-    const scrollParents: HTMLElement[] = []
-    let parent: HTMLElement | null = triggerRef.current?.parentElement ?? null
-    while (parent) {
-      scrollParents.push(parent)
-      parent = parent.parentElement
-    }
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
-    document.addEventListener('scroll', reposition, true)
-    scrollParents.forEach(element => element.addEventListener('scroll', reposition))
-    document.addEventListener('mousedown', closeOnOutsideClick)
-    document.addEventListener('keydown', closeOnEscape)
-    if (window.innerWidth > 720) window.requestAnimationFrame(() => searchRef.current?.focus())
-    return () => {
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
-      document.removeEventListener('scroll', reposition, true)
-      scrollParents.forEach(element => element.removeEventListener('scroll', reposition))
-      document.removeEventListener('mousedown', closeOnOutsideClick)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [open])
-
-  const choose = (code: string) => {
-    onChange(code)
-    setOpen(false)
-    setQuery('')
-    triggerRef.current?.focus()
-  }
-
-  return (
-    <div className="server-region-filter-dropdown">
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`server-region-filter-trigger ${!isAll ? 'is-active' : ''} ${open ? 'open' : ''}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => { setQuery(''); setOpen(current => !current) }}
-        aria-label={`按地区筛选：${selectedLabel}，${selectedCount} 台`}
-        title={isAll ? `全部地区 · 共 ${total} 台` : `${selectedLabel} · ${selectedCount} 台`}
-      >
-        <span className="server-region-filter-trigger-flag">
-          {isAll ? <Globe size={16} aria-hidden="true" /> : <RegionFlag code={selectedCode} size={18} />}
-        </span>
-        <span className="server-region-filter-trigger-label">{selectedLabel}</span>
-        <small className="server-region-filter-trigger-count">{isAll ? `${total} 台` : `${selectedCode || '—'} · ${selectedCount} 台`}</small>
-        <ChevronDown size={14} aria-hidden="true" className={`server-region-filter-chevron ${open ? 'rotated' : ''}`} />
-      </button>
-      {open && position && createPopoverPortal(
-        <div
-          ref={panelRef}
-          data-popover="true"
-          className="server-region-dropdown-panel"
-          style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
-        >
-          <div className="server-region-dropdown-search">
-            <Search size={16} aria-hidden="true" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder="搜索地区或代码"
-              aria-label="搜索地区"
-            />
-            {query ? <button type="button" className="ghost icon-button" onClick={() => setQuery('')} aria-label="清空搜索" title="清空搜索"><X size={14} /></button> : null}
-          </div>
-          <div className="server-region-dropdown-list" role="listbox" aria-label="按地区筛选">
-            {showAll ? (
-              <button
-                type="button"
-                role="option"
-                aria-selected={isAll}
-                className={`server-region-dropdown-option ${isAll ? 'selected' : ''}`}
-                onClick={() => choose('all')}
-              >
-                <Globe size={16} aria-hidden="true" />
-                <span>全部地区</span>
-                <small>共 {total} 台</small>
-                {isAll ? <Check size={14} aria-hidden="true" /> : null}
-              </button>
-            ) : null}
-            {filtered.map(region => {
-              const code = region.code || ''
-              const isSelected = !isAll && value === code
-              const label = region.code ? region.label : '待检测'
-              return (
-                <button
-                  key={code || 'pending'}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  className={`server-region-dropdown-option ${isSelected ? 'selected' : ''}`}
-                  onClick={() => choose(code)}
-                >
-                  <RegionFlag code={region.code} size={20} />
-                  <span>{label}</span>
-                  <small>{region.code || '—'} · {region.count} 台</small>
-                  {isSelected ? <Check size={14} aria-hidden="true" /> : null}
-                </button>
-              )
-            })}
-            {!showAll && filtered.length === 0 ? <div className="server-region-dropdown-empty">没有匹配的地区</div> : null}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </div>
-  )
-}
-
-function ServerFilterDropdown({
-  statusFilter,
-  onStatusFilterChange,
-  sortMode,
-  onSortModeChange,
-}: {
-  statusFilter: ServerStatusFilter
-  onStatusFilterChange: (status: ServerStatusFilter) => void
-  sortMode: ServerSortMode
-  onSortModeChange: (mode: ServerSortMode) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-
-  const hasActiveFilters = statusFilter !== 'all' || sortMode !== 'created'
-
-  const updatePosition = () => {
-    const trigger = triggerRef.current
-    if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    const viewportPadding = 10
-    const gutter = 6
-    const width = Math.min(260, window.innerWidth - viewportPadding * 2)
-    let left = rect.right - width
-    if (left < viewportPadding) left = viewportPadding
-    if (left + width > window.innerWidth - viewportPadding) {
-      left = window.innerWidth - viewportPadding - width
-    }
-    const popoverHeight = 242
-    const below = window.innerHeight - rect.bottom - viewportPadding - gutter
-    const above = rect.top - viewportPadding - gutter
-    const top = below >= popoverHeight || below >= above
-      ? rect.bottom + gutter
-      : Math.max(viewportPadding, rect.top - gutter - popoverHeight)
-    setPosition({ top, left, width })
-  }
-
-  useEffect(() => {
-    if (!open) return
-    updatePosition()
-    const reposition = () => updatePosition()
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement
-      if (triggerRef.current?.contains(target)) return
-      if (panelRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false)
-        triggerRef.current?.focus()
-      }
-    }
-    const scrollParents: HTMLElement[] = []
-    let parent: HTMLElement | null = triggerRef.current?.parentElement ?? null
-    while (parent) {
-      scrollParents.push(parent)
-      parent = parent.parentElement
-    }
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
-    document.addEventListener('scroll', reposition, true)
-    scrollParents.forEach(element => element.addEventListener('scroll', reposition))
-    document.addEventListener('mousedown', closeOnOutsideClick)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
-      document.removeEventListener('scroll', reposition, true)
-      scrollParents.forEach(element => element.removeEventListener('scroll', reposition))
-      document.removeEventListener('mousedown', closeOnOutsideClick)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [open])
-
-  const handleReset = () => {
-    onStatusFilterChange('all')
-    onSortModeChange('created')
-  }
-
-  return (
-    <div className="server-filter-dropdown">
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`ghost icon-button server-filter-toggle-btn ${open || hasActiveFilters ? 'is-active' : ''}`}
-        onClick={() => setOpen(current => !current)}
-        aria-label={open ? '收起筛选' : '展开筛选'}
-        title={open ? '收起筛选' : '展开筛选'}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-      >
-        <SlidersHorizontal size={15} />
-        {hasActiveFilters && <span className="server-filter-badge" />}
-      </button>
-      {open && position && createPopoverPortal(
-        <div
-          ref={panelRef}
-          data-popover="true"
-          className="server-filter-popover"
-          style={{ top: position.top, left: position.left, width: position.width }}
-          role="dialog"
-          aria-label="服务器筛选与排序"
-        >
-          <div className="server-filter-popover-head">
-            <span className="server-filter-popover-title">筛选与排序</span>
-            {hasActiveFilters && (
-              <button
-                type="button"
-                className="ghost server-filter-popover-reset"
-                onClick={handleReset}
-                aria-label="清除筛选"
-                title="重置为默认筛选和排序"
-              >
-                <Eraser size={13} aria-hidden="true" />
-                <span>重置</span>
-              </button>
-            )}
-          </div>
-          <fieldset className="server-filter-popover-field">
-            <legend className="server-filter-popover-field-label">状态</legend>
-            <div className="server-filter-options server-filter-status-options">
-              {([['all', '全部状态'], ['online', '在线'], ['offline', '离线'], ['unenrolled', '未接入']] as const).map(([value, label]) => (
-                <button key={value} type="button" className="server-filter-option" aria-pressed={statusFilter === value} onClick={() => onStatusFilterChange(value)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-          <fieldset className="server-filter-popover-field">
-            <legend className="server-filter-popover-field-label">排序</legend>
-            <div className="server-filter-options server-filter-sort-options">
-              {([['created', '创建顺序'], ['country', '按国家'], ['custom', '自定义排序']] as const).map(([value, label]) => (
-                <button key={value} type="button" className="server-filter-option" aria-pressed={sortMode === value} onClick={() => onSortModeChange(value)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-        </div>,
-        document.body,
-      )}
-    </div>
-  )
-}
-
 function ServerRegionField({ draft, update, servers }: { draft: any; update: (patch: any) => void; servers?: Server[] }) {
   const mode: RegionMode = draft.region_mode === 'manual' ? 'manual' : 'auto'
   const detectedCode = normalizeRegionCode(draft.detected_region_code)
 
   return (
-    <FormField label="服务器地区" hint="自动识别出口地区，也可手动指定。">
+    <SettingRow label="服务器地区" description="自动识别出口地区，也可手动指定。" stacked>
       <div className="server-region-editor">
         <Select
           variant="segmented"
@@ -1182,7 +845,7 @@ function ServerRegionField({ draft, update, servers }: { draft: any; update: (pa
           </div>
         )}
       </div>
-    </FormField>
+    </SettingRow>
   )
 }
 
@@ -6610,207 +6273,6 @@ const serverSettingTabs = [
 
 type ServerSettingsTab = typeof serverSettingTabs[number]['id']
 
-function serverCustomEntry(server: Server) {
-  if (String(server.entry_ip_mode || 'auto') !== 'custom') return ''
-  return String(server.entry_address || '').trim()
-}
-
-function ipv6DisplayParts(value: string) {
-  const text = String(value || '').trim()
-  const last = text.lastIndexOf(':')
-  const prev = last > 0 ? text.lastIndexOf(':', last - 1) : -1
-  if (prev <= 0) return { head: text, tail: '' }
-  return { head: text.slice(0, prev), tail: text.slice(prev) }
-}
-
-function ServerAddressLine({ family, value, copied, onCopy }: { family: 'v4' | 'v6'; value: string; copied: boolean; onCopy: () => void }) {
-  const label = family === 'v4' ? 'IPv4' : 'IPv6'
-  const v6Parts = family === 'v6' ? ipv6DisplayParts(value) : null
-  return (
-    <button
-      type="button"
-      className={`server-address-line ${family}${copied ? ' copied' : ''}`}
-      aria-label={`复制出口 ${label} ${value}`}
-      onClick={() => onCopy()}
-    >
-      {v6Parts?.tail ? (
-        <span className="server-address-value is-middle">
-          <span className="server-address-value-start">{v6Parts.head}</span>
-          <span className="server-address-value-end">{v6Parts.tail}</span>
-        </span>
-      ) : (
-        <span className="server-address-value">{value}</span>
-      )}
-    </button>
-  )
-}
-
-export function ServerAddressBadge({ server }: { server: Server }) {
-  const v4 = String(server.public_ipv4 || '').trim()
-  const v6 = String(server.public_ipv6 || '').trim()
-  const entry = serverCustomEntry(server)
-  const [copied, setCopied] = useState<'v4' | 'v6' | 'entry' | null>(null)
-  const [tipOpen, setTipOpen] = useState(false)
-  const [tipPos, setTipPos] = useState({ top: 0, left: 0 })
-  const copiedTimer = useRef(0)
-  const hideTimer = useRef(0)
-  const blockRef = useRef<HTMLDivElement>(null)
-  const tipID = useId()
-
-  const copy = async (kind: 'v4' | 'v6' | 'entry', value: string) => {
-    const ok = await copyText(value)
-    if (!ok) return
-    window.clearTimeout(copiedTimer.current)
-    setCopied(kind)
-    copiedTimer.current = window.setTimeout(() => setCopied(null), 1200)
-  }
-
-  const showTip = () => {
-    if (!entry || (!v4 && !v6) || !blockRef.current || !window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return
-    const rect = blockRef.current.getBoundingClientRect()
-    window.clearTimeout(hideTimer.current)
-    setTipPos({
-      top: rect.bottom + 6,
-      left: Math.max(8, Math.min(rect.left, window.innerWidth - 248)),
-    })
-    setTipOpen(true)
-  }
-
-  const scheduleHideTip = () => {
-    window.clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => setTipOpen(false), 120)
-  }
-
-  useEffect(() => () => {
-    window.clearTimeout(copiedTimer.current)
-    window.clearTimeout(hideTimer.current)
-  }, [])
-
-  useEffect(() => {
-    if (!tipOpen) return
-    const close = () => setTipOpen(false)
-    window.addEventListener('scroll', close, true)
-    window.addEventListener('resize', close)
-    return () => {
-      window.removeEventListener('scroll', close, true)
-      window.removeEventListener('resize', close)
-    }
-  }, [tipOpen])
-
-  return (
-    <div
-      ref={blockRef}
-      data-entry-only={entry && !v4 && !v6 ? '' : undefined}
-      className={`server-address-block${entry ? ' has-entry' : ''}`}
-      aria-describedby={entry && tipOpen ? tipID : undefined}
-      onMouseEnter={entry ? showTip : undefined}
-      onMouseLeave={entry ? scheduleHideTip : undefined}
-      onClick={event => event.stopPropagation()}
-    >
-      <span className="server-address-kicker">出口</span>
-      <div className="server-address-stack">
-        {v4 ? <ServerAddressLine family="v4" value={v4} copied={copied === 'v4'} onCopy={() => void copy('v4', v4)} /> : null}
-        {v6 ? <ServerAddressLine family="v6" value={v6} copied={copied === 'v6'} onCopy={() => void copy('v6', v6)} /> : null}
-        {!v4 && !v6 ? <span className="server-address-empty">待检测</span> : null}
-      </div>
-      {entry ? <div className="server-address-entry-inline">
-        <span className="server-address-kicker">入口</span>
-        <button
-          type="button"
-          className={'server-address-line' + (copied === 'entry' ? ' copied' : '')}
-          aria-label={'复制入口 ' + entry}
-          onClick={() => void copy('entry', entry)}
-        >
-          <span className="server-address-value">{entry}</span>
-        </button>
-      </div> : null}
-      {entry && tipOpen ? createPopoverPortal(
-        <div
-          id={tipID}
-          role="tooltip"
-          className="server-address-entry-tip"
-          style={{ top: tipPos.top, left: tipPos.left }}
-          onMouseEnter={showTip}
-          onMouseLeave={scheduleHideTip}
-        >
-          <span className="server-address-kicker">入口</span>
-          <button
-            type="button"
-            className={`server-address-line${copied === 'entry' ? ' copied' : ''}`}
-            aria-label={`复制入口 ${entry}`}
-            onClick={() => void copy('entry', entry)}
-          >
-            <span className="server-address-value">{entry}</span>
-          </button>
-        </div>,
-        document.body,
-      ) : null}
-    </div>
-  )
-}
-
-function resourcePercent(used: number, total: number) {
-  if (!total || !Number.isFinite(used) || !Number.isFinite(total)) return 0
-  return Math.min(100, Math.max(0, (used / total) * 100))
-}
-
-function metricTone(percent: number) {
-  if (percent >= 90) return 'danger'
-  if (percent >= 75) return 'warning'
-  return ''
-}
-
-function enrolledDaysLabel(server: Server, now = new Date()) {
-  const raw = String(server.created_at || '').trim()
-  if (!raw) return ''
-  const created = new Date(raw)
-  if (Number.isNaN(created.getTime())) return ''
-  const days = Math.max(0, Math.floor((now.getTime() - created.getTime()) / 86400000))
-  return `${days}天`
-}
-
-function cpuModelLabel(server: Server) {
-  return String(server.cpu || '').trim()
-}
-
-function cpuCoresLabel(server: Server) {
-  const cores = Math.trunc(Number(server.cpu_cores))
-  if (!Number.isFinite(cores) || cores <= 0) return '—'
-  return `${cores}核`
-}
-
-function cardExpiryStatus(server: Server, now = new Date()): { label: string; tone: ServerExpiryTone } {
-  const raw = String(server.expires_at || '').trim()
-  if (!raw) return { label: '未设置', tone: 'muted' }
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return { label: '未设置', tone: 'muted' }
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const expiry = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  const days = Math.round((expiry.getTime() - today.getTime()) / 86400000)
-  if (days < 0) return { label: server.auto_renew_enabled ? '续期中' : '已到期', tone: server.auto_renew_enabled ? 'warning' : 'danger' }
-  if (days === 0) return { label: '今天', tone: 'danger' }
-  if (days < 7) return { label: `${days}天`, tone: 'danger' }
-  if (days < 15) return { label: `${days}天`, tone: 'warning' }
-  return { label: `${days}天`, tone: 'ok' }
-}
-
-function cardExpiryLabel(server: Server, now = new Date()) {
-  return cardExpiryStatus(server, now).label
-}
-
-function offlineAgoLabel(lastSeen?: string, now = new Date()) {
-  const raw = String(lastSeen || '').trim()
-  if (!raw) return '离线'
-  const then = new Date(raw)
-  if (Number.isNaN(then.getTime())) return '离线'
-  const ms = Math.max(0, now.getTime() - then.getTime())
-  const minutes = Math.floor(ms / 60000)
-  if (minutes < 60) return `${Math.max(1, minutes)}分钟前离线`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 48) return `${hours}小时前离线`
-  return `${Math.floor(hours / 24)}天前离线`
-}
-
 const displayTagTones = [
   { id: 'blue', label: '蓝' },
   { id: 'orange', label: '橙' },
@@ -6819,20 +6281,10 @@ const displayTagTones = [
   { id: 'gray', label: '灰' },
 ] as const
 
-function displayTagIcon(tone?: string) {
-  switch (tone) {
-    case 'orange': return <MapPin size={11} aria-hidden="true" />
-    case 'purple': return <Zap size={11} aria-hidden="true" />
-    case 'green': return <BadgeCheck size={11} aria-hidden="true" />
-    case 'gray': return <Package size={11} aria-hidden="true" />
-    default: return <Building2 size={11} aria-hidden="true" />
-  }
-}
-
 function ServerDisplayTagsEditor({ tags, onChange }: { tags: { text: string; tone?: string }[]; onChange: (tags: { text: string; tone?: string }[]) => void }) {
   const items = Array.isArray(tags) ? tags : []
   return (
-    <FormField label="卡片标签" hint="显示在服务器卡片最底部，由你自行填写。最多 8 个，不填则不显示系统标签。" placement="bottom">
+    <SettingRow label="卡片标签" description="显示在服务器卡片底部，最多 8 个。" stacked>
       <div className="server-display-tags-editor">
         {items.map((tag, index) => (
           <div key={index} className="server-display-tag-row">
@@ -6849,32 +6301,11 @@ function ServerDisplayTagsEditor({ tags, onChange }: { tags: { text: string; ton
           </button>
         ) : null}
       </div>
-    </FormField>
+    </SettingRow>
   )
 }
 
-function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = '', title, onClick }: { icon: React.ReactNode; label: string; value: string; percent: number; sub: string; fill?: string; tone?: string; title?: string; onClick?: () => void }) {
-  const tipID = useId()
-  return (
-    <div
-      className={`server-metric-row${title ? ' has-tip' : ''}`}
-      aria-describedby={title ? tipID : undefined}
-      onClick={title ? event => { event.stopPropagation(); onClick?.() } : undefined}
-    >
-      {icon}
-      <div className="server-metric-copy">
-        <div className="server-metric-head"><span>{label}</span><strong>{value}</strong></div>
-        <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
-          <div className={`server-metric-fill ${fill} ${tone || metricTone(percent)}`} style={{ width: `${Math.max(percent, percent > 0 ? 2 : 0)}%` }} />
-        </div>
-        <span className="server-metric-sub">{sub}</span>
-      </div>
-      {title ? <span id={tipID} role="tooltip" className="server-metric-tip">{title}</span> : null}
-    </div>
-  )
-}
-
-type ServerListPreferences = { sortMode: ServerSortMode; customOrder: number[] }
+type ServerListPreferences = { sortMode: ServerSortMode; customOrder: number[]; view: FleetView }
 
 const serverListPreferencesKey = 'oboard.server-list.preferences.v1'
 
@@ -6883,9 +6314,10 @@ function loadServerListPreferences(): ServerListPreferences {
     const value = JSON.parse(localStorage.getItem(serverListPreferencesKey) || '{}')
     const sortMode: ServerSortMode = value?.sortMode === 'country' || value?.sortMode === 'custom' ? value.sortMode : 'created'
     const customOrder = Array.isArray(value?.customOrder) ? value.customOrder.map(Number).filter((id: number) => Number.isSafeInteger(id) && id > 0) : []
-    return { sortMode, customOrder }
+    const view: FleetView = value?.view === 'list' ? 'list' : 'grid'
+    return { sortMode, customOrder, view }
   } catch {
-    return { sortMode: 'created', customOrder: [] }
+    return { sortMode: 'created', customOrder: [], view: 'grid' }
   }
 }
 
@@ -6928,12 +6360,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
   const [monitoringServer, setMonitoringServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
   const [serverQuery, setServerQuery] = useState('')
-  const [serverSearchOpen, setServerSearchOpen] = useState(false)
-  const serverSearchRef = useRef<HTMLInputElement>(null)
-  const serverSearchToggleRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    if (serverSearchOpen && window.innerWidth <= 720) window.requestAnimationFrame(() => serverSearchRef.current?.focus())
-  }, [serverSearchOpen])
   const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
   const [serverRegionFilter, setServerRegionFilter] = useState('all')
   const [listPreferences, setListPreferences] = useState<ServerListPreferences>(loadServerListPreferences)
@@ -7129,10 +6555,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     () => sortServerList(servers, listPreferences.sortMode, listPreferences.customOrder, serverListRegion),
     [listPreferences.customOrder, listPreferences.sortMode, servers],
   )
+  const expectedAgentBuild = String(data.version?.agent_expected_build || data.version?.build || '')
   const visibleServers = useMemo(
-    () => filterServerList(orderedServers, serverQuery, serverStatusFilter, serverRegionFilter, serverListRegion),
-    [orderedServers, serverQuery, serverStatusFilter, serverRegionFilter],
+    () => filterServerList(orderedServers, serverQuery, serverStatusFilter, serverRegionFilter, serverListRegion, server => serverNeedsAttention(server, expectedAgentBuild)),
+    [orderedServers, serverQuery, serverStatusFilter, serverRegionFilter, expectedAgentBuild],
   )
+  const stats = useMemo(() => fleetStats(servers, expectedAgentBuild), [servers, expectedAgentBuild])
   const [serverPage, setServerPage] = useState(0)
   const serverPageSize = SERVER_PAGE_SIZE
   const serverPageCount = Math.max(1, Math.ceil(visibleServers.length / serverPageSize))
@@ -7333,13 +6761,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         </div>,
       })
     }
-  }
-  const buildNeedsUpdate = (current: string, target: string): boolean => {
-    const c = String(current || '').trim()
-    const t = String(target || '').trim()
-    if (!c || !t) return !c && !!t
-    if (c.length === t.length && /^[0-9]+$/.test(c) && /^[0-9]+$/.test(t)) return c < t
-    return c !== t
   }
   const updateAllAgents = async () => {
     const enrolled = servers.filter(s => String(s.agent_id || '').trim())
@@ -7568,15 +6989,47 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     if (!t || t.toLowerCase() === 'dev') return 0
     return servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online' && buildNeedsUpdate(String((s as any).agent_build || ''), t)).length
   })()
-  const renderServerCard = (server: Server, index: number) => {
-    const custom = listPreferences.sortMode === 'custom'
+  const fleetView: FleetView = listPreferences.view
+  const customSort = listPreferences.sortMode === 'custom'
+  const renderServerItem = (server: Server, index: number) => {
     const previous = visibleServers[index - 1]
     const next = visibleServers[index + 1]
+    const label = server.name || `服务器 #${server.id}`
+    const sortControls = customSort ? <span className="fleet-sort" role="group" aria-label={`${label} 自定义排序`}>
+      <button type="button" disabled={!previous} onClick={event => { event.stopPropagation(); if (previous) moveCustomServer(server.id, previous.id, 'before') }} aria-label="向前移动" title="向前移动"><ArrowUp size={14} /></button>
+      <button
+        type="button"
+        className="is-handle"
+        draggable
+        onClick={event => event.stopPropagation()}
+        onDragStart={event => {
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', String(server.id))
+          setDraggedServerID(server.id)
+        }}
+        onDragEnd={() => {
+          setDraggedServerID(null)
+          setDragOverServerID(null)
+        }}
+        aria-label="拖动调整顺序"
+        title="拖动调整顺序"
+      ><GripVertical size={14} /></button>
+      <button type="button" disabled={!next} onClick={event => { event.stopPropagation(); if (next) moveCustomServer(server.id, next.id, 'after') }} aria-label="向后移动" title="向后移动"><ArrowDown size={14} /></button>
+    </span> : undefined
+    const itemProps = {
+      server,
+      role,
+      expectedBuild: expectedAgentBuild,
+      uninstalling: uninstallingServerIDs.has(server.id),
+      selected: inspectedServerId === server.id,
+      sortControls,
+      onAction: handleServerAction,
+    }
     return <div
       key={server.id}
-      className={`server-sort-item${custom ? ' is-custom' : ''}${draggedServerID === server.id ? ' is-dragging' : ''}${dragOverServerID === server.id ? ' is-drag-over' : ''}`}
+      className={`fleet-sort-item${draggedServerID === server.id ? ' is-dragging' : ''}${dragOverServerID === server.id ? ' is-drag-over' : ''}`}
       onDragOver={event => {
-        if (!custom || draggedServerID === null || draggedServerID === server.id) return
+        if (!customSort || draggedServerID === null || draggedServerID === server.id) return
         event.preventDefault()
         event.dataTransfer.dropEffect = 'move'
         setDragOverServerID(server.id)
@@ -7591,208 +7044,99 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         setDragOverServerID(null)
       }}
     >
-      {custom && <div className="server-custom-order-controls" role="group" aria-label={`${server.name || `服务器 #${server.id}`} 自定义排序`}>
-        <button type="button" className="ghost icon-button" disabled={!previous} onClick={() => previous && moveCustomServer(server.id, previous.id, 'before')} aria-label="向前移动" title="向前移动"><ArrowUp size={14} /></button>
-        <button
-          type="button"
-          className="ghost icon-button server-order-drag-handle"
-          draggable
-          onDragStart={event => {
-            event.dataTransfer.effectAllowed = 'move'
-            event.dataTransfer.setData('text/plain', String(server.id))
-            setDraggedServerID(server.id)
-          }}
-          onDragEnd={() => {
-            setDraggedServerID(null)
-            setDragOverServerID(null)
-          }}
-          aria-label="拖动调整顺序"
-          title="拖动调整顺序"
-        ><GripVertical size={14} /></button>
-        <button type="button" className="ghost icon-button" disabled={!next} onClick={() => next && moveCustomServer(server.id, next.id, 'after')} aria-label="向后移动" title="向后移动"><ArrowDown size={14} /></button>
-      </div>}
-      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} uninstalling={uninstallingServerIDs.has(server.id)} onAction={handleServerAction} isSelected={inspectedServerId === server.id} />
+      {fleetView === 'list' ? <ServerRow {...itemProps} /> : <ServerTile {...itemProps} />}
     </div>
   }
+  const manage = hasManagementAccess(role)
+  const connectableCount = servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online').length
+  const agentUpdateButton = (() => {
+    const hasExpected = Boolean(expectedBuildForBadge && expectedBuildForBadge.toLowerCase() !== 'dev')
+    const badgeCount = hasExpected ? outdatedCount : enrolledCount
+    const disabled = hasExpected ? outdatedCount === 0 : enrolledCount === 0
+    let ariaLabel = '一键更新 Agent'
+    let title = '没有已接入的 Agent'
+    if (enrolledCount) {
+      if (hasExpected && outdatedCount) {
+        ariaLabel = `一键更新 ${outdatedCount} 台待更新 Agent`
+        title = `为 ${outdatedCount} 台待更新 Agent 创建更新任务，${enrolledCount - outdatedCount} 台已是最新将跳过`
+        if (outdatedOnlineCount !== outdatedCount) title += `（在线 ${outdatedOnlineCount} 台立即更新，离线 ${outdatedCount - outdatedOnlineCount} 台稍后自动更新）`
+      } else if (hasExpected) {
+        ariaLabel = '全部 Agent 已是最新'
+        title = '全部已接入 Agent 已是最新版本，无需更新'
+      } else {
+        ariaLabel = `一键更新 ${enrolledCount} 台 Agent`
+        title = `为 ${enrolledCount} 台已接入 Agent 创建更新任务`
+      }
+    }
+    return <button type="button" className="ghost fleet-tool-button" disabled={disabled} onClick={() => void updateAllAgents()} aria-label={ariaLabel} title={title}>
+      <ArrowUpCircle size={15} aria-hidden="true" />
+      <span className="fleet-tool-label">更新 Agent</span>
+      {badgeCount > 0 && <span className="fleet-badge">{badgeCount}</span>}
+    </button>
+  })()
   return <section className="panel server-management-panel">
-    <div className="panel-body">
+    <div className="panel-body fleet-page">
+    {servers.length > 0 && <FleetSummary stats={stats} statusFilter={serverStatusFilter} onStatusFilter={setServerStatusFilter} />}
     <OfflineIsolationList isolation={data.offline_isolation} client={client} onChanged={() => void load?.()} />
-    <div className="section-toolbar server-management-toolbar">
-      {servers.length > 0 && <div className="server-list-toolbar">
-        <button
-          ref={serverSearchToggleRef}
-          type="button"
-          className={`ghost icon-button server-search-toggle${serverQuery ? ' has-query' : ''}`}
-          aria-label={serverSearchOpen ? '收起服务器搜索' : serverQuery ? '展开服务器搜索，当前有搜索条件' : '展开服务器搜索'}
-          aria-expanded={serverSearchOpen}
-          aria-controls="server-list-search-field"
-          onClick={() => setServerSearchOpen(open => !open)}
-        ><Search size={17} aria-hidden="true" /></button>
-        <div id="server-list-search-field" className={`server-list-search${serverSearchOpen ? ' is-open' : ''}`}>
-          <Search size={15} aria-hidden="true" />
-          <input ref={serverSearchRef} type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setServerSearchOpen(false); serverSearchToggleRef.current?.focus() } }} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
-          {serverQuery && <button type="button" className="ghost icon-button" onClick={() => setServerQuery('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button>}
-        </div>
-        {serverRegions.length > 0 && (
-          <div className="server-region-inline" role="group" aria-label="按地区筛选">
-            <ServerRegionFilterDropdown value={serverRegionFilter} onChange={setServerRegionFilter} regions={serverRegions} total={servers.length} />
-            {serverRegionFilter !== 'all' && (
-              <button type="button" className="ghost icon-button server-region-clear" onClick={() => setServerRegionFilter('all')} aria-label="清除地区筛选" title="清除地区筛选">
-                <Eraser size={14} />
-              </button>
-            )}
-          </div>
-        )}
-        <ServerFilterDropdown
+    {!String(data.settings?.controller_url || '').trim() && <div className="fleet-notice" role="status">
+      <AlertTriangle size={18} aria-hidden="true" />
+      <div className="fleet-notice-copy"><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址，请先在系统设置的基础设置中填写。</span></div>
+      {manage ? <button type="button" className="ghost" onClick={() => goTab('settings')}>前往设置</button> : <span className="muted">请联系管理员配置</span>}
+    </div>}
+    <div className="fleet-toolbar" role="toolbar" aria-label="服务器工具栏">
+      {servers.length > 0 && <div className="fleet-toolbar-filters">
+        <FleetSearch value={serverQuery} onChange={setServerQuery} />
+        {serverRegions.length > 0 && <RegionFilter value={serverRegionFilter} onChange={setServerRegionFilter} regions={serverRegions} total={servers.length} />}
+        <FilterPopover
           statusFilter={serverStatusFilter}
           onStatusFilterChange={setServerStatusFilter}
           sortMode={listPreferences.sortMode}
           onSortModeChange={mode => setListPreferences(current => ({ ...current, sortMode: mode }))}
         />
-        {serverPageCount === 1 && <span className="server-list-result-count">{serverResultCount}</span>}
+        <ViewToggle value={fleetView} onChange={view => setListPreferences(current => ({ ...current, view }))} />
+        {serverPageCount === 1 && <span className="fleet-count" role="status">{serverResultCount}</span>}
       </div>}
-      <div className="section-actions server-toolbar-actions">
-        {hasManagementAccess(role) && <div className="server-toolbar-tools" role="group" aria-label="服务器工具">
-        {(() => {
-          const connectableCount = servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online').length
-          return (
-            <button
-              type="button"
-              className="ghost server-toolbar-tool server-terminal-button"
-              disabled={connectableCount === 0}
-              onClick={() => setTerminalWorkspace({ serverId: null })}
-              aria-label="打开远程终端"
-              title={connectableCount ? `打开远程终端，可连接 ${connectableCount} 台在线服务器并批量执行命令` : '没有在线的已接入服务器'}
-            >
-              <SquareTerminal size={15} />
-              <span className="server-toolbar-tool-label">终端</span>
-            </button>
-          )
-        })()}
-        {(() => {
-          const hasExpected = Boolean(expectedBuildForBadge && expectedBuildForBadge.toLowerCase() !== 'dev')
-          const badgeCount = hasExpected ? outdatedCount : enrolledCount
-          const buttonDisabled = hasExpected ? outdatedCount === 0 : enrolledCount === 0
-          const badgeCountForDisplay = badgeCount
-          let ariaLabel = '一键更新 Agent'
-          let title = '没有已接入的 Agent'
-          if (enrolledCount) {
-            if (hasExpected) {
-              if (outdatedCount) {
-                ariaLabel = `一键更新 ${outdatedCount} 台待更新 Agent`
-                title = `为 ${outdatedCount} 台待更新 Agent 创建更新任务，${enrolledCount - outdatedCount} 台已是最新将跳过`
-                if (outdatedOnlineCount !== outdatedCount) {
-                  title += `（在线 ${outdatedOnlineCount} 台立即更新，离线 ${outdatedCount - outdatedOnlineCount} 台稍后自动更新）`
-                }
-              } else {
-                ariaLabel = '全部 Agent 已是最新'
-                title = '全部已接入 Agent 已是最新版本，无需更新'
-              }
-            } else {
-              ariaLabel = `一键更新 ${enrolledCount} 台 Agent`
-              title = `为 ${enrolledCount} 台已接入 Agent 创建更新任务`
-            }
-          }
-          return (
-            <button
-              type="button"
-              className="ghost server-toolbar-tool server-update-agents-button"
-              disabled={buttonDisabled}
-              onClick={() => void updateAllAgents()}
-              aria-label={ariaLabel}
-              title={title}
-            >
-              <ArrowUpCircle size={15} />
-              <span className="server-toolbar-tool-label server-update-agents-label">更新 Agent</span>
-              {badgeCountForDisplay > 0 && <span className="server-update-agents-badge">{badgeCountForDisplay}</span>}
-            </button>
-          )
-        })()}
-        </div>}
-        <div className="server-action-group">
+      <div className="fleet-toolbar-actions">
+        {manage && <>
           <button
             type="button"
-            className="server-add-button"
-            aria-label="添加服务器"
-            title="添加服务器"
-            onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}
+            className="ghost fleet-tool-button"
+            disabled={connectableCount === 0}
+            onClick={() => setTerminalWorkspace({ serverId: null })}
+            aria-label="打开远程终端"
+            title={connectableCount ? `打开远程终端，可连接 ${connectableCount} 台在线服务器并批量执行命令` : '没有在线的已接入服务器'}
           >
-            <Plus size={15} />
+            <SquareTerminal size={15} aria-hidden="true" />
+            <span className="fleet-tool-label">终端</span>
+          </button>
+          {agentUpdateButton}
+          <button type="button" className="fleet-add" onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}>
+            <Plus size={15} aria-hidden="true" />
             <span>添加服务器</span>
           </button>
-        </div>
+        </>}
       </div>
     </div>
-    {servers.length > 0 && serverPageCount > 1 && <div className="server-list-navigation">
-      <div className="server-list-toolbar-right">
-        <span className="server-list-result-count">{serverResultCount}</span>
-        <div className="server-list-pagination-controls">
-            <button
-              type="button"
-              className="ghost"
-              disabled={currentServerPage === 0}
-              onClick={() => {
-                setServerPage(currentServerPage - 1)
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }}
-            >
-              上一页
-            </button>
-            <Select
-              aria-label="服务器页码顶部"
-              value={String(currentServerPage)}
-              onChange={event => {
-                setServerPage(Number(event.target.value))
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }}
-            >
-              {Array.from({ length: serverPageCount }, (_, index) => (
-                <option key={index} value={index}>
-                  第 {index + 1} / {serverPageCount} 页
-                </option>
-              ))}
-            </Select>
-            <button
-              type="button"
-              className="ghost"
-              disabled={currentServerPage === serverPageCount - 1}
-              onClick={() => {
-                setServerPage(currentServerPage + 1)
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }}
-            >
-              下一页
-            </button>
-        </div>
-      </div>
-    </div>}
-    {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
-      <AlertTriangle size={18} />
-      <div><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址。请先前往系统设置的基础设置填写并保存。</span></div>
-      {hasManagementAccess(role) ? <button type="button" onClick={() => goTab('settings')}>前往设置</button> : <span className="controller-url-warning-role">请联系管理员配置</span>}
-    </div>}
     {loading && !servers.length
       ? <CardSkeleton />
       : !servers.length
       ? <SignalEmptyState
           title="暂无受控服务器"
           description="通过单行命令为远程服务器安装 Agent，注册上线后即可在此统一编排管理。"
-          action={hasManagementAccess(role) ? <button type="button" className="btn primary" onClick={() => setCreateOpen(true)}>接入首台服务器</button> : null}
+          action={manage ? <button type="button" className="btn primary" onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}>接入首台服务器</button> : null}
         />
       : !visibleServers.length
-      ? <div className="server-filter-empty"><Search size={20} aria-hidden="true" /><strong>没有符合条件的服务器</strong><button type="button" className="ghost" onClick={clearServerFilters}>清除筛选</button></div>
-      : (
-        <div className="server-workbench-layout">
-          <div className="server-workbench-main">
-            <ServerListPage
-              key={serverFilterKey}
-              items={visibleServers}
-              renderItem={renderServerCard}
-              page={currentServerPage}
-              onPageChange={setServerPage}
-              hideTopPagination
-            />
-          </div>
+      ? <div className="fleet-empty"><Search size={20} aria-hidden="true" /><strong>没有符合条件的服务器</strong><button type="button" className="ghost" onClick={clearServerFilters}>清除筛选</button></div>
+      : <div className={`fleet-workbench${inspectedServer ? ' has-inspector' : ''}`}>
+          <ServerListPage
+            key={serverFilterKey}
+            items={visibleServers}
+            renderItem={renderServerItem}
+            page={currentServerPage}
+            onPageChange={setServerPage}
+            layout={fleetView}
+            header={fleetView === 'list' ? <ServerListHeader sortable={customSort} /> : undefined}
+          />
           {inspectedServer && (
             <ServerInspectorPanel
               server={inspectedServer}
@@ -7801,8 +7145,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
               onAction={handleServerAction}
             />
           )}
-        </div>
-      )}
+        </div>}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
@@ -8223,20 +7566,80 @@ function BillingAnchorResetNote({ draft }: { draft: any }) {
   return <div className="access-note"><strong>流量重置已手动设置</strong><span>当前计费锚点为 {anchorLabel}，但流量重置按下方设置的{mode === 'monthly' ? '自然月' : `每月 ${currentDay} 日`}执行。</span></div>
 }
 
-function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
-  const update = (patch: Record<string, any>) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
+function SettingRow({ label, description, required, children, stacked = false }: { label: string; description?: React.ReactNode; required?: boolean; children: React.ReactNode; stacked?: boolean }) {
+  const id = useId()
+  return <div className={`ss-row${stacked ? ' is-stacked' : ''}`} role="group" aria-labelledby={id}>
+    <div className="ss-row-copy">
+      <span id={id} className="ss-row-label">{label}{required ? <em aria-label="必填">*</em> : null}</span>
+      {description ? <span className="ss-row-desc">{description}</span> : null}
+    </div>
+    <div className="ss-row-control">{children}</div>
+  </div>
+}
+
+function SettingGroup({ title, children }: { title?: string; children: React.ReactNode }) {
+  return <section className="ss-group">
+    {title ? <h4 className="ss-group-title">{title}</h4> : null}
+    <div className="ss-group-body">{children}</div>
+  </section>
+}
+
+const serverSettingSectionMeta: Record<ServerSettingsTab, { icon: React.ComponentType<{ size?: number; 'aria-hidden'?: boolean | 'true' | 'false' }>; desc: string }> = {
+  basic: { icon: Info, desc: '名称、地区与卡片标签' },
+  billing: { icon: CalendarDays, desc: '到期、续期与周期流量' },
+  network: { icon: Network, desc: '入口地址、监听与端口池' },
+  monitor: { icon: Activity, desc: '回报频率、审计与离线提醒' },
+  system: { icon: ShieldCheck, desc: '安全进程、时间校准与远程控制' },
+}
+
+type ServerSettingsDialogProps = {
+  mode: 'create' | 'edit'
+  server?: Server
+  draft: any
+  update: (patch: Record<string, any>) => void
+  onCancel: () => void
+  onSubmit: () => Promise<unknown>
+  servers?: Server[]
+  connectionAuditGated?: boolean
+  client?: any
+  notify?: (message: string, tone?: string) => void
+  role?: Role
+}
+
+export function ServerSettingsDialog({ mode, server, draft, update, onCancel, onSubmit, servers, connectionAuditGated, client, notify, role = 'viewer' }: ServerSettingsDialogProps) {
+  const creating = mode === 'create'
   const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
   const [cycleMissing, setCycleMissing] = useState(false)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
+  const nameMissing = !String(draft.name || '').trim()
+  const invalid: Partial<Record<ServerSettingsTab, boolean>> = {
+    basic: nameMissing,
+    billing: cycleMissing && Boolean(draft.auto_renew_enabled),
+    network: !portRangeValid || !internalPortRangeValid || entryAddressInvalid,
+  }
+  const tabIndex = serverSettingTabs.findIndex(item => item.id === tab)
+  const choose = (next: ServerSettingsTab) => {
+    setTab(next)
+    bodyRef.current?.scrollTo?.({ top: 0 })
+    document.getElementById(`server-settings-tab-${next}`)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }
   const submit = async () => {
-    if (saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid) return
+    if (saving || nameMissing) {
+      if (nameMissing) choose('basic')
+      return
+    }
+    if (!portRangeValid || !internalPortRangeValid || entryAddressInvalid) {
+      choose('network')
+      return
+    }
     if (draft.auto_renew_enabled && !draft.renewal_cycle) {
       setCycleMissing(true)
-      setTab('billing')
+      choose('billing')
       return
     }
     setSaving(true)
@@ -8247,157 +7650,234 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
     }
   }
   const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel="添加服务器">
-      <header className="dialog-head">
-        <div><h2 id="server-dialog-title">添加服务器</h2><p className="muted">填写基本信息后即可创建，其余设置可按需调整。</p></div>
+  const title = creating ? '添加服务器' : '服务器设置'
+  const subtitle = creating ? '填写名称即可创建，其余设置可稍后调整。' : `${server?.name || `服务器 #${server?.id}`} · ${String(server?.status || '').toLowerCase() === 'online' ? '在线' : server?.agent_id ? '离线' : '未接入'}`
+  const current = serverSettingTabs[tabIndex]
+  const currentMeta = serverSettingSectionMeta[tab]
+  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide server-settings-dialog" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel={title}>
+      <header className="dialog-head ss-head">
+        {!creating && server ? <RegionFlag code={serverRegionCode(server)} size={24} /> : <span className="ss-head-icon" aria-hidden="true"><ServerCog size={18} /></span>}
+        <div className="ss-head-copy"><h2 id={creating ? 'server-dialog-title' : 'server-edit-title'}>{title}</h2><p className="muted">{subtitle}</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="server-dialog-tabs" role="tablist" aria-label="服务器设置分类">
-        {serverSettingTabs.map(item => (
-          <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>
-        ))}
-      </div>
-      <div className="dialog-body">
-        <div className={`form server-dialog-form labeled-form${tab === 'network' ? ' server-network-form' : ''}`}>
+      <div className="ss-layout">
+        <nav className="ss-nav" role="tablist" aria-label="服务器设置分类" aria-orientation="vertical">
+          {serverSettingTabs.map((item, index) => {
+            const meta = serverSettingSectionMeta[item.id]
+            const Icon = meta.icon
+            return <button
+              key={item.id}
+              type="button"
+              role="tab"
+              id={`server-settings-tab-${item.id}`}
+              aria-selected={tab === item.id}
+              aria-controls="server-settings-panel"
+              className={`ss-nav-item${tab === item.id ? ' active' : ''}`}
+              onClick={() => choose(item.id)}
+              onKeyDown={event => {
+                if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return
+                event.preventDefault()
+                const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : -1
+                const next = serverSettingTabs[(index + step + serverSettingTabs.length) % serverSettingTabs.length].id
+                choose(next)
+                document.getElementById(`server-settings-tab-${next}`)?.focus()
+              }}
+            >
+              <Icon size={16} aria-hidden="true" />
+              <span className="ss-nav-text"><span>{item.label}</span><small>{meta.desc}</small></span>
+              {invalid[item.id] ? <span className="ss-nav-alert" aria-label="有待修正的设置" /> : null}
+            </button>
+          })}
+        </nav>
+        <div ref={bodyRef} className="dialog-body ss-body" role="tabpanel" id="server-settings-panel" aria-labelledby={`server-settings-tab-${tab}`}>
+          <div className="ss-section-head">
+            <h3>{current.label}</h3>
+            <p>{currentMeta.desc}</p>
+          </div>
+
           {tab === 'basic' && <>
-          <div className="form-section-title">基础信息</div>
-          <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom">
-            <input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：server-1" />
-          </FormField>
-          <ServerRegionField draft={draft} update={update} servers={servers} />
-          <ServerDisplayTagsEditor tags={draft.display_tags || []} onChange={display_tags => update({ display_tags })} />
+            <SettingGroup>
+              <SettingRow label="服务器名称" required description="用于面板识别，名称不能与其他服务器重复。">
+                <input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：server-1" aria-label="服务器名称" aria-invalid={nameMissing} />
+              </SettingRow>
+              <ServerRegionField draft={draft} update={update} servers={servers} />
+            </SettingGroup>
+            <SettingGroup title="展示">
+              <ServerDisplayTagsEditor tags={draft.display_tags || []} onChange={display_tags => update({ display_tags })} />
+            </SettingGroup>
           </>}
 
           {tab === 'billing' && <>
-          <div className="form-section-title">到期与续期</div>
-          <FormField label="计费开始日" hint="用于自动推导流量重置日；有此日则按此日，无则按到期日。留空不影响到期追踪。仅取日精度，例如 2025-07-05 起租即每月 5 日重置。" placement="bottom">
-            <input type="date" value={draft.service_start_at || ''} onChange={e => update({ service_start_at: e.target.value })} aria-label="计费开始日" />
-          </FormField>
-          <FormField label="到期日" hint="留空表示不追踪服务器到期。已填计费开始日时到期日仅用于续期计算，不再影响重置日。" placement="bottom">
-            <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
-          </FormField>
-          <BillingAnchorResetNote draft={draft} />
-          <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
-            <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
-          </FormField>
-          {Boolean(draft.auto_renew_enabled) && (
-            <FormField label="续期周期" hint="按月付、季付、半年付或年付顺延 1、3、6 或 12 个月，月底日期自动取当月最后一天。">
-              <Select value={draft.renewal_cycle || ''} onChange={e => { update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' | 'semiannual' | 'annual' }); setCycleMissing(false) }} aria-label="续期周期" aria-invalid={cycleMissing} aria-describedby={cycleMissing ? 'server-renewal-cycle-error' : undefined}>
-                <option value="" disabled>请选择续期周期</option>
-                <option value="monthly">月付（下月同日）</option>
-                <option value="quarterly">季付（三个月后同日）</option>
-                <option value="semiannual">半年付（六个月后同日）</option>
-                <option value="annual">年付（次年同日）</option>
-              </Select>
-            </FormField>
-          )}
-          {cycleMissing && draft.auto_renew_enabled && <p id="server-renewal-cycle-error" role="alert">开启自动续期时必须选择续期周期。</p>}
-          <FormField label="到期提醒" hint="在系统通知设置中配置提前天数和发送时间，需要 Bark/TG 频道勾选“服务器到期”事件。">
-            <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
-          </FormField>
-          <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
-          <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
-            <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
-          </FormField>
-          <FormField label="已用流量" hint="当前周期已产生的流量，默认为 0，创建时可填入已用的一半等初始值。">
-            <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
-          </FormField>
+            <SettingGroup title="到期与续期">
+              <SettingRow label="计费开始日" description="用于推导流量重置日，仅取日精度。留空不影响到期追踪。">
+                <input type="date" value={draft.service_start_at || ''} onChange={e => update({ service_start_at: e.target.value })} aria-label="计费开始日" />
+              </SettingRow>
+              <SettingRow label="到期日" description={creating ? '留空表示不追踪到期。已填计费开始日时，到期日只用于续期计算。' : '留空表示不追踪到期。'}>
+                <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
+                {!creating && <div className="server-expiry-quick-row">
+                  <span>快速延长</span>
+                  {[1, 3, 7, 30].map(days => (
+                    <button key={days} type="button" className="ghost" onClick={() => update({ expires_at: addDaysToExpiryDate(draft.expires_at, days) })}>+{days} 天</button>
+                  ))}
+                </div>}
+              </SettingRow>
+              <BillingAnchorResetNote draft={draft} />
+              <SettingRow label="自动续期" description="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
+                <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
+              </SettingRow>
+              {Boolean(draft.auto_renew_enabled) && <SettingRow label="续期周期" description="顺延 1、3、6 或 12 个月，月底日期自动取当月最后一天。">
+                <Select value={draft.renewal_cycle || ''} onChange={e => { update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' | 'semiannual' | 'annual' }); setCycleMissing(false) }} aria-label="续期周期" aria-invalid={cycleMissing} aria-describedby={cycleMissing ? 'server-renewal-cycle-error' : undefined}>
+                  <option value="" disabled>请选择续期周期</option>
+                  <option value="monthly">月付（下月同日）</option>
+                  <option value="quarterly">季付（三个月后同日）</option>
+                  <option value="semiannual">半年付（六个月后同日）</option>
+                  <option value="annual">年付（次年同日）</option>
+                </Select>
+                {cycleMissing && <p id="server-renewal-cycle-error" className="ss-error" role="alert">开启自动续期时必须选择续期周期。</p>}
+              </SettingRow>}
+              <SettingRow label="到期提醒" description="提前天数与发送时间在系统通知设置中配置，频道需勾选“服务器到期”。">
+                <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
+              </SettingRow>
+            </SettingGroup>
+            <SettingGroup title="周期流量">
+              <SettingRow label="流量重置" description="自然月按每月 1 日统计；也可指定每月重置日，短月取当月最后一天。">
+                <Select aria-label="流量重置方式" variant="segmented" value={draft.traffic_reset_mode || 'monthly'} onChange={e => update({ traffic_reset_mode: e.target.value })}>
+                  <option value="monthly">自然月</option>
+                  <option value="month_day">每月指定日</option>
+                </Select>
+              </SettingRow>
+              {(draft.traffic_reset_mode || 'monthly') === 'month_day' && <SettingRow label="重置日" description="1–31，未填写默认为 1 日。">
+                <input
+                  type="number"
+                  aria-label="流量重置日"
+                  min={1}
+                  max={31}
+                  placeholder="1"
+                  value={draft.traffic_reset_day === '' || draft.traffic_reset_day === undefined || draft.traffic_reset_day === null ? '' : draft.traffic_reset_day}
+                  onChange={e => update({ traffic_reset_day: e.target.value === '' ? '' : Number(e.target.value) })}
+                  onBlur={e => {
+                    const val = Number(e.target.value)
+                    if (!e.target.value || isNaN(val) || val < 1) update({ traffic_reset_day: 1 })
+                    else if (val > 31) update({ traffic_reset_day: 31 })
+                  }}
+                />
+              </SettingRow>}
+              <SettingRow label="周期流量限额" description="0 表示不限量，仅用于展示与提醒。">
+                <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
+              </SettingRow>
+              <SettingRow label="已用流量" description={creating ? '当前周期已产生的流量，可填入初始值。' : '当前周期已产生的流量，保存后写入。'}>
+                <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
+                {!creating && Number(draft.traffic_used_bytes || 0) > 0 && <button type="button" className="ghost ss-inline-action" onClick={() => update({ traffic_used_bytes: 0 })}><RotateCcw size={14} aria-hidden="true" />清零已用流量</button>}
+              </SettingRow>
+            </SettingGroup>
           </>}
 
           {tab === 'network' && <>
-          <div className="form-section-title">入口与监听</div>
-          <FormField label="默认入口地址策略" className="server-network-inline-field" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom">
-            <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
-          </FormField>
-          {draft.entry_ip_mode === 'custom' ? (
-            <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
-              <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
-              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
-            </FormField>
-          ) : draft.entry_address ? (
-            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
-          ) : null}
-          <FormField label="监听模式" className="server-network-inline-field" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
-            <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
-          </FormField>
-          <FormField label="监听 IP" className="server-network-inline-field" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
-            <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
-          </FormField>
-          <div className="form-section-title">出口与端口</div>
-          <FormField label="出口解析策略" className="server-network-inline-field" hint="选择出口优先使用的 IP 类型。">
-            <Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
-          </FormField>
-          <FormField label="UDP 入站" hint="选择 UDP 的处理方式。">
-            <UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} />
-          </FormField>
-          <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。">
-            <PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} />
-          </FormField>
-          <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。">
-            <PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} />
-          </FormField>
-          <div className="form-extra-row">
-            <button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)} aria-haspopup="dialog">MTU 检测设置</button>
-            <span>首次部署或设置变化时执行。</span>
-          </div>
+            <SettingGroup title="入口与监听">
+              <SettingRow label="默认入口地址策略" description="订阅默认使用的服务器地址。只有“自定义”会使用下方地址。">
+                <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }} aria-label="默认入口地址策略">{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
+              </SettingRow>
+              {draft.entry_ip_mode === 'custom' ? (
+                <SettingRow label="自定义入口地址" description="可填写域名、IPv4 或 IPv6。">
+                  <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" aria-label="自定义入口地址" />
+                  <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
+                </SettingRow>
+              ) : draft.entry_address ? (
+                <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
+              ) : null}
+              <SettingRow label="监听模式" description="自动：有全局 IPv6 地址时同时监听 IPv4 与 IPv6。">
+                <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })} aria-label="监听模式">{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
+              </SettingRow>
+              <SettingRow label="监听 IP" description="通常保持 0.0.0.0；填写具体地址会覆盖监听模式。">
+                <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" aria-label="监听 IP" />
+              </SettingRow>
+            </SettingGroup>
+            <SettingGroup title="出口与端口">
+              <SettingRow label="出口解析策略" description="出口优先使用的 IP 类型。">
+                <Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })} aria-label="出口解析策略">{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
+              </SettingRow>
+              <SettingRow label="UDP 入站" description="选择 UDP 的处理方式。">
+                <UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} />
+              </SettingRow>
+              <SettingRow label="公网端口范围" description="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。">
+                <PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} />
+              </SettingRow>
+              <SettingRow label="内部回环端口范围" description="仅监听 127.0.0.1 / ::1 的内部组件端口池。">
+                <PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} />
+              </SettingRow>
+              <SettingRow label="MTU 检测" description={creating ? '首次部署或设置变化时执行。' : '修改后会在下次部署重新检测。'}>
+                <button type="button" className="ghost ss-inline-action" onClick={() => setMtuDialogOpen(true)} aria-haspopup="dialog"><SlidersHorizontal size={14} aria-hidden="true" />MTU 检测设置</button>
+              </SettingRow>
+            </SettingGroup>
           </>}
 
           {tab === 'monitor' && <>
-          <div className="form-section-title">监控</div>
-          <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
-            <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value as 'lightweight' | 'standard' })}>
-              <option value="lightweight">轻量</option>
-              <option value="standard">标准</option>
-            </Select>
-          </FormField>
-          <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
-            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
-          </FormField>
-          <div className="access-note"><strong>拨测任务</strong><span>请在独立的“拨测任务”页面统一配置测试目标、周期与自动测试开关。</span></div>
-          <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
-            <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
-            {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
-          </FormField>
-          <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
-            <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} ariaLabel="离线与恢复提醒" />
-          </FormField>
-          {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
-            <input
-              type="number"
-              min={0}
-              max={86400}
-              placeholder="0"
-              value={draft.offline_after_seconds === '' || draft.offline_after_seconds === undefined || draft.offline_after_seconds === null ? '' : draft.offline_after_seconds}
-              onChange={e => update({ offline_after_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
-              onBlur={e => {
-                const n = Number(e.target.value)
-                if (e.target.value !== '' && (isNaN(n) || n < 0)) update({ offline_after_seconds: 0 })
-                else if (n > 86400) update({ offline_after_seconds: 86400 })
-              }}
-            />
-          </FormField>}
+            <SettingGroup title="监控">
+              <SettingRow label="回报模式" description="轻量每 20 秒、标准每 10 秒回报一次。">
+                <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value as 'lightweight' | 'standard' })} aria-label="回报模式">
+                  <option value="lightweight">轻量</option>
+                  <option value="standard">标准</option>
+                </Select>
+              </SettingRow>
+              <SettingRow label="负载历史" description="关闭后清除并停止记录历史，只保留实时读数。">
+                <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
+              </SettingRow>
+              <SettingRow label="连接审计" description={connectionAuditGated ? '全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。' : '记录来源 IP、目标与出口摘要；关闭后 Agent 停止采集与上报。'}>
+                <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
+              </SettingRow>
+              <div className="access-note"><strong>拨测任务</strong><span>测试目标、周期与自动测试开关在独立的“拨测任务”页面统一配置。</span></div>
+            </SettingGroup>
+            <SettingGroup title="提醒">
+              <SettingRow label="离线与恢复提醒" description="关闭后不再提醒这台服务器的离线与恢复。">
+                <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} ariaLabel="离线与恢复提醒" />
+              </SettingRow>
+              {Boolean(draft.offline_notify_enabled) && <SettingRow label="离线判断时间（秒）" description="留空或 0 表示使用系统设置中的默认值。">
+                <input
+                  type="number"
+                  min={0}
+                  max={86400}
+                  placeholder="0"
+                  aria-label="离线判断时间（秒）"
+                  value={draft.offline_after_seconds === '' || draft.offline_after_seconds === undefined || draft.offline_after_seconds === null ? '' : draft.offline_after_seconds}
+                  onChange={e => update({ offline_after_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
+                  onBlur={e => {
+                    const n = Number(e.target.value)
+                    if (e.target.value !== '' && (isNaN(n) || n < 0)) update({ offline_after_seconds: 0 })
+                    else if (n > 86400) update({ offline_after_seconds: 86400 })
+                  }}
+                />
+              </SettingRow>}
+            </SettingGroup>
           </>}
 
           {tab === 'system' && <>
-          <div className="form-section-title">主机设置</div>
-          <FormField label="安全进程" hint="安装命令自动使用随机目录并启动 Agent，配置加密存储；若已有 Agent，重装成功后自动清理旧安装。">
-            <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
-          </FormField>
-
-          <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
-            <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
-          </FormField>
+            <SettingGroup title="主机">
+              <SettingRow label="安全进程" description={creating ? '安装命令自动使用随机目录启动 Agent，配置加密存储；已有 Agent 时重装成功后自动清理旧安装。' : '开启后需重新生成接入命令并在服务器执行，成功后自动清理旧安装；关闭时在线 Agent 自动切回普通模式。'}>
+                <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
+              </SettingRow>
+              <SettingRow label="时间校准" description={creating ? 'Agent 接入时会立即检测时间偏差。' : '切换模式后会立即检测时间偏差。'} stacked>
+                <TimeCorrectionSelector value={draft.time_correction_mode || 'auto'} onChange={value => update({ time_correction_mode: value })} />
+              </SettingRow>
+            </SettingGroup>
+            {!creating && server && <SettingGroup title="远程控制">
+              <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={hasManagementAccess(role)} />
+            </SettingGroup>}
           </>}
         </div>
       </div>
-      <footer className="dialog-actions">
+      <footer className="dialog-actions ss-actions">
+        <span className="ss-step" aria-hidden="true">{tabIndex + 1} / {serverSettingTabs.length}</span>
         <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
-        {tab !== 'basic' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.max(0, serverSettingTabs.findIndex(item => item.id === tab) - 1)].id)} disabled={saving}>上一项</button>}
-        {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
-        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving ? '创建中…' : '创建'}</button>
+        {creating && tabIndex < serverSettingTabs.length - 1 && <button type="button" className="ghost" onClick={() => choose(serverSettingTabs[tabIndex + 1].id)} disabled={saving}>下一项</button>}
+        <button onClick={() => void submit()} disabled={saving || nameMissing || !portRangeValid || !internalPortRangeValid || entryAddressInvalid} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{creating ? (saving ? '创建中…' : '创建') : (saving ? '保存中…' : '保存')}</button>
       </footer>
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
+}
+
+function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
+  const update = (patch: Record<string, any>) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
+  return <ServerSettingsDialog mode="create" draft={draft} update={update} onCancel={onCancel} onSubmit={onSubmit} servers={servers} connectionAuditGated={connectionAuditGated} />
 }
 
 function serverToDraft(server: Server) {
@@ -8422,158 +7902,8 @@ function serverToDraft(server: Server) {
 
 function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<boolean>; servers?: Server[]; connectionAuditGated?: boolean }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
-  const [tab, setTab] = useState<ServerSettingsTab>('basic')
-  const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
-  const [portRangeValid, setPortRangeValid] = useState(true)
-  const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const update = (patch: any) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
-  const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
-  const submit = async () => {
-    if (saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid) return
-    setSaving(true)
-    try {
-      await onSubmit(draft)
-    } finally {
-      setSaving(false)
-    }
-  }
-  const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide" placement="right" drawerSize="wide" surfaceMotion="workspace" ariaLabel="服务器设置">
-      <header className="dialog-head">
-        <div><h2 id="server-edit-title">服务器设置</h2></div>
-        <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
-      </header>
-      <div className="server-dialog-tabs" role="tablist" aria-label="服务器设置分类">
-        {serverSettingTabs.map(item => (
-          <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>
-        ))}
-      </div>
-      <div className="dialog-body">
-        <div className={`form server-dialog-form labeled-form${tab === 'network' ? ' server-network-form' : ''}`}>
-          {tab === 'basic' && <>
-          <div className="form-section-title">基础信息</div>
-          <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
-          <ServerRegionField draft={draft} update={update} servers={servers} />
-          <ServerDisplayTagsEditor tags={draft.display_tags || []} onChange={display_tags => update({ display_tags })} />
-          </>}
-          {tab === 'billing' && <>
-          <div className="form-section-title">到期与续期</div>
-          <FormField label="计费开始日" hint="用于自动推导流量重置日；有此日则按此日，无则按到期日。留空不影响到期追踪。仅取日精度，例如 2025-07-05 起租即每月 5 日重置。" placement="bottom">
-            <input type="date" value={draft.service_start_at || ''} onChange={e => update({ service_start_at: e.target.value })} aria-label="计费开始日" />
-          </FormField>
-          <FormField label="到期日" hint="留空表示不追踪服务器到期。" placement="bottom">
-            <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
-            <div className="server-expiry-quick-row">
-              <span>快速延长</span>
-              {[1, 3, 7, 30].map(days => (
-                <button key={days} type="button" className="ghost" onClick={() => update({ expires_at: addDaysToExpiryDate(draft.expires_at, days) })}>+{days} 天</button>
-              ))}
-            </div>
-          </FormField>
-          <BillingAnchorResetNote draft={draft} />
-          <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
-            <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
-          </FormField>
-          {Boolean(draft.auto_renew_enabled) && (
-            <FormField label="续期周期" hint="按月付、季付、半年付或年付顺延 1、3、6 或 12 个月，月底日期自动取当月最后一天。">
-              <Select value={draft.renewal_cycle || 'monthly'} onChange={e => update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' | 'semiannual' | 'annual' })} aria-label="续期周期">
-                <option value="monthly">月付（下月同日）</option>
-                <option value="quarterly">季付（三个月后同日）</option>
-                <option value="semiannual">半年付（六个月后同日）</option>
-                <option value="annual">年付（次年同日）</option>
-              </Select>
-            </FormField>
-          )}
-          <FormField label="到期提醒" hint="在系统通知设置中配置提前天数和发送时间，需要 Bark/TG 频道勾选“服务器到期”事件。">
-            <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
-          </FormField>
-          <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
-          <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
-            <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
-          </FormField>
-          <FormField label="已用流量" hint="当前周期已产生的流量。保存后写入；也可在操作菜单中立即清零，不必改其他设置。">
-            <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
-          </FormField>
-          {Number(draft.traffic_used_bytes || 0) > 0 && (
-            <div className="form-extra-row">
-              <button type="button" className="ghost" onClick={() => update({ traffic_used_bytes: 0 })}>
-                <RotateCcw size={14} /> 清零已用流量
-              </button>
-              <span>将表单中的已用流量改为 0，保存后生效。</span>
-            </div>
-          )}
-          </>}
-          {tab === 'network' && <>
-          <div className="form-section-title">入口与监听</div>
-          <FormField label="默认入口地址策略" className="server-network-inline-field" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          {draft.entry_ip_mode === 'custom' ? (
-            <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
-              <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
-              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
-            </FormField>
-          ) : draft.entry_address ? (
-            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
-          ) : null}
-          <FormField label="监听模式" className="server-network-inline-field" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
-          <FormField label="监听 IP" className="server-network-inline-field" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
-          <div className="form-section-title">出口与端口</div>
-          <FormField label="出口解析策略" className="server-network-inline-field" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
-          <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
-          <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。"><PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} /></FormField>
-          <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
-          </>}
-          {tab === 'monitor' && <>
-          <div className="form-section-title">监控</div>
-          <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
-            <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value })}><option value="lightweight">轻量</option><option value="standard">标准</option></Select>
-          </FormField>
-          <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
-            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
-          </FormField>
-          <div className="access-note"><strong>拨测任务</strong><span>请在独立的“拨测任务”页面统一配置测试目标、周期与自动测试开关。</span></div>
-          <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
-            <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
-            {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
-          </FormField>
-          <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
-            <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} ariaLabel="离线与恢复提醒" />
-          </FormField>
-          {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
-            <input
-              type="number"
-              min={0}
-              max={86400}
-              placeholder="0"
-              value={draft.offline_after_seconds === '' || draft.offline_after_seconds === undefined || draft.offline_after_seconds === null ? '' : draft.offline_after_seconds}
-              onChange={e => update({ offline_after_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
-              onBlur={e => {
-                const n = Number(e.target.value)
-                if (e.target.value !== '' && (isNaN(n) || n < 0)) update({ offline_after_seconds: 0 })
-                else if (n > 86400) update({ offline_after_seconds: 86400 })
-              }}
-            />
-          </FormField>}
-          </>}
-          {tab === 'system' && <>
-          <div className="form-section-title">主机设置</div>
-          <FormField label="安全进程" hint="开启后必须重新生成接入命令并在服务器执行。安装命令将重新安装并启动随机目录的 Agent，成功后自动清理旧安装；关闭时在线 Agent 自动切回普通模式。">
-            <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
-          </FormField>
-
-          <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'auto'} onChange={value => update({ time_correction_mode: value })} /></FormField>
-          <div className="form-section-title">远程控制</div>
-          <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={hasManagementAccess(role)} />
-          </>}
-        </div>
-      </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button>
-        {tab !== 'basic' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.max(0, serverSettingTabs.findIndex(item => item.id === tab) - 1)].id)} disabled={saving}>上一项</button>}
-        {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
-        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid} aria-busy={saving}>{saving && <Loader2 size={15} className="spin" aria-hidden="true" />}{saving ? '保存中…' : '保存'}</button></footer>
-      {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
-  </MotionDialogPanel>
+  const update = (patch: Record<string, any>) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
+  return <ServerSettingsDialog mode="edit" server={server} draft={draft} update={update} onCancel={onCancel} onSubmit={() => onSubmit(draft)} servers={servers} connectionAuditGated={connectionAuditGated} client={client} notify={notify} role={role} />
 }
 
 function ServerExtendExpiryDialog({ server, onCancel, onSubmit }: { server: Server; onCancel: () => void; onSubmit: (server: Server, days: number) => Promise<void> }) {
@@ -8928,62 +8258,6 @@ function TimeCorrectionSelector({ value, onChange, compact = false }: { value: T
       <option value="ntp">逻辑校时</option>
     </Select>
     {!compact && <small>{descriptions[value]}</small>}
-  </div>
-}
-
-type ServerActionItem = {
-  label: string
-  type: string
-  icon: React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>
-  admin?: boolean
-  danger?: boolean
-}
-
-type ServerActionGroup = {
-  title?: string
-  items: ServerActionItem[]
-}
-
-function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: Server; role?: Role; onAction: (type: string, server: Server) => void }) {
-  return <ServerActionMenu server={server} role={role as any} onAction={onAction} />
-}
-
-function compactBuildLabel(value?: string) {
-  const build = String(value || '').trim()
-  if (/^\d{14}$/.test(build)) return `${build.slice(4, 8)}.${build.slice(8, 12)}`
-  if (build.length > 10) return build.slice(-10)
-  return build || '—'
-}
-
-function telemetryPolyline(values: Array<number | null>, width = 240, height = 48, scaleMax?: number) {
-  const points = values.flatMap((value, index) => value == null || !Number.isFinite(value) ? [] : [{ index, value }])
-  if (!points.length) return ''
-  const max = Math.max(1, scaleMax || 0, ...points.map(point => point.value))
-  const denominator = Math.max(1, values.length - 1)
-  return points.map(point => `${(point.index / denominator) * width},${height - (Math.max(0, point.value) / max) * (height - 4) - 2}`).join(' ')
-}
-
-function ServerTelemetryChart({ samples, type }: { samples: ServerMetricSample[]; type: 'network' | 'latency' }) {
-  const points = samples.slice(-60)
-  const first = type === 'network' ? points.map(x => Number(x.network_download_bps || 0)) : points.map(x => x.connectivity_available === undefined ? null : Number(x.connectivity_latency_ms || 0))
-  const second = type === 'network' ? points.map(x => Number(x.network_upload_bps || 0)) : []
-  const plotted = [...first, ...second].filter((value): value is number => value != null && Number.isFinite(value))
-  const scaleMax = Math.max(1, ...plotted)
-  const formatScale = (value: number) => type === 'network' ? formatByteRate(value) : `${Math.round(value)} ms`
-  const hasData = plotted.length >= 2
-  return <div className={`server-chart-wrap ${type}${hasData ? '' : ' is-empty'}`}>
-    <svg className={`server-mini-chart ${type}`} viewBox="0 0 240 48" preserveAspectRatio="none" role="img" aria-label={type === 'network' ? '近期上下行速率' : '近期公网延迟'}>
-      <line x1="0" y1="16" x2="240" y2="16" className="server-chart-grid" />
-      <line x1="0" y1="32" x2="240" y2="32" className="server-chart-grid" />
-      {hasData ? <>
-        <polyline points={telemetryPolyline(first, 240, 48, scaleMax)} className="server-chart-line primary" vectorEffect="non-scaling-stroke" />
-        {second.length ? <polyline points={telemetryPolyline(second, 240, 48, scaleMax)} className="server-chart-line secondary" vectorEffect="non-scaling-stroke" /> : null}
-      </> : null}
-    </svg>
-    {hasData ? <>
-      <span className="server-chart-scale-label high" aria-hidden="true">{formatScale(scaleMax * 2 / 3)}</span>
-      <span className="server-chart-scale-label low" aria-hidden="true">{formatScale(scaleMax / 3)}</span>
-    </> : <span className="server-chart-empty-label" aria-hidden="true">等待更多数据</span>}
   </div>
 }
 
@@ -9413,133 +8687,6 @@ function formatTimeOffset(offsetMS: number) {
   const seconds = Number(offsetMS) / 1000
   if (Math.abs(seconds) < 0.05) return '0 秒'
   return `${seconds > 0 ? '+' : ''}${seconds.toFixed(Math.abs(seconds) >= 10 ? 1 : 2)} 秒`
-}
-
-function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalling = false, isSelected = false }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; uninstalling?: boolean; onAction: (type: string, server: Server) => void; isSelected?: boolean }) {
-  const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
-  const reduceMotion = useReducedMotion()
-  const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
-  const isOnline = server.status.toLowerCase() === 'online';
-  const monitoring = serverMonitoring(server.monitoring_display, isOnline)
-  const monitorTitle = `${monitoring.name} · 最近 20 轮探测${monitoring.latest ? ` · ${new Date(monitoring.latest.checked_at).toLocaleString()}` : ''}`
-  const targetButton = role === 'admin' || role === 'operator' ? <button type="button" className="ghost server-monitor-target-button" aria-label={`选择 ${server.name} 的监控目标，当前：${monitoring.name}`} title={`选择监控目标：${monitoring.name}`} onClick={() => onAction('monitoring-target', server)}><Settings2 size={12} aria-hidden="true" /></button> : null
-  const timeIssue = getServerTimeIssue(server)
-  const trafficTotalBytes = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
-  const trafficLimitBytes = Number(server.traffic_limit_bytes || 0)
-  const trafficPercent = trafficLimitBytes > 0 ? Math.min(100, (trafficTotalBytes / trafficLimitBytes) * 100) : 0
-  const trafficPercentLabel = trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : ''
-  const trafficQuotaTone = trafficPercent >= 90 ? 'danger' : trafficPercent >= 75 ? 'warning' : ''
-
-  const cpuPercent = Number.isFinite(server.cpu_usage_percent) ? Number(server.cpu_usage_percent) : 0
-  const memPercent = resourcePercent(server.memory_used_bytes, server.memory_total_bytes)
-  const diskPercent = resourcePercent(server.disk_bytes, server.disk_total_bytes)
-  const enrolled = enrolledDaysLabel(server)
-  const expiry = cardExpiryStatus(server)
-  const qualitySegs = monitoring.qualitySegments
-  const lossSegs = monitoring.lossSegments
-  const lossPercent = monitoring.loss
-  const tags = (server.display_tags || []).filter(tag => String(tag.text || '').trim())
-  const na = !isOnline
-
-  return (
-    <article className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}${isSelected ? ' is-selected' : ''}`}>
-      <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
-      <div className="server-card-head">
-        <div className="server-card-title" onClick={() => onAction('inspect', server)} style={{ cursor: 'pointer' }}>
-          <RegionFlag code={serverRegionCode(server)} size={20} />
-          <div className="server-card-name-row">
-            <h3>{server.name || `server-${server.id}`}</h3>
-            <ServerDeliveryBadge server={server} />
-            <ServerAddressBadge server={server} />
-          </div>
-        </div>
-        <div className="server-card-head-actions">
-          {outdated && (
-            <div className={`server-version-update${updateInfoOpen ? ' open' : ''}`}>
-              <button type="button" className="server-version-warning" aria-label="Agent 待更新" aria-expanded={updateInfoOpen} onClick={() => setUpdateInfoOpen(value => !value)}>待更新</button>
-              <div className="server-version-popover" role="tooltip">
-                <span>Agent</span>
-                <strong>{compactBuildLabel(server.agent_build)} → {compactBuildLabel(expectedBuild)}</strong>
-              </div>
-            </div>
-          )}
-          {timeIssue && <button
-            type="button"
-            className={`server-time-issue ${timeIssue.tone}`}
-            aria-label={`${timeIssue.summary}，点击查看详情`}
-            title={`${timeIssue.summary}，点击查看详情`}
-            onClick={() => onAction('time-details', server)}
-          >
-            <AlertTriangle size={12} aria-hidden="true" />
-            <span>{timeIssue.summary}</span>
-          </button>}
-          {uninstalling && <span className="status-pill warning" role="status" aria-label={`${server.name || `服务器 #${server.id}`} 正在卸载，完成后自动删除`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Loader2 size={12} className={reduceMotion ? '' : 'spin'} aria-hidden="true" />卸载并删除中</span>}
-          <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} title={!isOnline && server.last_seen_at ? `离线（${offlineAgoLabel(server.last_seen_at)}）` : server.latency_probe_enabled ? `在线 · 延迟 ${connectivityStatusLabel(server.connectivity_status)}` : '在线'} />
-          <ServerActionsDropdown server={server} role={role} onAction={onAction} />
-        </div>
-      </div>
-      <div className="server-metric-list">
-        <ServerMetricCell icon={<Cpu size={15} aria-hidden="true" />} label="CPU" value={na ? 'N/A' : Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(2)}%` : '—'} percent={na ? 0 : cpuPercent} sub={na ? 'N/A' : cpuCoresLabel(server)} title={na ? undefined : cpuModelLabel(server)} onClick={() => onAction('resource-details', server)} />
-        <ServerMetricCell icon={<MemoryStick size={15} aria-hidden="true" />} label="内存" value={na ? 'N/A' : server.memory_total_bytes ? `${memPercent.toFixed(2)}%` : '—'} percent={na ? 0 : memPercent} sub={na ? 'N/A' : serverMemoryLabel(server)} fill="memory" />
-        <ServerMetricCell icon={<HardDrive size={15} aria-hidden="true" />} label="磁盘" value={na ? 'N/A' : server.disk_total_bytes ? `${diskPercent.toFixed(1)}%` : '—'} percent={na ? 0 : diskPercent} sub={na ? 'N/A' : server.disk_total_bytes ? `${formatBytes(server.disk_bytes || 0)} / ${formatBytes(server.disk_total_bytes)}` : '—'} fill="disk" />
-        <ServerMetricCell icon={<ArrowDownUp size={15} aria-hidden="true" />} label="月度" value={trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : formatBytes(trafficTotalBytes)} percent={na ? 0 : trafficPercent} sub={trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : '不限'} fill="traffic" tone={trafficQuotaTone} />
-      </div>
-      <div className="server-card-rates">
-        <div className="server-card-rate down" title={na ? undefined : `下载速率 ${formatByteRate(server.network_download_bps || 0)} · 累计下载 ${formatBytes(server.traffic_download_bytes || 0)}`}>
-          <span><ArrowDown size={13} aria-hidden="true" />{na ? '0 Bps' : formatByteRate(server.network_download_bps || 0)}</span>
-          <small>{formatBytes(server.traffic_download_bytes || 0)}</small>
-        </div>
-        <div className="server-card-rate up" title={na ? undefined : `上传速率 ${formatByteRate(server.network_upload_bps || 0)} · 累计上传 ${formatBytes(server.traffic_upload_bytes || 0)}`}>
-          <span><ArrowUp size={13} aria-hidden="true" />{na ? '0 Bps' : formatByteRate(server.network_upload_bps || 0)}</span>
-          <small>{formatBytes(server.traffic_upload_bytes || 0)}</small>
-        </div>
-      </div>
-      <div className="server-card-quality-pair" title={monitorTitle}>
-        <div className="server-card-quality">
-          <div className="server-card-quality-head">
-            <span><Clock size={12} aria-hidden="true" />延迟</span>
-            <strong>{monitoring.latency}</strong>
-          </div>
-          <div className="server-quality-bar" aria-hidden="true">
-            {qualitySegs.map((tone, index) => (
-              <span key={index} className={`server-quality-seg ${tone}`} />
-            ))}
-          </div>
-        </div>
-        <div className="server-card-quality">
-          <div className="server-card-quality-head">
-            <span><WifiOff size={12} aria-hidden="true" />丢包率{targetButton}</span>
-            <strong>{na || lossPercent == null ? '—' : `${lossPercent.toFixed(lossPercent >= 10 ? 0 : 1)}%`}</strong>
-          </div>
-          <div className="server-quality-bar" aria-hidden="true">
-            {lossSegs.map((tone, index) => (
-              <span key={`loss-${index}`} className={`server-quality-seg ${tone}`} />
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="server-card-life">
-        <div className={`server-card-life-item expiry ${expiry.tone}`} title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>
-          <span><CalendarDays size={12} aria-hidden="true" />到期</span>
-          <strong className={`tone-${expiry.tone}`}>{expiry.label}</strong>
-        </div>
-        <div className="server-card-life-item uptime" title={server.created_at ? `入库时间 ${formatDate(server.created_at)}` : undefined}>
-          <span><RefreshCw size={12} aria-hidden="true" />在线</span>
-          <strong>{enrolled || '—'}</strong>
-        </div>
-      </div>
-      {tags.length ? (
-        <div className="server-card-tags">
-          {tags.map(tag => (
-            <span key={`${tag.tone}-${tag.text}`} className={`server-card-tag tone-${tag.tone || 'blue'}`}>
-              {displayTagIcon(tag.tone)}
-              {tag.text}
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </article>
-  )
 }
 
 function ServerDetailItem({ label, value, wide = false }: { label: string; value: React.ReactNode; wide?: boolean }) {

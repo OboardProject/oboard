@@ -214,9 +214,7 @@ describe('return latency probe tasks', () => {
     await act(async () => root.render(<ServerActionMenu server={servers[0]} role="admin" onAction={action} />))
     await click(container.querySelector('[aria-label="打开服务器操作菜单"]')!)
     const menu = document.body.querySelector('[role="menu"]')!
-    expect(menu.textContent).toContain('资料与设置')
-    expect(menu.textContent).toContain('监控与诊断')
-    expect(menu.textContent).toContain('运维操作')
+    expect([...menu.querySelectorAll('[role="group"]')].map(group => group.getAttribute('aria-label'))).toEqual(['查看', '配置与运维', 'Agent', '危险操作'])
     const item = Array.from(menu.querySelectorAll('button')).find(element => element.textContent === '拨测任务')!
     await click(item)
     expect(action).toHaveBeenCalledWith('return-latency', servers[0])

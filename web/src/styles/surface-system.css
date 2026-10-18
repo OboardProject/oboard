@@ -523,7 +523,6 @@ tbody tr:hover td { background: var(--row-hover); }
 .tiny-button,
 .copy-block-button,
 .command-copy-btn,
-.server-region-filter-trigger,
 .terminal-region-filter,
 .terminal-picker-quick-actions button.ghost,
 .terminal-batch-bar-actions button.primary,
@@ -537,14 +536,6 @@ tbody tr:hover td { background: var(--row-hover); }
 }
 .icon-button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
 .icon-button svg { width: 16px; height: 16px; }
-
-.server-action-group { border-radius: var(--radius-sm); box-shadow: var(--shadow-xs); }
-.server-action-group .server-add-button {
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
-  font-size: 14px;
-  font-weight: 500;
-}
-.server-action-group .server-add-button:only-child { border-radius: var(--radius-sm); }
 
 /* Segmented groups: muted track, raised active segment. */
 .server-monitor-tabs,
@@ -606,26 +597,6 @@ tbody tr:hover td { background: var(--row-hover); }
 
 /* ---------- Server list toolbar ---------- */
 
-.server-list-search {
-  flex: 1 1 150px;
-  width: auto;
-  min-width: 150px;
-  max-width: 300px;
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-xs);
-}
-.server-toolbar-tools {
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-xs);
-}
-.server-toolbar-tool { border-radius: calc(var(--radius-sm) - 2px); font-weight: 500; }
-.server-management-toolbar { gap: 8px 12px; }
-.server-management-toolbar .server-list-toolbar { flex: 1 1 340px; }
-
 /* ---------- Network probe ---------- */
 
 .return-latency-search {
@@ -667,7 +638,6 @@ textarea:focus-visible,
 .searchable-multi-select-trigger:focus-visible { outline: none; }
 
 /* Metric bars are data colours, not the accent. */
-.server-metric-fill:not(.memory):not(.disk):not(.traffic):not(.warning):not(.danger) { background: var(--progress-info); }
 
 /* ---------- Fluid scaling: chrome shrinks with the window, cards reflow from their own width ---------- */
 
@@ -675,9 +645,6 @@ textarea:focus-visible,
 .main { --main-pad-x: clamp(16px, 3vw, 36px); }
 .panel-body { padding: clamp(14px, 2vw, 20px) clamp(14px, 2.4vw, 24px); }
 .server-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
-.server-metric-head { gap: 6px; }
-.server-metric-head > span { flex: none; white-space: nowrap; }
-.server-metric-head > strong { min-width: 0; font-size: 12px; white-space: nowrap; }
 
 /* ---------- Dashboard: three stats stay side by side until the phone breakpoint ---------- */
 

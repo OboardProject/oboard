@@ -3,12 +3,14 @@ import { Select } from '../ui/select'
 
 export const SERVER_PAGE_SIZE = 24
 
-export function ServerListPage<T>({ items, renderItem, page: controlledPage, onPageChange, hideTopPagination }: {
+export function ServerListPage<T>({ items, renderItem, page: controlledPage, onPageChange, hideTopPagination, layout = 'grid', header }: {
   items: T[]
   renderItem: (item: T, index: number) => ReactNode
   page?: number
   onPageChange?: (page: number) => void
   hideTopPagination?: boolean
+  layout?: 'grid' | 'list'
+  header?: ReactNode
 }) {
   const [internalPage, setInternalPage] = useState(0)
   const page = controlledPage !== undefined ? controlledPage : internalPage
@@ -43,7 +45,8 @@ export function ServerListPage<T>({ items, renderItem, page: controlledPage, onP
 
   return <div ref={topRef} className="server-list-page">
     {!hideTopPagination && navigation('顶部')}
-    <div className="server-grid">
+    <div className={layout === 'list' ? 'fleet-list' : 'server-grid fleet-grid'} role={layout === 'list' ? 'table' : undefined} aria-label={layout === 'list' ? '服务器列表' : undefined}>
+      {header}
       {items.slice(offset, offset + pageSize).map((item, index) => renderItem(item, offset + index))}
     </div>
     {navigation('底部')}
