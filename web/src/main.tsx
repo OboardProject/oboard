@@ -6782,10 +6782,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     const outdatedOnline = outdated.filter(s => String(s.status || '').toLowerCase() === 'online')
     const outdatedOffline = outdated.length - outdatedOnline.length
     const upToDate = enrolled.length - outdated.length
-    if (!outdatedOnline.length) {
-      notify?.(`待更新的 ${outdated.length} 台 Agent 当前均离线，已开启滚动更新，重新上线后将自动更新`, 'info')
-      // still trigger rolling so offline will be handled when back online
-    }
     let limit = 4
     try {
       const fleet = await client.request('/agent-updates/status') as AgentFleetUpdateStatus
@@ -6794,12 +6790,20 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     } catch {
       // keep the auto-minimum fallback when status is unavailable
     }
+    const onlyOffline = outdatedOnline.length === 0
     const ok = await dialogs.confirm({
-      title: '一键更新所有 Agent',
-      confirmText: '开始更新',
-      message: <div>
-        <p>将滚动更新 <strong>{outdatedOnline.length}</strong> 台待更新 Agent{upToDate ? <>，<span className="muted">已最新 {upToDate} 台将跳过</span></> : null}，同时最多 <strong>{limit}</strong> 台，完成后自动接下一批。</p>
-        <p className="muted">在线 {outdatedOnline.length} 台会立即进入队列{outdatedOffline > 0 ? `；离线 ${outdatedOffline} 台不创建任务，重新上线后继续` : ''}。进度可在系统设置的 Agent 版本同步中查看。</p>
+      title: onlyOffline ? '待更新的 Agent 都已离线' : `更新 ${outdatedOnline.length} 台 Agent`,
+      confirmText: onlyOffline ? '上线后自动更新' : '开始更新',
+      message: <div className="fleet-update-confirm">
+        <p>{onlyOffline
+          ? `${outdatedOffline} 台待更新的服务器当前离线，确认后会在它们重新上线时自动更新。`
+          : `分批更新，每批最多 ${limit} 台，一批完成后自动开始下一批。`}</p>
+        <dl className="fleet-update-counts">
+          {!onlyOffline && <div><dt>立即更新</dt><dd>{outdatedOnline.length} 台</dd></div>}
+          {outdatedOffline > 0 && <div><dt>离线，上线后更新</dt><dd>{outdatedOffline} 台</dd></div>}
+          {upToDate > 0 && <div><dt>已是最新，跳过</dt><dd>{upToDate} 台</dd></div>}
+        </dl>
+        <p className="muted">进度可在 系统设置 → Agent 版本同步 中查看。</p>
       </div>,
     })
     if (!ok) return
