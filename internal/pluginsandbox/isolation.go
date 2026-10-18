@@ -296,8 +296,5 @@ func sandboxArgs(self, mode string) []string {
 	// validation on the Debian test host. Keep both flags so the runner still
 	// gets a private user namespace while nested user namespaces are disabled.
 	args := []string{"--unshare-all", "--unshare-user", "--disable-userns", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv", "--setenv", "GOMAXPROCS", "1", "--ro-bind", self, "/worker", "--size", "8388608", "--tmpfs", "/tmp", "--proc", "/proc", "--dev", "/dev", "--remount-ro", "/", "--chdir", "/tmp"}
-	if mode == "-runner" {
-		args = append(args, "--preserve-fds", "2")
-	}
 	return append(args, "/worker", mode)
 }

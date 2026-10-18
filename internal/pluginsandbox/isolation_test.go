@@ -54,7 +54,7 @@ func TestOOMKilledRequiresCgroupEvidence(t *testing.T) {
 func TestSandboxHasOnlyWorkerMountAndRPCDescriptors(t *testing.T) {
 	args := sandboxArgs("/opt/private/worker", "-runner")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"--unshare-all", "--unshare-user", "--disable-userns", "--cap-drop ALL", "--clearenv", "--ro-bind /opt/private/worker /worker", "--size 8388608 --tmpfs /tmp", "--remount-ro /", "--preserve-fds 2", "/worker -runner"} {
+	for _, want := range []string{"--unshare-all", "--unshare-user", "--disable-userns", "--cap-drop ALL", "--clearenv", "--ro-bind /opt/private/worker /worker", "--size 8388608 --tmpfs /tmp", "--remount-ro /", "/worker -runner"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %s: %s", want, joined)
 		}
@@ -71,8 +71,12 @@ func TestSandboxHasOnlyWorkerMountAndRPCDescriptors(t *testing.T) {
 	if mounts != 1 {
 		t.Fatal("unexpected host mounts")
 	}
-	if strings.Contains(strings.Join(sandboxArgs("/worker", "-isolation-probe"), " "), "--preserve-fds") {
-		t.Fatal("probe must not inherit RPC")
+	probeArgs := sandboxArgs("/opt/private/worker", "-isolation-probe")
+	if strings.Join(args[:len(args)-1], " ") != strings.Join(probeArgs[:len(probeArgs)-1], " ") {
+		t.Fatal("runner and probe must use the same bubblewrap options")
+	}
+	if strings.Contains(joined, "--preserve-fds") {
+		t.Fatal("bubblewrap does not support --preserve-fds; RPC must use stdio")
 	}
 }
 

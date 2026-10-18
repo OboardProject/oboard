@@ -84,7 +84,8 @@ func RunIsolated(ctx context.Context, self string, request RunnerRequest, call C
 		return report
 	}
 	defer command.Close()
-	command.Cmd.ExtraFiles = []*os.File{requestRead, responseWrite}
+	command.Cmd.Stdin = requestRead
+	command.Cmd.Stdout = responseWrite
 	if err := command.Cmd.Start(); err != nil {
 		log.Printf("plugin runner start failed: %v", err)
 		report.Outcome = Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "cannot start runner"}
@@ -216,27 +217,27 @@ func mustRaw(value any) json.RawMessage {
 }
 
 // ServeRunner is the entry point inside the sandbox. It hardens the process
-// before reading any plugin input and never writes anywhere but fd 4.
+// before reading any plugin input. RPC uses stdin/stdout, which bubblewrap
+// preserves; stderr is reserved for sandbox diagnostics.
 func ServeRunner() {
-	responseFile := os.NewFile(4, "response")
-	requestFile := os.NewFile(3, "request")
-	if responseFile == nil || requestFile == nil {
-		os.Exit(2)
+	if err := pluginsandbox.HardenRunner(); err != nil {
+		fmt.Fprintf(os.Stderr, "runner hardening failed: %v\n", err)
+		_ = json.NewEncoder(os.Stdout).Encode(frame{Kind: "done", Payload: mustRaw(Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "runner hardening failed"})})
+		os.Exit(1)
 	}
+	serveRunnerRPC(os.Stdin, os.Stdout)
+}
+
+func serveRunnerRPC(requestFile io.Reader, responseFile io.Writer) {
 	encoder := json.NewEncoder(responseFile)
 	done := func(outcome Outcome) {
 		_ = encoder.Encode(frame{Kind: "done", Payload: mustRaw(outcome)})
-	}
-	if err := pluginsandbox.HardenRunner(); err != nil {
-		fmt.Fprintf(os.Stderr, "runner hardening failed: %v\n", err)
-		done(Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "runner hardening failed"})
-		os.Exit(1)
 	}
 	decoder := json.NewDecoder(requestFile)
 	var request RunnerRequest
 	if err := decoder.Decode(&request); err != nil {
 		done(Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "invalid runner request"})
-		os.Exit(1)
+		return
 	}
 	calls := 0
 	outcome := Execute(request.Source, request.Environment, request.Context, request.Limits, func(method string, arguments json.RawMessage) pluginrpc.CallResponse {
