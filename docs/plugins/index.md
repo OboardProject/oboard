@@ -19,6 +19,8 @@
 
 ## 开发资源
 
+开发外部 API 插件前请阅读 [开发规范与验证](development.md)：HTTP 参数类型、云 API 签名、SecretRef、回归测试、Runner 验证与发布检查。
+
 - [`sdk/plugins/oboard.d.ts`](../../sdk/plugins/oboard.d.ts)：编辑器类型声明（运行时不支持 TypeScript）。
 - [`sdk/plugins/manifest.schema.json`](../../sdk/plugins/manifest.schema.json)：清单 JSON Schema；Controller 的语义校验始终是最终依据。
 - [`examples/plugins`](../../examples/plugins)：`minimal`、`environment-demo`、`external-api`、`trace-monitor`。

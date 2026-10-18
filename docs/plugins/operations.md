@@ -33,6 +33,27 @@
 
 每次执行记录触发来源、版本、状态（排队、运行中、成功、失败、超时、已取消、权限不足、超出资源限制）、错误码、能力调用次数、返回值与日志。排队或运行中的执行可以取消：租约立即失效、Runner 被终止，已发出的只读诊断结果会被丢弃。
 
+## 执行失败排查
+
+先确认执行记录中的插件版本，再结合错误码、能力调用次数和 Worker 服务日志定位。没有插件日志不等于内存不足；调用次数为 0 也不能单独证明系统强杀。
+
+| 现象 | 检查与处理 |
+|---|---|
+| RUNTIME_UNAVAILABLE，runner stopped unexpectedly | 查看 Worker 服务日志中的退出状态与 diagnostics。未知退出不能当作 RESOURCE_LIMIT |
+| bwrap: Unknown option --preserve-fds | 使用修复后的 Worker，RPC 通过 stdin/stdout 传递；仅更新插件源码无法修复宿主参数 |
+| runner hardening failed 或隔离自检失败 | 根据日志中的具体系统调用错误检查宿主环境；保留隔离边界，不以关闭 seccomp 或开放 Worker 网络作为修复 |
+| RESOURCE_LIMIT | 区分已确认的 cgroup OOM、调用栈或结果大小超限，不仅凭服务内存峰值判断 |
+| header and query values must be strings or secret references | 检查 query/header 是否含数字、布尔或对象，例如将 PageSize: 1 转为字符串；HTTP 计数不保证请求已发出 |
+| SignatureDoesNotMatch | 请求已收到远端签名校验响应；核对签名原文、密钥后缀与编码，见 [开发规范](development.md) |
+
+systemd 主机按失败时间窗口读取服务日志：
+
+```bash
+journalctl -u oboard-plugin-worker.service --since "10 minutes ago" --no-pager
+```
+
+Worker 正常启动或隔离自检通过，不代表实际插件执行已验证。修复后要重新执行插件，检查完整结果；单纯 daemon-reload/restart 不能修复二进制中的错误参数。诊断信息对外分享前先脱敏，勿提供密钥或完整签名请求。
+
 ## 备份与恢复
 
 备份包含插件、实例、配置、加密密钥与状态。恢复时密钥按目标安装重新加密；插件执行保持关闭，所有授权被撤销，未完成的执行被取消，需要管理员逐个复核授权后重新开启。
