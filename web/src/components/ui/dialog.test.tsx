@@ -167,6 +167,26 @@ describe('Dialog modal stack', () => {
     trigger.remove()
   })
 
+  it('does not let a stale lower focus trap steal focus while a new layer commits', async () => {
+    let focusDuringCommit: Element | null = null
+    function ExecutionWindow() {
+      React.useLayoutEffect(() => {
+        const button = document.querySelector<HTMLButtonElement>('[data-execution-close]')!
+        button.focus()
+        focusDuringCommit = document.activeElement
+      }, [])
+      return <Dialog isOpen onClose={() => {}} title="执行"><button data-execution-close>完成</button></Dialog>
+    }
+    const render = (running: boolean) => root.render(<>
+      <Dialog isOpen onClose={() => {}} title="实例配置"><input aria-label="实例名称" /></Dialog>
+      {running && <ExecutionWindow />}
+    </>)
+    await act(async () => render(false))
+    await settle(30)
+    await act(async () => render(true))
+    expect(focusDuringCommit).toBe(document.querySelector('[data-execution-close]'))
+  })
+
   it('keeps MotionDialogPanel mounted while its shared exit animation runs', async () => {
     const onClose = vi.fn()
     const renderPanel = (open: boolean) => root.render(

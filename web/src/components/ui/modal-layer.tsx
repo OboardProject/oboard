@@ -151,6 +151,10 @@ function getLayers() {
   return layers
 }
 
+function isCurrentTopLayer(id: LayerID) {
+  return layers[layers.length - 1] === id
+}
+
 const emptyLayers: LayerID[] = []
 
 function useModalLayer(initialFocusTarget: HTMLElement | null) {
@@ -271,7 +275,7 @@ export function ModalSurface({
     if (!isInteractive || panel.contains(document.activeElement) || isInsidePopover(document.activeElement)) return
     const frame = window.requestAnimationFrame(() => {
       const active = document.activeElement
-      if (isTopmostRef.current && active && !panel.contains(active) && !isInsidePopover(active)) focusFirst(panel)
+      if (isTopmostRef.current && isCurrentTopLayer(id) && active && !panel.contains(active) && !isInsidePopover(active)) focusFirst(panel)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [isInteractive])
@@ -280,7 +284,7 @@ export function ModalSurface({
     const handleKeyDown = (event: KeyboardEvent) => {
       const panel = panelRef.current
       const target = event.target as HTMLElement | null
-      if (!panel || !isTopmostRef.current || event.isComposing) return
+      if (!panel || !isTopmostRef.current || !isCurrentTopLayer(id) || event.isComposing) return
       if (isInsidePopover(target) || isInsidePopover(document.activeElement)) return
       if (event.key === "Escape") {
         const activePopover = document.querySelector('[data-popover-active="true"]')
@@ -310,7 +314,8 @@ export function ModalSurface({
     const handleFocusIn = (event: FocusEvent) => {
       const panel = panelRef.current
       const target = event.target as HTMLElement | null
-      if (!panel || !isTopmostRef.current || panel.contains(event.target as Node) || isInsidePopover(target)) return
+      // Stack registration precedes React's next render; the rendered top flag can be stale.
+      if (!panel || !isTopmostRef.current || !isCurrentTopLayer(id) || panel.contains(event.target as Node) || isInsidePopover(target)) return
       focusFirst(panel)
     }
     document.addEventListener("keydown", handleKeyDown)
@@ -354,7 +359,7 @@ export function ModalSurface({
       <m.div
         className="dialog-backdrop"
         onMouseDown={event => {
-          if (isTopmostRef.current && event.target === event.currentTarget) onCloseRef.current()
+          if (isTopmostRef.current && isCurrentTopLayer(id) && event.target === event.currentTarget) onCloseRef.current()
         }}
         initial={{ opacity: 0 }}
         animate={{ opacity: isPresent || count > 1 ? 1 : 0 }}
