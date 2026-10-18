@@ -22772,9 +22772,7 @@ select:-webkit-autofill {
   overflow: hidden;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--surface-solid);
   box-shadow: var(--shadow-md);
   z-index: var(--z-popover);
   animation: popover-in var(--duration-appica) var(--ease-appica-spring) both;
@@ -22888,9 +22886,7 @@ select:-webkit-autofill {
   padding: 5px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--surface-solid);
   box-shadow: var(--shadow-lg);
   animation: popover-in var(--duration-appica) var(--ease-appica-spring) both;
 }
