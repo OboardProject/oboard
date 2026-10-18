@@ -825,6 +825,31 @@ func (s *Service) UserOptions(ctx context.Context, actor application.Principal) 
 	return out, nil
 }
 
+type NotificationChannelOption struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+func (s *Service) NotificationChannelOptions(ctx context.Context, actor application.Principal) ([]NotificationChannelOption, error) {
+	if err := s.require(actor, PermRead); err != nil {
+		return nil, err
+	}
+	out := []NotificationChannelOption{}
+	if actor.UserID == nil || *actor.UserID <= 0 {
+		return out, nil
+	}
+	channels, err := s.store.ListNotificationChannelsByOwner(ctx, *actor.UserID)
+	if err != nil {
+		return nil, storeError(err)
+	}
+	for _, channel := range channels {
+		out = append(out, NotificationChannelOption{ID: channel.ID, Name: channel.Name, Type: channel.Type})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	return out, nil
+}
+
 func (s *Service) PlanOptions(ctx context.Context, actor application.Principal) ([]PlanOption, error) {
 	if err := s.require(actor, PermRead); err != nil {
 		return nil, err

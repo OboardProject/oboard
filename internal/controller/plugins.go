@@ -283,6 +283,22 @@ func (s *Server) apiV1PluginItem(w http.ResponseWriter, r *http.Request) {
 		}
 		pluginOK(w, r, http.StatusOK, map[string]any{"users": users})
 		return
+	case "notification-channels":
+		if len(parts) != 1 {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		channels, err := s.plugins.NotificationChannelOptions(ctx, principal)
+		if err != nil {
+			pluginFail(w, r, err)
+			return
+		}
+		pluginOK(w, r, http.StatusOK, map[string]any{"notification_channels": channels})
+		return
 	case "plans":
 		plans, err := s.plugins.PlanOptions(ctx, principal)
 		if err != nil {
