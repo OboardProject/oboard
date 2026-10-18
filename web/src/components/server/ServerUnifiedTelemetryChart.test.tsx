@@ -66,8 +66,8 @@ it('uses the target list as a compact chart legend without duplicate thumbnails'
   const root = createRoot(container)
   try {
     act(() => root.render(<LatencyDashboard response={response} windowKey="24h" windowHours={24} windowLabels={{ '24h': '24 小时' } as Record<any, string>} latencyWindowOptions={['24h']} onWindowChange={() => {}} onWindowKeyDown={() => {}} />))
-    expect(container.querySelector('.latency-target-item')?.textContent).toContain('公网探测')
-    expect(container.querySelector('.latency-target-item')?.textContent).toContain('34 ms')
+    expect(container.querySelector('.lp-target')?.textContent).toContain('公网探测')
+    expect(container.querySelector('.lp-target')?.textContent).toContain('34 ms')
     expect(container.querySelector('.latency-target-spark')).toBeNull()
     expect(container.querySelector('.latency-overview-card')).toBeNull()
   } finally {

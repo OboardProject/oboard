@@ -534,7 +534,6 @@ tbody tr:hover td { background: var(--row-hover); }
 .icon-button svg { width: 16px; height: 16px; }
 
 /* Segmented groups: muted track, raised active segment. */
-.server-monitor-tabs,
 .server-monitor-window-toggle,
 .notification-type-toggle {
   border-color: transparent;
@@ -542,8 +541,6 @@ tbody tr:hover td { background: var(--row-hover); }
   background: var(--surface-2);
   box-shadow: none;
 }
-.server-monitor-tabs button,
-.connectivity-head .server-monitor-tabs button,
 .server-monitor-window-toggle button,
 .notification-channel-dialog .notification-type-toggle button,
 .notification-type-toggle button,
@@ -551,7 +548,6 @@ tbody tr:hover td { background: var(--row-hover); }
   border-radius: calc(var(--radius-md) - 3px);
   font-weight: 500;
 }
-.server-monitor-tabs button.active { border-color: transparent; box-shadow: var(--shadow-sm); font-weight: 500; }
 .audit-console-tabs button:hover { border-color: transparent; }
 .audit-console-tabs button.active {
   color: var(--text-strong);

@@ -123,6 +123,7 @@ import './style.css'
 import './components/proxy-path/ProxyCanvas.css'
 import './styles/surface-system.css'
 import './styles/server-fleet.css'
+import './styles/server-monitor.css'
 import './styles/inbound-editor.css'
 import './components/users/user-list.css'
 import { findCanvasPlacement, graphConnectionIssue, useCanvasScope } from './components/proxy-path/canvas-interaction'
@@ -8811,8 +8812,14 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const windowLabels: Record<ConnectivityWindowKey, string> = { '1h': '1 小时', '6h': '6 小时', '12h': '12 小时', '24h': '1 天', '7d': '7 天', '30d': '30 天' }
   const retentionDays = Math.max(1, Number(response?.retention_days || resourceResponse?.retention_days) || 7)
   const latencyWindowOptions = (['1h', '6h', '12h', '24h', '7d', '30d'] as ConnectivityWindowKey[]).filter(key => windowHoursMap[key] <= retentionDays * 24)
-  const selectMonitorView = (view: 'load' | 'latency') => {
+  const [viewDirection, setViewDirection] = useState<'forward' | 'back'>('forward')
+  const changeMonitorView = (view: 'load' | 'latency') => {
+    if (view === activeView) return
+    setViewDirection(view === 'latency' ? 'forward' : 'back')
     setActiveView(view)
+  }
+  const selectMonitorView = (view: 'load' | 'latency') => {
+    changeMonitorView(view)
     window.requestAnimationFrame(() => document.getElementById(`server-monitor-${view}-tab`)?.focus())
   }
   const handleMonitorTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -8844,22 +8851,28 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
     }
   }
 
-  return <MotionDialogPanel onCancel={onClose} className={`connectivity-dialog${activeView === 'latency' ? ' is-latency' : ''}`}>
-    <header className="dialog-head connectivity-head">
-      <div className="connectivity-title">
-        <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
-        <div>
-          <h2>{server.name ? <>{server.name} <span style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></> : `服务器 #${server.id}`} · 监控</h2>
+  const probeButton = <button type="button" className="monitor-probe-button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning} title={server.latency_probe_enabled ? '立即执行一轮拨测' : '这台服务器未启用拨测'}>
+    {probeRunning ? <Loader2 size={14} className="spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}{probeRunning ? '测试中…' : '立即测试'}
+  </button>
+
+  return <MotionDialogPanel onCancel={onClose} className="monitor-dialog" surfaceMotion="none">
+    <header className="dialog-head monitor-head">
+      <div className="monitor-title">
+        <span className={`monitor-title-icon ${currentTone}`}><Activity size={16} aria-hidden="true" /></span>
+        <div className="monitor-title-copy">
+          <h2>{server.name || `服务器 #${server.id}`}</h2>
+          <p>#{server.id} · 服务器监控</p>
         </div>
       </div>
-      <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
-        <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}><Activity size={14} aria-hidden="true" />负载</button>
-        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />拨测任务</button>
+      <div className={`monitor-tabs is-${activeView}`} role="tablist" aria-label="服务器监控视图">
+        <span className="monitor-tabs-indicator" aria-hidden="true" />
+        <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => changeMonitorView('load')} onKeyDown={handleMonitorTabKeyDown}><Activity size={14} aria-hidden="true" />负载</button>
+        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => changeMonitorView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />拨测任务</button>
       </div>
-      <div className="connectivity-head-actions">
+      <div className="monitor-head-actions">
         <button
           type="button"
-          className="ghost icon-button connectivity-refresh-btn"
+          className="ghost icon-button monitor-icon-button"
           onClick={refreshMonitorData}
           disabled={isMonitorRefreshing}
           aria-label="刷新监控数据"
@@ -8867,16 +8880,18 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
         >
           <RefreshCw size={15} className={isMonitorRefreshing ? 'spin' : ''} />
         </button>
-        <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button monitor-icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
       </div>
     </header>
-    <div className="dialog-body connectivity-body">
+    <div className="dialog-body monitor-body">
+      <div key={activeView} className={`monitor-view is-${viewDirection}`}>
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => resources.refresh()} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
-        {connectivity.retrying && response ? <div className="connectivity-coverage-note" role="status">主控繁忙，保留当前图表，稍后自动重试一次。</div> : null}
-        {loadError && response ? <div className="connectivity-coverage-note danger-text" role="alert">更新失败，当前显示上次读取的图表：{loadError}</div> : null}
-        {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
-        {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>{connectivity.retrying ? '主控繁忙，正在等待自动重试一次…' : '正在加载监控与延迟统计'}</strong></div>
-          : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => connectivity.refresh()}>重试</button></div>
+        {connectivity.retrying && response ? <div className="monitor-note" role="status">主控繁忙，保留当前图表，稍后自动重试一次。</div> : null}
+        {loadError && response ? <div className="monitor-note is-danger" role="alert">更新失败，当前显示上次读取的图表：{loadError}</div> : null}
+        {probeError ? <div className="monitor-note is-danger" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
+        {!response ? <div className="lp-bar"><span /><div className="lp-bar-actions">{probeButton}</div></div> : null}
+        {loading && !response ? <div className="monitor-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>{connectivity.retrying ? '主控繁忙，正在等待自动重试一次…' : '正在加载拨测数据'}</strong></div>
+          : loadError && !response ? <div className="monitor-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载拨测数据</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => connectivity.refresh()}>重试</button></div>
           : response ? <LatencyDashboard
             response={response}
             windowKey={windowKey}
@@ -8891,12 +8906,13 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
             detailsRevision={connectivityDetailsRevision}
             statusLabel={currentStatus === 'disabled' ? '未启用' : connectivityStatusLabel(currentStatus)}
             statusTone={currentTone}
+            actions={probeButton}
           /> : null}
         {!response ? <ConnectivityDetails serverID={server.id} windowKey={windowKey} client={client} refreshRevision={connectivityDetailsRevision} /> : null}
       </div>}
+      </div>
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
-    {activeView === 'latency' ? <footer className="dialog-actions connectivity-primary-actions"><button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button></footer> : null}
   </MotionDialogPanel>
 }
 

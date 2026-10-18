@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react'
 import { Select } from '../ui/select'
 import { OverflowMenu } from '../ui/overflow-menu'
@@ -21,6 +21,7 @@ import {
 import { alignUnifiedMetrics, REGIONAL_SERIES_COLORS, type ServerLatencyPoint } from '../../server-unified-chart'
 import { ConnectivityDetails } from './ConnectivityDetails'
 import { ServerUnifiedTelemetryChart } from './ServerUnifiedTelemetryChart'
+import '../../styles/server-monitor.css'
 
 const EMPTY_STATS: LatencyProbeTargetStat[] = []
 
@@ -63,12 +64,12 @@ function formatResolution(seconds: number) {
   return `${seconds} 秒`
 }
 
-function InlineMetric({ label, value, unit, title }: { label: string; value: string; unit?: string; title?: string }) {
-  return <span className="latency-summary-metric" title={title}>
-    <span>{label}</span>
-    <strong>{value}</strong>
-    {unit && value !== '—' ? <small>{unit}</small> : null}
-  </span>
+function Kpi({ label, value, unit, title, hint, tone = '' }: { label: string; value: string; unit?: string; title?: string; hint?: string; tone?: string }) {
+  return <div className={`lp-kpi${tone ? ` is-${tone}` : ''}`} title={title}>
+    <span className="lp-kpi-label">{label}</span>
+    <span className="lp-kpi-value"><strong>{value}</strong>{unit && value !== '—' ? <small>{unit}</small> : null}</span>
+    {hint ? <span className="lp-kpi-hint">{hint}</span> : null}
+  </div>
 }
 
 function AnomalySummary({
@@ -84,18 +85,19 @@ function AnomalySummary({
   stats: LatencyProbeTargetStat[]
   onSelect: (stat: LatencyProbeTargetStat) => void
 }) {
-  if (!anomalies.length) return <p className="latency-anomaly-empty"><CheckCircle2 size={14} aria-hidden="true" />当前时间范围未发现明显异常</p>
-  return <ul className="latency-anomaly-list">
+  if (!anomalies.length) return <p className="lp-anomaly-empty"><CheckCircle2 size={15} aria-hidden="true" />当前时间范围未发现明显异常</p>
+  return <ul className="lp-anomalies">
     {anomalies.map(item => {
       const stat = stats.find(row => row.key === item.key)
       const color = stat ? seriesColor[seriesIDForTarget(stat)] : undefined
+      const loss = item.kind === 'high_loss'
       return <li key={`${item.kind}-${item.key}`}>
-        <button type="button" onClick={() => stat && onSelect(stat)} disabled={!stat} title={stat ? `突出显示 ${item.label} 曲线` : undefined}>
+        <button type="button" className="lp-anomaly" onClick={() => stat && onSelect(stat)} disabled={!stat} title={stat ? `突出显示 ${item.label} 曲线` : undefined}>
           <time dateTime={item.at || undefined}>{formatAnomalyTime(item.at)}</time>
-          <span className={`latency-anomaly-kind ${item.kind === 'high_loss' ? 'danger' : 'warning'}`}><AlertTriangle size={13} aria-hidden="true" />{item.kind === 'high_loss' ? '高丢包' : '高延迟'}</span>
-          <span className="latency-anomaly-target"><i style={color ? { backgroundColor: color } : undefined} />{item.label}</span>
-          <strong>{item.kind === 'high_latency' ? `延迟 ${formatMS(item.latencyMS)}` : `丢包 ${formatPercent(item.lossPercent)}`}</strong>
-          <span className="latency-anomaly-detail">{item.kind === 'high_latency' && p95 != null && (item.latencyMS || 0) > p95 ? `> P95 ${Math.round(p95)} ms` : item.detail}</span>
+          <span className={`lp-anomaly-kind ${loss ? 'is-danger' : 'is-warning'}`}><AlertTriangle size={12} aria-hidden="true" />{loss ? '高丢包' : '高延迟'}</span>
+          <span className="lp-anomaly-target"><i style={color ? { backgroundColor: color } : undefined} />{item.label}</span>
+          <strong>{item.kind === 'high_latency' ? formatMS(item.latencyMS) : formatPercent(item.lossPercent)}</strong>
+          <span className="lp-anomaly-detail">{item.kind === 'high_latency' && p95 != null && (item.latencyMS || 0) > p95 ? `高于 P95 ${Math.round(p95)} ms` : item.detail}</span>
         </button>
       </li>
     })}
@@ -116,6 +118,7 @@ export function LatencyDashboard({
   detailsRevision = 0,
   statusLabel,
   statusTone = 'fair',
+  actions,
 }: {
   response: ConnectivityResponse | LatencyChartResponse
   windowKey: ConnectivityWindowKey
@@ -130,6 +133,7 @@ export function LatencyDashboard({
   detailsRevision?: number
   statusLabel?: string
   statusTone?: 'great' | 'fair' | 'poor'
+  actions?: React.ReactNode
 }) {
   const stats = response.probe_target_stats || EMPTY_STATS
   const hasTasks = hasTaskProbeTargets(stats)
@@ -235,125 +239,123 @@ export function LatencyDashboard({
     metadata.coverage.legacy_measurement_revision ? '部分历史记录未包含完整测量修订' : '',
   ].filter(Boolean).join('；') : ''
   const anomalyPanel = <AnomalySummary anomalies={anomalies} p95={percentiles.p95} seriesColor={seriesColor} stats={stats} onSelect={focusTarget} />
+  const lossTone = overview.lossPercent != null && overview.lossPercent >= 5 ? 'danger' : overview.lossPercent != null && overview.lossPercent > 0 ? 'warning' : ''
+  const successTone = overview.successPercent != null && overview.successPercent < 95 ? 'danger' : overview.successPercent != null && overview.successPercent < 100 ? 'warning' : ''
 
   return (
-    <div className="latency-dashboard">
-      {metadata && <div className="latency-data-status">
-        {statusLabel ? <><span className={`latency-data-health ${statusTone}`}><i aria-hidden="true" />状态 <strong>{statusLabel}</strong></span><span aria-hidden="true">·</span></> : null}
-        <span>{metadata.stale ? '缓存至' : '最后更新'} <strong>{observedTime}</strong></span>
-        <span aria-hidden="true">·</span>
-        <span>采样间隔 <strong>{formatResolution(metadata.resolution_seconds)}</strong></span>
-        {metadata.stale ? <span className="latency-data-quality warning">缓存数据</span> : null}
-        {metadata.aggregation_state === 'catching_up' ? <span className="latency-data-quality warning">汇总中</span> : null}
-        {metadata.coverage.retention_clipped ? <span className="latency-data-quality">范围已裁剪</span> : null}
-        <details className="latency-data-details">
-          <summary title="数据范围与质量详情" aria-label="数据范围与质量详情"><Info size={14} aria-hidden="true" /></summary>
-          <p>{metadataDetail}</p>
-        </details>
-      </div>}
-
-      <section className="latency-trend-shell" aria-label={`趋势 ${windowLabels[windowKey]}`}>
-        <header className="latency-trend-head">
-          <div className="latency-trend-summary">
-            <div className="latency-trend-title-row">
-              <h3>趋势</h3>
-              <span className="latency-metric-readonly">延迟</span>
-              {overview.usedPublicFallback ? <span className="latency-summary-note">仅有公网探测</span> : null}
-            </div>
-            <div className="latency-summary-metrics" aria-label="延迟统计摘要">
-              <InlineMetric label="平均" value={formatMetricNumber(overview.avgMS)} unit="ms" />
-              <InlineMetric label="P50" value={formatMetricNumber(percentiles.p50)} unit="ms" />
-              <InlineMetric label="P95" value={formatMetricNumber(percentiles.p95)} unit="ms" title="按显示时间桶的均值计算，不是逐包分位数" />
-              <InlineMetric label="P99" value={formatMetricNumber(percentiles.p99)} unit="ms" />
-              <InlineMetric label="丢包" value={formatPercentNumber(overview.lossPercent)} unit="%" />
-              <InlineMetric label="成功" value={formatPercentNumber(overview.successPercent)} unit="%" />
-              <InlineMetric label="抖动" value={formatMetricNumber(overview.jitterMS)} unit="ms" />
-              <InlineMetric label="样本" value={formatSampleCount(overview.sampleCount)} />
-            </div>
+    <div className="lp">
+      <div className="lp-bar">
+        <div className="lp-status">
+          {statusLabel ? <span className={`lp-health is-${statusTone}`}><i aria-hidden="true" />{statusLabel}</span> : null}
+          {metadata ? <>
+            <span className="lp-status-item">{metadata.stale ? '缓存至' : '更新于'} <strong>{observedTime}</strong></span>
+            <span className="lp-status-item">每 <strong>{formatResolution(metadata.resolution_seconds)}</strong> 采样</span>
+            {metadata.stale ? <span className="lp-flag is-warning">缓存数据</span> : null}
+            {metadata.aggregation_state === 'catching_up' ? <span className="lp-flag is-warning">汇总中</span> : null}
+            {metadata.coverage.retention_clipped ? <span className="lp-flag">范围已裁剪</span> : null}
+            <details className="lp-details">
+              <summary title="数据范围与质量详情" aria-label="数据范围与质量详情"><Info size={14} aria-hidden="true" /></summary>
+              <p>{metadataDetail}</p>
+            </details>
+          </> : null}
+        </div>
+        <div className="lp-bar-actions">
+          <div className="lp-segmented" role="radiogroup" aria-label="延迟时间范围">
+            {latencyWindowOptions.map((key, index) => (
+              <button
+                id={`server-latency-window-${key}`}
+                key={key}
+                type="button"
+                role="radio"
+                aria-checked={windowKey === key}
+                tabIndex={windowKey === key ? 0 : -1}
+                className={windowKey === key ? 'active' : ''}
+                title={windowLabels[key]}
+                onClick={() => onWindowChange(key)}
+                onKeyDown={event => onWindowKeyDown(event, index)}
+              >{key}</button>
+            ))}
           </div>
-          <div className="latency-trend-controls">
-            <label className="latency-granularity">
+          {actions}
+        </div>
+      </div>
+
+      <section className="lp-kpis" aria-label="延迟统计摘要">
+        <Kpi label="平均延迟" value={formatMetricNumber(overview.avgMS)} unit="ms" hint={overview.usedPublicFallback ? '仅有公网探测' : undefined} />
+        <Kpi label="P50" value={formatMetricNumber(percentiles.p50)} unit="ms" />
+        <Kpi label="P95" value={formatMetricNumber(percentiles.p95)} unit="ms" title="按显示时间桶的均值计算，不是逐包分位数" />
+        <Kpi label="P99" value={formatMetricNumber(percentiles.p99)} unit="ms" />
+        <Kpi label="丢包率" value={formatPercentNumber(overview.lossPercent)} unit="%" tone={lossTone} />
+        <Kpi label="成功率" value={formatPercentNumber(overview.successPercent)} unit="%" tone={successTone} />
+        <Kpi label="抖动" value={formatMetricNumber(overview.jitterMS)} unit="ms" />
+        <Kpi label="样本" value={formatSampleCount(overview.sampleCount)} />
+      </section>
+
+      <section className="lp-main" aria-label={`趋势 ${windowLabels[windowKey]}`}>
+        <aside className="lp-targets" aria-label="监控目标">
+          <header className="lp-card-head">
+            <h3>监控目标 <span>{visibleStats.length}{compareMode ? ' · 对比中' : ''}</span></h3>
+            <OverflowMenu
+              label="目标与统计设置"
+              width={210}
+              triggerClassName="ghost icon-button lp-more"
+              groups={[{ key: 'display', items: [
+                { key: 'worst', label: worstOnly ? '显示全部目标' : '只看最差 10', onSelect: () => setWorstOnly(value => !value) },
+                { key: 'compare', label: compareMode ? '关闭对比模式' : '开启对比模式', onSelect: () => setCompareMode(value => !value) },
+                ...(hasTasks ? [{ key: 'public', label: includePublicPref ? '概览排除公网探测' : '概览计入公网探测', onSelect: () => setIncludePublic(!includePublicPref) }] : []),
+              ] }]}
+            />
+          </header>
+          <ul className="lp-target-list">
+            {visibleStats.map(stat => {
+              const seriesID = seriesIDForTarget(stat)
+              const active = enabledSeries[seriesID] !== false
+              const color = seriesColor[seriesID] || (stat.kind === 'public' ? '#f59e0b' : REGIONAL_SERIES_COLORS[0])
+              const name = stat.task_name || (stat.kind === 'public' ? '公网探测' : `${stat.province || ''} · ${stat.carrier || ''}`)
+              const loss = Number(stat.loss_percent || 0)
+              return (
+                <li key={stat.key}>
+                  <button type="button" className={`lp-target${active ? ' active' : ''}`} aria-pressed={active} onClick={() => toggleTarget(stat)} title={`${name}；点击${compareMode ? '显示或隐藏' : '突出显示'}曲线`}>
+                    <span className="lp-target-swatch" style={{ backgroundColor: color }} />
+                    <span className="lp-target-copy">
+                      <strong>{name}</strong>
+                      <small>{probeMethodLabel(stat.mode || (stat.kind === 'public' ? publicMode : undefined))}<span className={loss >= 5 ? 'is-danger' : loss > 0 ? 'is-warning' : ''}>丢包 {formatPercent(stat.loss_percent)}</span><span>抖动 {formatMS(stat.jitter_ms)}</span></small>
+                    </span>
+                    <strong className="lp-target-value">{formatMS(stat.avg_ms)}</strong>
+                  </button>
+                </li>
+              )
+            })}
+            {!visibleStats.length && <li className="lp-empty">暂无探测结果</li>}
+          </ul>
+        </aside>
+
+        <section className="lp-chart" aria-label="延迟趋势图">
+          <header className="lp-card-head">
+            <h3>延迟趋势 <span>{windowLabels[windowKey]}</span></h3>
+            <label className="lp-granularity">
               <span>精度</span>
               <Select value={granularity} onChange={event => setGranularity(event.target.value)} aria-label="显示精度">
                 {GRANULARITY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </Select>
             </label>
-            <div className="server-monitor-window-toggle" role="radiogroup" aria-label="延迟时间范围">
-              {latencyWindowOptions.map((key, index) => (
-                <button
-                  id={`server-latency-window-${key}`}
-                  key={key}
-                  type="button"
-                  role="radio"
-                  aria-checked={windowKey === key}
-                  tabIndex={windowKey === key ? 0 : -1}
-                  className={windowKey === key ? 'active' : ''}
-                  onClick={() => onWindowChange(key)}
-                  onKeyDown={event => onWindowKeyDown(event, index)}
-                >
-                  {key}
-                </button>
-              ))}
-            </div>
-          </div>
-        </header>
-
-        <div className="latency-dashboard-main">
-          <section className="latency-targets" aria-label="监控目标">
-            <header className="latency-targets-head">
-              <div><h3>监控目标</h3><span>{visibleStats.length} 个{compareMode ? ' · 对比' : ''}</span></div>
-              <OverflowMenu
-                label="目标与统计设置"
-                width={210}
-                triggerClassName="ghost icon-button latency-targets-more"
-                groups={[{ key: 'display', items: [
-                  { key: 'worst', label: worstOnly ? '显示全部目标' : '只看最差 10', onSelect: () => setWorstOnly(value => !value) },
-                  { key: 'compare', label: compareMode ? '关闭对比模式' : '开启对比模式', onSelect: () => setCompareMode(value => !value) },
-                  ...(hasTasks ? [{ key: 'public', label: includePublicPref ? '概览排除公网探测' : '概览计入公网探测', onSelect: () => setIncludePublic(!includePublicPref) }] : []),
-                ] }]}
-              />
-            </header>
-            <ul className="latency-target-list">
-              {visibleStats.map(stat => {
-                const seriesID = seriesIDForTarget(stat)
-                const active = enabledSeries[seriesID] !== false
-                const color = seriesColor[seriesID] || (stat.kind === 'public' ? '#f59e0b' : REGIONAL_SERIES_COLORS[0])
-                const name = stat.task_name || (stat.kind === 'public' ? '公网探测' : `${stat.province || ''} · ${stat.carrier || ''}`)
-                return (
-                  <li key={stat.key}>
-                    <button type="button" className={`latency-target-item${active ? ' active' : ''}`} aria-pressed={active} onClick={() => toggleTarget(stat)} title={`${name}；点击${compareMode ? '显示或隐藏' : '突出显示'}曲线`}>
-                      <span className="latency-target-dot" style={{ backgroundColor: color }} />
-                      <span className="latency-target-copy">
-                        <strong>{name}</strong>
-                        <small>{probeMethodLabel(stat.mode || (stat.kind === 'public' ? publicMode : undefined))} · 丢包 {formatPercent(stat.loss_percent)} · 成功 {formatPercent(stat.success_percent)} · 抖动 {formatMS(stat.jitter_ms)}</small>
-                      </span>
-                      <strong className="latency-target-value">{formatMS(stat.avg_ms)}</strong>
-                    </button>
-                  </li>
-                )
-              })}
-              {!visibleStats.length && <li className="latency-target-empty">暂无探测结果</li>}
-            </ul>
-          </section>
-
-          <section className="latency-trend" aria-label="延迟趋势图">
-            <ServerUnifiedTelemetryChart
-              aligned={aligned}
-              latencyPoints={response.latency_points || []}
-              regionalProbes={response.regional_latency_points || []}
-              failedProbePoints={response.failed_probe_points || []}
-              includeResources={false}
-              windowHours={effectiveWindowHours}
-              windowEndAt={response.window.to}
-              seriesEnabled={chartEnabledSeries}
-              onSeriesEnabledChange={setEnabledSeries}
-              hideLegend
-              bucketCount={bucketCount}
-              chartHeight={286}
-              compactOptions
-            />
-          </section>
-        </div>
+          </header>
+          <ServerUnifiedTelemetryChart
+            aligned={aligned}
+            latencyPoints={response.latency_points || []}
+            regionalProbes={response.regional_latency_points || []}
+            failedProbePoints={response.failed_probe_points || []}
+            includeResources={false}
+            windowHours={effectiveWindowHours}
+            windowEndAt={response.window.to}
+            seriesEnabled={chartEnabledSeries}
+            onSeriesEnabledChange={setEnabledSeries}
+            hideLegend
+            bucketCount={bucketCount}
+            chartHeight={280}
+            compactOptions
+          />
+        </section>
       </section>
 
       {serverID && detailsClient ? <ConnectivityDetails
