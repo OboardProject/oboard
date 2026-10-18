@@ -169,7 +169,8 @@ const IPDataSettings = lazySurface(() => import('./components/settings/IPDataSet
 const ProxyDSCPSettings = lazySurface(() => import('./components/settings/ProxyDSCPSettings').then(module => ({ default: module.ProxyDSCPSettings })))
 const RemoteAccessSettings = lazySurface(() => import('./components/remote-access/RemoteAccessSettings').then(module => ({ default: module.RemoteAccessSettings })))
 import { RemoteAccessStatus } from './components/remote-access/RemoteAccessStatus'
-const TerminalWorkspace = lazyDialog(() => import('./components/remote-access/TerminalWorkspace').then(module => ({ default: module.TerminalWorkspace })), '远程终端')
+const loadTerminalWorkspace = () => import('./components/remote-access/TerminalWorkspace')
+const TerminalWorkspace = lazyDialog(() => loadTerminalWorkspace().then(module => ({ default: module.TerminalWorkspace })), '远程终端')
 const AboutSettingsPanel = lazySurface(() => import('./components/AboutSettingsPanel').then(module => ({ default: module.AboutSettingsPanel })))
 import type { NodePreset } from './components/NodePresetsPanel'
 const NodePresetsPanel = lazySurface(() => import('./components/NodePresetsPanel').then(module => ({ default: module.NodePresetsPanel })))
@@ -6476,6 +6477,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     serversMountedRef.current = true
     return () => { serversMountedRef.current = false }
   }, [])
+  // Fetch the terminal chunk while the page is idle so opening it plays its
+  // entrance animation instead of a loading dialog.
+  useEffect(() => {
+    if (!hasManagementAccess(data.session?.role)) return
+    const idle = (window as any).requestIdleCallback as ((callback: () => void) => number) | undefined
+    const handle = idle ? idle(() => void loadTerminalWorkspace()) : window.setTimeout(() => void loadTerminalWorkspace(), 1500)
+    return () => { if (idle) (window as any).cancelIdleCallback?.(handle); else window.clearTimeout(handle) }
+  }, [data.session?.role])
 
   const refreshServers = React.useCallback(async () => {
     if (serverRequestInFlightRef.current) return
@@ -7159,14 +7168,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
     <AnimatePresence>{networkServer && <ServerNetworkDialog server={networkServer.server} initialTab={networkServer.tab} data={data} client={client} notify={notify} role={role} onClose={() => setNetworkServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
     <AnimatePresence>{systemServer && <ServerSystemDialog server={systemServer.server} initialTab={systemServer.tab} data={data} client={client} notify={notify} controllerURL={effectiveControllerURL(data)} role={role} onClose={() => setSystemServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
     <AnimatePresence>{tasksServer && <ServerTasksDialog server={tasksServer} client={client} onClose={() => setTasksServer(null)} />}</AnimatePresence>
-    {terminalWorkspace ? <TerminalWorkspace
+    <AnimatePresence>{terminalWorkspace ? <TerminalWorkspace
       servers={servers}
       initialServerId={terminalWorkspace.serverId}
       client={client}
       websocketURL={(serverId, sessionId) => appWebSocketURL(`/api/v1/ui/servers/${serverId}/terminal/ws/${sessionId}`)}
       passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)}
       onClose={() => setTerminalWorkspace(null)}
-    /> : null}
+    /> : null}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
       role={role}
