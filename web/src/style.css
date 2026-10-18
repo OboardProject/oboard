@@ -12308,8 +12308,151 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .server-delete-dialog {
-  width: min(480px, 100%);
+  position: relative;
+  display: grid;
+  gap: 16px;
+  width: min(440px, 100%);
   max-height: min(90vh, 620px);
+  padding: 24px;
+  overflow: auto;
+}
+
+.server-delete-dialog .server-delete-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.server-delete-dialog .server-delete-close:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-strong);
+}
+
+.server-delete-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-right: 28px;
+}
+
+.server-delete-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.server-delete-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.server-delete-copy h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.server-delete-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.server-delete-copy p strong {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.server-delete-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.server-delete-scope li {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.server-delete-scope li.server-delete-scope-label {
+  padding-left: 0;
+  padding-right: 2px;
+  border-color: transparent;
+}
+
+.server-delete-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.server-delete-option.is-checked {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 55%, transparent);
+}
+
+.server-delete-option-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.server-delete-option-copy strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.server-delete-option-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.server-delete-error {
+  margin: 0;
+}
+
+.server-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+@media (max-width: 520px) {
+  .server-delete-dialog { padding: 20px 16px 16px; }
+  .server-delete-actions > button { flex: 1 1 0; min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .server-delete-option { transition: none; }
 }
 
 .dns-record-row.is-pending-delete {
@@ -12326,38 +12469,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .dns-record-row.is-pending-delete {
     transition: none;
   }
-}
-
-.server-delete-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  cursor: pointer;
-}
-
-.server-delete-option input {
-  margin-top: 3px;
-}
-
-.server-delete-option span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.server-delete-option strong {
-  color: var(--text-strong);
-  font-size: 14px;
-}
-
-.server-delete-option small {
-  color: var(--muted);
-  line-height: 1.45;
 }
 
 .server-detail-dialog {

@@ -7953,25 +7953,33 @@ function agentBuildMismatch(server: Server, data: any) {
 
 export function DeleteServerDialog({ server, busy, error, onCancel, onSubmit }: { server: Server; busy: boolean; error?: string; onCancel: () => void; onSubmit: (uninstall: boolean) => void }) {
   const [uninstall, setUninstall] = useState(false)
-  return <MotionDialogPanel onCancel={busy ? () => undefined : onCancel} className="server-delete-dialog" surfaceMotion="compact" aria-labelledby="server-delete-title">
-    <header className="dialog-head">
-      <div><h2 id="server-delete-title">确认删除</h2><p className="muted">{resourceLabel(server, `服务器 #${server.id}`)}</p></div>
-      <button className="ghost dialog-close icon-button" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
-    </header>
-    <div className="dialog-body">
-      <p>关联入口、链路和 DNS 记录也会被清理。</p>
-      <label className="server-delete-option">
-        <input type="checkbox" checked={uninstall} disabled={busy} onChange={event => setUninstall(event.target.checked)} />
-        <span>
-          <strong>卸载 Agent 后删除</strong>
-          <small>先远程卸载 Agent 并清理本机配置，成功后自动删除服务器。</small>
-        </span>
-      </label>
-      {error && <p className="error" role="alert">{error}</p>}
+  const name = resourceLabel(server, `服务器 #${server.id}`)
+  return <MotionDialogPanel onCancel={busy ? () => undefined : onCancel} className="server-delete-dialog" surfaceMotion="compact" aria-labelledby="server-delete-title" aria-describedby="server-delete-desc">
+    <button className="ghost dialog-close icon-button server-delete-close" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
+    <div className="server-delete-main">
+      <span className="server-delete-icon" aria-hidden="true"><Trash2 size={18} /></span>
+      <div className="server-delete-copy">
+        <h2 id="server-delete-title">删除服务器</h2>
+        <p id="server-delete-desc">将删除 <strong>{name}</strong>，此操作无法撤销。</p>
+        <ul className="server-delete-scope">
+          <li className="server-delete-scope-label">一并清理</li>
+          <li>入口</li>
+          <li>链路</li>
+          <li>DNS 记录</li>
+        </ul>
+      </div>
     </div>
-    <footer className="dialog-actions">
+    <div className={`server-delete-option${uninstall ? ' is-checked' : ''}`}>
+      <span className="server-delete-option-copy">
+        <strong id="server-delete-uninstall-label">同时卸载 Agent</strong>
+        <small>先远程卸载 Agent 并清理节点配置，成功后再删除。</small>
+      </span>
+      <Switch checked={uninstall} disabled={busy} onChange={setUninstall} aria-labelledby="server-delete-uninstall-label" />
+    </div>
+    {error && <p className="error server-delete-error" role="alert">{error}</p>}
+    <footer className="server-delete-actions">
       <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
-      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy} aria-busy={busy}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? uninstall ? '卸载并删除中…' : '删除中…' : '删除'}</button>
+      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy} aria-busy={busy}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? uninstall ? '卸载并删除中…' : '删除中…' : uninstall ? '卸载并删除' : '删除'}</button>
     </footer>
   </MotionDialogPanel>
 }
