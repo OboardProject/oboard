@@ -187,8 +187,8 @@ export function ProbeDDNS({ client, servers, credentials, canManage, notify }: {
               <div className="probe-ddns-cell is-name"><strong>{record.name} <small className="muted">#{record.id}</small></strong><span className="probe-task-target">{record.domain}</span></div>
               <div className="probe-ddns-cell">
                 <span className="probe-ddns-label">当前解析</span>
-                {addressParts(record.current_address).length ? <span className="probe-ddns-addresses">{addressParts(record.current_address).map(part => <span key={part.value}><span className="probe-ddns-type">{part.type}</span>{part.value}</span>)}</span> : <span className="muted">尚未解析</span>}
-                <small className="muted">{record.interface_prefix ? record.interface_name + ' · 前缀 ' + record.interface_prefix : record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}{record.exclude_private ? ' · 排除内网' : ''}</small>
+                {addressParts(record.current_address).length ? <span className="probe-ddns-addresses">{addressParts(record.current_address).map(part => <span key={part.value}><span className="probe-ddns-type">{part.type}</span><span className="probe-ddns-value">{part.value}</span></span>)}</span> : <span className="muted">尚未解析</span>}
+                <small className="muted probe-ddns-source">{record.interface_prefix ? record.interface_name + ' · 前缀 ' + record.interface_prefix : record.interface_address ? `${record.interface_name} · ${record.interface_address}` : '服务器公网地址'}</small>
               </div>
               <div className="probe-ddns-cell"><span className="probe-ddns-label">检查间隔</span>{formatInterval(record.interval_seconds)}</div>
               <div className="probe-ddns-cell"><span className="probe-ddns-label">状态</span><span className={`probe-task-badge${record.enabled && record.status === 'ok' ? ' is-on' : ''}`}>{record.enabled ? (statusText[record.status || 'pending'] || record.status) : '已停用'}</span>{record.error ? <small className="danger-text">{record.error}</small> : null}</div>
