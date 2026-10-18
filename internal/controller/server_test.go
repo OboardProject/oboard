@@ -2728,11 +2728,11 @@ func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "香港", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "香港", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "renewal_cycle": "monthly", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "洛杉矶", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "洛杉矶", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "renewal_cycle": "monthly", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "东京", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "东京", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "renewal_cycle": "monthly", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
 	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
 	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
@@ -2755,6 +2755,21 @@ func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 	if path["name"] != "专线 香港｜洛杉矶" || path["name_mode"] != "custom" {
 		t.Fatalf("custom path = %#v", path)
 	}
+	reordered := []map[string]any{
+		{"kind": "server", "server_id": serverAID},
+		{"kind": "literal", "value": "｜"},
+		{"kind": "server", "server_id": serverBID},
+		{"kind": "literal", "value": " 专线"},
+	}
+	path = request(t, h, http.MethodPatch, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"name_mode": "custom", "name_template": reordered}, http.StatusOK)["proxy_path"].(map[string]any)
+	if path["name"] != "香港｜洛杉矶 专线" {
+		t.Fatalf("reordered custom path = %#v", path)
+	}
+	path = request(t, h, http.MethodPatch, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"exit_region_mode": "auto"}, http.StatusOK)["proxy_path"].(map[string]any)
+	if path["name"] != "香港｜洛杉矶 专线" || path["name_mode"] != "custom" {
+		t.Fatalf("partial patch dropped custom template = %#v", path)
+	}
+	request(t, h, http.MethodPatch, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"name_mode": "custom", "name_template": template}, http.StatusOK)
 	storedB, err := db.GetServer(context.Background(), serverBID)
 	if err != nil {
 		t.Fatal(err)

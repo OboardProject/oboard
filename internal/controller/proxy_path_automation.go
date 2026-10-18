@@ -501,8 +501,12 @@ func (s *Server) decodeProxyPathUpdateOperation(ctx context.Context, principal a
 		return nil, model.ProxyPath{}, errors.New("changes must contain at least one proxy path field")
 	}
 	path := *current
+	path.NameTemplate = nil
 	if err := json.Unmarshal(request.Changes, &path); err != nil {
 		return nil, model.ProxyPath{}, err
+	}
+	if path.NameTemplate == nil {
+		path.NameTemplate = current.NameTemplate
 	}
 	path.ID, path.Kind, path.BranchSourceStepID, path.Secret = current.ID, current.Kind, current.BranchSourceStepID, current.Secret
 	return current, path, nil

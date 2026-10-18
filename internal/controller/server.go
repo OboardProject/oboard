@@ -9843,8 +9843,12 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v := *current
+		v.NameTemplate = nil
 		if !decode(w, r, &v) {
 			return
+		}
+		if v.NameTemplate == nil {
+			v.NameTemplate = current.NameTemplate
 		}
 		v.ID = id
 		if v.Kind != current.Kind {
