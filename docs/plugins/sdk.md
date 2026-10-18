@@ -56,8 +56,6 @@ async function main(run) {
 
 ### `http.request`
 
-`headers` 和 `query` 的值只接受字符串或 `SecretRef`，不自动转换数字、布尔值或对象。例如分页参数应写为 `query: { PageSize: String(1) }`。query 值传未编码文本，由网关进行 URL 编码。签名请求的完整约束与示例见 [开发规范与验证](development.md)。
-
 ```js
 const response = oboard.http.request({
   url: 'https://api.example.com/v1/items',
