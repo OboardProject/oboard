@@ -523,10 +523,6 @@ tbody tr:hover td { background: var(--row-hover); }
 .tiny-button,
 .copy-block-button,
 .command-copy-btn,
-.terminal-region-filter,
-.terminal-picker-quick-actions button.ghost,
-.terminal-batch-bar-actions button.primary,
-.terminal-batch-actions button:not(.ghost),
 .latency-pill-btn,
 .node-preset-filters button,
 .accent-reset-btn,
@@ -540,8 +536,7 @@ tbody tr:hover td { background: var(--row-hover); }
 /* Segmented groups: muted track, raised active segment. */
 .server-monitor-tabs,
 .server-monitor-window-toggle,
-.notification-type-toggle,
-.terminal-filter-pills {
+.notification-type-toggle {
   border-color: transparent;
   border-radius: var(--radius-md) !important;
   background: var(--surface-2);
@@ -556,7 +551,6 @@ tbody tr:hover td { background: var(--row-hover); }
   border-radius: calc(var(--radius-md) - 3px);
   font-weight: 500;
 }
-.terminal-filter-pill { border-radius: calc(var(--radius-md) - 3px) !important; }
 .server-monitor-tabs button.active { border-color: transparent; box-shadow: var(--shadow-sm); font-weight: 500; }
 .audit-console-tabs button:hover { border-color: transparent; }
 .audit-console-tabs button.active {

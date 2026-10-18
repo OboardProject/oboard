@@ -84,59 +84,31 @@ export function modeLabel(mode?: string) {
   return mode === 'minimal' ? 'Minimal' : 'Login'
 }
 
-const TERMINAL_THEME_DARK = {
-  background: '#0b1220',
-  foreground: '#e5eefc',
-  cursor: '#e5eefc',
-  cursorAccent: '#0b1220',
-  selectionBackground: '#386ea8',
-  selectionInactiveBackground: '#243044',
-  black: '#0b1220',
-  red: '#f87171',
-  green: '#34d399',
-  yellow: '#fbbf24',
-  blue: '#60a5fa',
-  magenta: '#c084fc',
-  cyan: '#38bdf8',
-  white: '#e5eefc',
-  brightBlack: '#64748b',
-  brightRed: '#fca5a5',
-  brightGreen: '#6ee7b7',
-  brightYellow: '#fde047',
-  brightBlue: '#93c5fd',
-  brightMagenta: '#d8b4fe',
-  brightCyan: '#7dd3fc',
+// The terminal workspace is always dark, independent of the panel theme, so
+// command output keeps the same contrast in light and dark mode.
+const TERMINAL_THEME = {
+  background: '#0d1117',
+  foreground: '#e6edf3',
+  cursor: '#e6edf3',
+  cursorAccent: '#0d1117',
+  selectionBackground: '#264f78',
+  selectionInactiveBackground: '#1f2a37',
+  black: '#484f58',
+  red: '#ff7b72',
+  green: '#3fb950',
+  yellow: '#d29922',
+  blue: '#58a6ff',
+  magenta: '#bc8cff',
+  cyan: '#39c5cf',
+  white: '#b1bac4',
+  brightBlack: '#6e7681',
+  brightRed: '#ffa198',
+  brightGreen: '#56d364',
+  brightYellow: '#e3b341',
+  brightBlue: '#79c0ff',
+  brightMagenta: '#d2a8ff',
+  brightCyan: '#56d4dd',
   brightWhite: '#ffffff',
-}
-
-const TERMINAL_THEME_LIGHT = {
-  background: '#ffffff',
-  foreground: '#0f172a',
-  cursor: '#0f172a',
-  cursorAccent: '#ffffff',
-  selectionBackground: '#b4d5fe',
-  selectionInactiveBackground: '#e2e8f0',
-  black: '#0f172a',
-  red: '#dc2626',
-  green: '#16a34a',
-  yellow: '#d97706',
-  blue: '#2563eb',
-  magenta: '#9333ea',
-  cyan: '#0891b2',
-  white: '#f8fafc',
-  brightBlack: '#64748b',
-  brightRed: '#ef4444',
-  brightGreen: '#22c55e',
-  brightYellow: '#eab308',
-  brightBlue: '#3b82f6',
-  brightMagenta: '#a855f7',
-  brightCyan: '#06b6d4',
-  brightWhite: '#ffffff',
-}
-
-function isDocumentDark(): boolean {
-  if (typeof document === 'undefined') return true
-  return document.documentElement.dataset.theme === 'dark' || document.documentElement.classList.contains('dark')
 }
 
 type PaneProps = {
@@ -335,12 +307,12 @@ export const TerminalSessionPane = forwardRef<TerminalPaneHandle, PaneProps>(fun
   useEffect(() => {
     if (!hostRef.current || termRef.current) return
     const host = hostRef.current
-    const initialDark = isDocumentDark()
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontFamily: '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
-      theme: initialDark ? TERMINAL_THEME_DARK : TERMINAL_THEME_LIGHT,
+      lineHeight: 1.25,
+      theme: TERMINAL_THEME,
       allowProposedApi: false,
     })
     const fit = new FitAddon()
@@ -348,21 +320,6 @@ export const TerminalSessionPane = forwardRef<TerminalPaneHandle, PaneProps>(fun
     term.open(host)
     termRef.current = term
     fitRef.current = fit
-
-    const themeObserver = typeof MutationObserver !== 'undefined' && typeof document !== 'undefined'
-      ? new MutationObserver(() => {
-          const dark = isDocumentDark()
-          if ((term as any).options) {
-            ;(term as any).options.theme = dark ? TERMINAL_THEME_DARK : TERMINAL_THEME_LIGHT
-          }
-        })
-      : null
-    if (themeObserver && typeof document !== 'undefined') {
-      themeObserver.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['data-theme', 'class'],
-      })
-    }
 
     const textarea = term.textarea
     const guard = compositionRef.current
@@ -383,7 +340,6 @@ export const TerminalSessionPane = forwardRef<TerminalPaneHandle, PaneProps>(fun
     scheduleFit()
     setTermReady(true)
     return () => {
-      themeObserver?.disconnect()
       textarea?.removeEventListener('compositionstart', handleCompositionStart)
       textarea?.removeEventListener('compositionend', handleCompositionEnd)
       observer?.disconnect()

@@ -9,19 +9,20 @@ import {
   Maximize2,
   Minimize2,
   MoreHorizontal,
+  PanelLeft,
   Play,
   Plus,
   RefreshCw,
   Search,
   ShieldAlert,
   SquareTerminal,
-  Terminal as TerminalIcon,
   X,
   Zap,
 } from 'lucide-react'
 import { MotionDialogPanel } from '../ui/motion'
 import { Dropdown, DropdownContent, DropdownItem, DropdownTrigger } from '../ui/dropdown-menu'
 import { StepUpAuth } from './StepUpAuth'
+import './remote-terminal.css'
 import {
   modeLabel,
   TerminalSessionPane,
@@ -95,6 +96,12 @@ export function terminalServerBlockReason(server: TerminalServer) {
   if (!String(server.agent_id || '').trim()) return '未接入 Agent'
   if (String(server.status || '').toLowerCase() !== 'online') return 'Agent 当前离线'
   return ''
+}
+
+function phaseTone(entry: SessionEntry) {
+  if (entry.state.phase === 'ready') return 'ok'
+  if (entry.state.phase === 'failed' || entry.state.phase === 'closed') return 'error'
+  return 'pending'
 }
 
 function sessionPhaseLabel(entry: SessionEntry) {
@@ -454,73 +461,65 @@ export function TerminalWorkspace({
 
   const activeHandle = activeKey ? handlesRef.current.get(activeKey) : undefined
   const info = activeSession?.state.info || null
-  const identity = info?.username && info?.shell
-    ? `${info.username} · ${info.shell} · ${modeLabel(info.mode || activeSession?.state.mode)}`
-    : ''
   const showLoginActions = Boolean(activeSession?.state.loginEnv || info)
   const shellExited = Boolean(activeSession?.state.status.startsWith('Shell 已退出'))
-  const headerTitle = view === 'sessions' && activeSession ? `远程终端 · ${activeSession.serverName}` : '远程终端'
 
   const reconnectActive = (mode?: TerminalMode) => activeHandle?.reconnect(mode)
+  const showView = (next: 'picker' | 'batch') => { setView(next); setSidebarOpen(false); setNotice('') }
+  const activeServer = activeSession ? serverById.get(activeSession.serverId) : undefined
+  const inSessions = view === 'sessions' && Boolean(activeSession)
+  const crumb = view === 'picker' ? '新建连接' : view === 'batch' ? '批量执行' : ''
 
   return (
     <>
       <MotionDialogPanel
         onCancel={() => void closeWorkspace()}
-        className={`remote-terminal-dialog terminal-workspace-dialog${fullscreen ? ' remote-terminal-fullscreen' : ''}`}
+        className={`rt-dialog${fullscreen ? ' is-fullscreen' : ''}`}
         ariaLabel="远程终端工作台"
       >
-        <header className="dialog-head">
-          <div className="remote-terminal-title">
-            <div className="remote-terminal-heading">
+        <header className="rt-head">
+          <button
+            type="button"
+            className="rt-icon-button rt-sidebar-toggle"
+            onClick={() => setSidebarOpen(open => !open)}
+            aria-label={sidebarOpen ? '收起会话列表' : '展开会话列表'}
+            aria-expanded={sidebarOpen}
+          >{sidebarOpen ? <ChevronLeft size={16} /> : <PanelLeft size={16} />}</button>
+          <div className="rt-title">
+            <SquareTerminal size={16} aria-hidden="true" className="rt-title-icon" />
+            <h2>远程终端</h2>
+            {inSessions && activeSession ? (
+              <span className="rt-crumb">
+                <span className="rt-crumb-sep" aria-hidden="true">/</span>
+                <RegionFlag code={activeServer ? serverRegionCode(activeServer) : ''} size={16} />
+                <strong>{activeSession.serverName}</strong>
+                <span className={`rt-state is-${phaseTone(activeSession)}`}><span className="rt-state-dot" aria-hidden="true" />{activeSession.state.status}</span>
+              </span>
+            ) : crumb ? (
+              <span className="rt-crumb"><span className="rt-crumb-sep" aria-hidden="true">/</span><strong>{crumb}</strong></span>
+            ) : null}
+          </div>
+          <div className="rt-head-actions">
+            {inSessions ? <>
               <button
                 type="button"
-                className="ghost icon-button terminal-sidebar-toggle"
-                onClick={() => setSidebarOpen(open => !open)}
-                aria-label={sidebarOpen ? '收起会话列表' : '展开会话列表'}
-                aria-expanded={sidebarOpen}
-              >
-                {sidebarOpen ? <ChevronLeft size={15} /> : <SquareTerminal size={15} />}
-              </button>
-              <h2>{headerTitle}</h2>
-            </div>
-            <div className="remote-terminal-meta">
-              {identity ? <span className="remote-terminal-identity">{identity}</span> : null}
-              {identity ? <span className="remote-terminal-dot">·</span> : null}
-              <span className="muted">
-                {view === 'picker' ? '选择要连接的服务器'
-                  : view === 'batch' ? '批量执行'
-                  : activeSession ? activeSession.state.status : '暂无会话'}
-              </span>
-            </div>
-          </div>
-          <div className="dialog-head-actions">
-            <button
-              type="button"
-              className="ghost remote-terminal-shortcut"
-              onClick={() => activeHandle?.interrupt()}
-              disabled={!activeSession}
-              aria-label="发送 Ctrl+C"
-              title="发送 Ctrl+C"
-            >Ctrl+C</button>
-            <button
-              type="button"
-              className="ghost icon-button"
-              onClick={() => reconnectActive()}
-              disabled={!activeSession}
-              aria-label="重连"
-              title="重新连接"
-            ><RefreshCw size={14} /></button>
+                className="rt-key-button"
+                onClick={() => activeHandle?.interrupt()}
+                aria-label="发送 Ctrl+C"
+                title="发送 Ctrl+C"
+              ><kbd>Ctrl</kbd><kbd>C</kbd></button>
+              <button type="button" className="rt-icon-button" onClick={() => reconnectActive()} aria-label="重连" title="重新连接"><RefreshCw size={15} /></button>
+            </> : null}
             <Dropdown>
               <DropdownTrigger>
-                <button type="button" className="ghost icon-button" aria-label="终端菜单" title="更多操作"><MoreHorizontal size={14} /></button>
+                <button type="button" className="rt-icon-button" aria-label="终端菜单" title="更多操作"><MoreHorizontal size={16} /></button>
               </DropdownTrigger>
-              <DropdownContent align="right" className="remote-terminal-menu">
-                <DropdownItem onClick={() => { setView('picker'); setSidebarOpen(false) }}>
+              <DropdownContent align="right" className="remote-terminal-menu rt-menu">
+                <DropdownItem onClick={() => showView('picker')}>
                   <Plus size={14} className="remote-terminal-menu-icon" />
                   <span>新建连接</span>
                 </DropdownItem>
-                <DropdownItem onClick={() => { setView('batch'); setSidebarOpen(false) }}>
+                <DropdownItem onClick={() => showView('batch')}>
                   <Zap size={14} className="remote-terminal-menu-icon" />
                   <span>批量执行</span>
                 </DropdownItem>
@@ -566,75 +565,77 @@ export function TerminalWorkspace({
             </Dropdown>
             <button
               type="button"
-              className="ghost icon-button"
+              className="rt-icon-button rt-fullscreen-toggle"
               onClick={() => setFullscreen(current => !current)}
               aria-label={fullscreen ? '退出全屏' : '全屏'}
               title={fullscreen ? '退出全屏' : '全屏'}
-            >{fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
-            <button type="button" className="remote-terminal-close-dot" onClick={() => void closeWorkspace()} aria-label="关闭" title="关闭">
-              <span className="macos-dot macos-dot-close"><X size={8} strokeWidth={2.6} /></span>
-            </button>
+            >{fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
+            <button type="button" className="rt-icon-button rt-close" onClick={() => void closeWorkspace()} aria-label="关闭" title="关闭"><X size={17} /></button>
           </div>
         </header>
-        <div className={`dialog-body remote-terminal-body terminal-workspace-body${sidebarOpen ? ' is-sidebar-open' : ''}`}>
-          <aside className="terminal-workspace-sidebar" aria-label="终端会话">
-            <div className="terminal-sidebar-actions">
-              <button
-                type="button"
-                className={view === 'picker' ? 'ghost is-active' : 'ghost'}
-                onClick={() => { setView('picker'); setSidebarOpen(false); setNotice('') }}
-              ><Plus size={14} aria-hidden="true" /><span>新建连接</span></button>
-              <button
-                type="button"
-                className={view === 'batch' ? 'ghost is-active' : 'ghost'}
-                onClick={() => { setView('batch'); setSidebarOpen(false); setNotice('') }}
-              ><Zap size={14} aria-hidden="true" /><span>批量执行</span></button>
-            </div>
-            <div className="terminal-sidebar-heading">
-              <span>已连接</span>
-              <span className="muted">{sessions.length} / {maxTerminalSessions}</span>
+        <div className={`rt-body${sidebarOpen ? ' is-sidebar-open' : ''}`}>
+          <aside className="rt-sidebar" aria-label="终端会话">
+            <nav className="rt-nav">
+              <button type="button" className={`rt-nav-item${view === 'picker' ? ' is-active' : ''}`} aria-pressed={view === 'picker'} onClick={() => showView('picker')}>
+                <Plus size={15} aria-hidden="true" /><span>新建连接</span>
+              </button>
+              <button type="button" className={`rt-nav-item${view === 'batch' ? ' is-active' : ''}`} aria-pressed={view === 'batch'} onClick={() => showView('batch')}>
+                <Zap size={15} aria-hidden="true" /><span>批量执行</span>
+              </button>
+            </nav>
+            <div className="rt-sidebar-heading">
+              <span>会话</span>
+              <span className="rt-count">{sessions.length} / {maxTerminalSessions}</span>
             </div>
             {sessions.length ? (
-              <ul className="terminal-session-list">
-                {sessions.map(entry => (
-                  <li key={entry.key}>
-                    <button
-                      type="button"
-                      className={`terminal-session-item${entry.key === activeKey && view === 'sessions' ? ' is-active' : ''}`}
-                      onClick={() => { setActiveKey(entry.key); setView('sessions'); setSidebarOpen(false); setNotice('') }}
-                      aria-current={entry.key === activeKey && view === 'sessions'}
-                    >
-                      <span className={`terminal-session-dot is-${entry.state.phase}`} aria-hidden="true" />
-                      <span className="terminal-session-text">
-                        <span className="terminal-session-name">{entry.serverName}</span>
-                        <span className="terminal-session-status">{sessionPhaseLabel(entry)}</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="terminal-session-close"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void closeSession(entry.key)
-                      }}
-                      aria-label={`关闭 ${entry.serverName} 的会话`}
-                      title="关闭会话"
-                    ><X size={12} /></button>
-                  </li>
-                ))}
+              <ul className="rt-session-list">
+                {sessions.map(entry => {
+                  const current = entry.key === activeKey && view === 'sessions'
+                  const server = serverById.get(entry.serverId)
+                  return (
+                    <li key={entry.key} className={current ? 'is-active' : ''}>
+                      <button
+                        type="button"
+                        className="rt-session"
+                        onClick={() => { setActiveKey(entry.key); setView('sessions'); setSidebarOpen(false); setNotice('') }}
+                        aria-current={current}
+                      >
+                        <span className="rt-session-flag">
+                          <RegionFlag code={server ? serverRegionCode(server) : ''} size={16} />
+                          <span className={`rt-session-dot is-${phaseTone(entry)}`} aria-hidden="true" />
+                        </span>
+                        <span className="rt-session-text">
+                          <span className="rt-session-name">{entry.serverName}</span>
+                          <span className="rt-session-status">{sessionPhaseLabel(entry)}</span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="rt-session-close"
+                        onClick={event => {
+                          event.stopPropagation()
+                          void closeSession(entry.key)
+                        }}
+                        aria-label={`关闭 ${entry.serverName} 的会话`}
+                        title="关闭会话"
+                      ><X size={13} /></button>
+                    </li>
+                  )
+                })}
               </ul>
-            ) : <p className="muted terminal-sidebar-empty">还没有终端会话</p>}
+            ) : <p className="rt-sidebar-empty">还没有终端会话</p>}
           </aside>
-          <div className="terminal-workspace-main">
-            {notice ? <div className="remote-terminal-banner" role="status"><span>{notice}</span></div> : null}
+          <button type="button" className="rt-sidebar-scrim" aria-label="收起会话列表" tabIndex={-1} onClick={() => setSidebarOpen(false)} />
+          <div className="rt-main">
+            {notice ? <div className="rt-banner" role="status"><span>{notice}</span><button type="button" className="rt-icon-button" onClick={() => setNotice('')} aria-label="关闭提示"><X size={14} /></button></div> : null}
             {shellExited && showLoginActions && view === 'sessions' ? (
-              <div className="remote-terminal-banner">
+              <div className="rt-banner is-warning">
                 <span>登录配置可能导致 Shell 退出。</span>
-                <button type="button" className="ghost" onClick={() => reconnectActive('minimal')}>以最小环境打开</button>
+                <button type="button" className="rt-text-button" onClick={() => reconnectActive('minimal')}>以最小环境打开</button>
               </div>
             ) : null}
             {infoOpen && info && view === 'sessions' ? (
-              <div className="remote-terminal-info" role="region" aria-label="终端信息">
+              <div className="rt-info" role="region" aria-label="终端信息">
                 <dl>
                   <div><dt>用户</dt><dd>{info.username || '-'}</dd></div>
                   <div><dt>UID / GID</dt><dd>{info.uid ?? '-'} / {info.gid ?? '-'}</dd></div>
@@ -649,10 +650,10 @@ export function TerminalWorkspace({
               </div>
             ) : null}
 
-            <div className="terminal-workspace-stage">
-              <div className="terminal-pane-stack" hidden={view !== 'sessions'}>
+            <div className="rt-stage">
+              <div className="rt-pane-stack" hidden={view !== 'sessions'}>
                 {sessions.map(entry => (
-                  <div key={entry.key} className="terminal-pane-slot" hidden={entry.key !== activeKey}>
+                  <div key={entry.key} className="rt-pane-slot" hidden={entry.key !== activeKey}>
                     <TerminalSessionPane
                       ref={handle => registerHandle(entry.key, handle)}
                       serverId={entry.serverId}
@@ -665,162 +666,130 @@ export function TerminalWorkspace({
                     />
                   </div>
                 ))}
-                {!sessions.length ? <p className="muted terminal-stage-empty">还没有终端会话，先在左侧新建连接。</p> : null}
+                {!sessions.length ? <p className="rt-stage-empty">还没有终端会话，先在左侧新建连接。</p> : null}
               </div>
 
               {view === 'picker' ? (
-                <div className="terminal-workspace-form" role="region" aria-label="选择服务器">
-                  <div className="terminal-picker-toolbar">
-                    <div className="terminal-picker-toolbar-top">
-                      <div className="terminal-form-search">
-                        <Search size={15} aria-hidden="true" />
-                        <input
-                          type="search"
-                          value={pickerQuery}
-                          onChange={event => setPickerQuery(event.target.value)}
-                          placeholder="搜索服务器名称、编号或地区"
-                          aria-label="搜索服务器"
-                        />
-                      </div>
-                      {connectableInPicker.length > 0 ? (
-                        <div className="terminal-picker-quick-actions">
-                          <button
-                            type="button"
-                            className="ghost"
-                            onClick={selectAllConnectableInPicker}
-                          >
-                            {allConnectableSelected ? '取消全选' : `全选在线 (${connectableInPicker.length})`}
-                          </button>
-                        </div>
-                      ) : null}
+                <div className="rt-form" role="region" aria-label="选择服务器">
+                  <div className="rt-form-head">
+                    <h3>连接服务器</h3>
+                    <p>点选一台直接打开终端；勾选多台可一次全部打开。</p>
+                  </div>
+                  <div className="rt-toolbar">
+                    <label className="rt-search">
+                      <Search size={15} aria-hidden="true" />
+                      <input
+                        type="search"
+                        value={pickerQuery}
+                        onChange={event => setPickerQuery(event.target.value)}
+                        placeholder="搜索名称、编号、地区或标签"
+                        aria-label="搜索服务器"
+                      />
+                    </label>
+                    <div className="rt-segmented" role="radiogroup" aria-label="状态筛选">
+                      {([['all', '全部', servers.length], ['online', '在线', onlineCount], ['offline', '离线', offlineCount]] as const).map(([value, label, count]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          role="radio"
+                          aria-checked={pickerStatusFilter === value}
+                          className={`rt-filter${pickerStatusFilter === value ? ' is-active' : ''}`}
+                          onClick={() => setPickerStatusFilter(value)}
+                        >{label} <span className="rt-filter-count">{count}</span></button>
+                      ))}
                     </div>
-
-                    <div className="terminal-picker-filters">
-                      <div className="terminal-filter-pills" role="radiogroup" aria-label="状态筛选">
-                        <button
-                          type="button"
-                          className={`terminal-filter-pill${pickerStatusFilter === 'all' ? ' is-active' : ''}`}
-                          onClick={() => setPickerStatusFilter('all')}
-                        >全部 <span className="pill-count">{servers.length}</span></button>
-                        <button
-                          type="button"
-                          className={`terminal-filter-pill${pickerStatusFilter === 'online' ? ' is-active' : ''}`}
-                          onClick={() => setPickerStatusFilter('online')}
-                        >在线 <span className="pill-count">{onlineCount}</span></button>
-                        <button
-                          type="button"
-                          className={`terminal-filter-pill${pickerStatusFilter === 'offline' ? ' is-active' : ''}`}
-                          onClick={() => setPickerStatusFilter('offline')}
-                        >离线 <span className="pill-count">{offlineCount}</span></button>
-                      </div>
-
-                      {regionOptionsList.length > 0 ? (
-                        <div className="terminal-region-filter">
-                          <Globe size={13} aria-hidden="true" />
-                          <select
-                            value={pickerRegionFilter}
-                            onChange={e => setPickerRegionFilter(e.target.value)}
-                            aria-label="按地区筛选"
-                          >
-                            <option value="">全部地区 ({servers.length})</option>
-                            {regionOptionsList.map(item => (
-                              <option key={item.code} value={item.code}>{item.label} ({item.count})</option>
-                            ))}
-                          </select>
-                        </div>
-                      ) : null}
-                    </div>
+                    {regionOptionsList.length > 0 ? (
+                      <label className="rt-select">
+                        <Globe size={14} aria-hidden="true" />
+                        <select value={pickerRegionFilter} onChange={e => setPickerRegionFilter(e.target.value)} aria-label="按地区筛选">
+                          <option value="">全部地区</option>
+                          {regionOptionsList.map(item => <option key={item.code} value={item.code}>{item.label} ({item.count})</option>)}
+                        </select>
+                      </label>
+                    ) : null}
+                    {connectableInPicker.length > 0 ? (
+                      <button type="button" className="rt-text-button rt-select-all" onClick={selectAllConnectableInPicker}>
+                        {allConnectableSelected ? '取消全选' : `全选在线 ${connectableInPicker.length}`}
+                      </button>
+                    ) : null}
                   </div>
 
                   {pickerServers.length ? (
-                    <ul className="terminal-server-list">
+                    <ul className="rt-server-grid">
                       {pickerServers.map(server => {
                         const blocked = terminalServerBlockReason(server)
                         const connectable = terminalServerConnectable(server)
                         const selected = pickerSelection.includes(Number(server.id))
                         const isConnected = sessions.some(s => s.serverId === Number(server.id))
                         return (
-                          <li key={server.id} className={`terminal-picker-item${selected ? ' is-selected' : ''}`}>
+                          <li key={server.id} className={`rt-server${selected ? ' is-selected' : ''}${connectable ? '' : ' is-blocked'}`}>
                             {connectable ? (
                               <input
                                 type="checkbox"
-                                className="terminal-picker-checkbox"
+                                className="rt-check rt-picker-check"
                                 checked={selected}
                                 onChange={() => togglePickerSelect(Number(server.id))}
                                 aria-label={`选择 ${serverDisplayName(server)}`}
                               />
-                            ) : (
-                              <span className="terminal-picker-checkbox-empty" aria-hidden="true" />
-                            )}
+                            ) : <span className="rt-check-placeholder" aria-hidden="true" />}
                             <button
                               type="button"
-                              className={`terminal-server-option${selected ? ' is-selected' : ''}`}
+                              className="rt-server-option"
                               disabled={Boolean(blocked)}
                               title={blocked || `连接 ${serverDisplayName(server)}`}
                               onClick={() => {
-                                if (pickerSelection.length > 0) {
-                                  togglePickerSelect(Number(server.id))
-                                } else {
-                                  connectServer(server)
-                                }
+                                if (pickerSelection.length > 0) togglePickerSelect(Number(server.id))
+                                else connectServer(server)
                               }}
                             >
-                              <span className="terminal-server-flag">
-                                <RegionFlag code={serverRegionCode(server)} size={18} />
-                              </span>
-                              <span className="terminal-server-name">{serverDisplayName(server)}</span>
-                              <span className="muted terminal-server-hint">{blocked || (isConnected ? '已连接' : '可连接')}</span>
+                              <span className="rt-server-flag"><RegionFlag code={serverRegionCode(server)} size={18} /></span>
+                              <span className="rt-server-name">{serverDisplayName(server)}</span>
+                              <span className={`rt-server-hint${isConnected ? ' is-connected' : blocked ? ' is-blocked' : ''}`}>{blocked || (isConnected ? '已连接' : '可连接')}</span>
                             </button>
                           </li>
                         )
                       })}
                     </ul>
-                  ) : <p className="muted">没有匹配的服务器</p>}
+                  ) : <p className="rt-form-empty">没有匹配的服务器</p>}
 
                   {pickerSelection.length > 0 ? (
-                    <div className="terminal-picker-batch-bar">
-                      <div className="terminal-batch-bar-info">
-                        <span className="batch-bar-count">已选择 <strong>{pickerSelection.length}</strong> 台服务器</span>
+                    <div className="rt-action-bar rt-picker-bar">
+                      <div className="rt-action-info">
+                        <span className="rt-selected-count">已选 <strong>{pickerSelection.length}</strong> 台</span>
                         {sessions.length + pickerSelection.length > maxTerminalSessions ? (
-                          <span className="batch-bar-warning">
-                            （超出上限，最多保持 {maxTerminalSessions} 个会话）
-                          </span>
+                          <span className="rt-action-warning">超出上限，最多同时 {maxTerminalSessions} 个会话</span>
                         ) : null}
                       </div>
-                      <div className="terminal-batch-bar-actions">
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => setPickerSelection([])}
-                        >取消选择</button>
-                        <button
-                          type="button"
-                          className="primary"
-                          onClick={() => void connectSelectedServers()}
-                        >
-                          <Play size={13} aria-hidden="true" />
-                          <span>一键启动所选终端 ({pickerSelection.length})</span>
-                        </button>
-                      </div>
+                      <button type="button" className="rt-secondary" onClick={() => setPickerSelection([])}>取消选择</button>
+                      <button type="button" className="rt-primary" onClick={() => void connectSelectedServers()}>
+                        <Play size={13} aria-hidden="true" />
+                        <span>打开所选终端</span>
+                      </button>
                     </div>
                   ) : null}
                 </div>
               ) : null}
 
               {view === 'batch' ? (
-                <div className="terminal-workspace-form" role="region" aria-label="批量执行">
-                  <label className="terminal-batch-label" htmlFor="terminal-batch-command">要执行的命令</label>
-                  <textarea
-                    id="terminal-batch-command"
-                    rows={3}
-                    value={batchCommand}
-                    onChange={event => setBatchCommand(event.target.value)}
-                    placeholder="例如：uptime"
-                    spellCheck={false}
-                  />
-                  <p className="muted terminal-batch-hint">命令会在每台所选服务器的终端里以当前登录账号执行，请自行确认命令安全。</p>
-                  <div className="terminal-batch-toolbar">
-                    <div className="terminal-form-search">
+                <div className="rt-form" role="region" aria-label="批量执行">
+                  <div className="rt-form-head">
+                    <h3>批量执行</h3>
+                    <p>命令会在每台所选服务器的终端里以当前登录账号执行，请自行确认命令安全。</p>
+                  </div>
+                  <label className="rt-command" htmlFor="terminal-batch-command">
+                    <span className="rt-command-prompt" aria-hidden="true">$</span>
+                    <textarea
+                      id="terminal-batch-command"
+                      rows={3}
+                      value={batchCommand}
+                      onChange={event => setBatchCommand(event.target.value)}
+                      placeholder="要执行的命令，例如：uptime"
+                      aria-label="要执行的命令"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <div className="rt-toolbar">
+                    <label className="rt-search">
                       <Search size={15} aria-hidden="true" />
                       <input
                         type="search"
@@ -829,43 +798,57 @@ export function TerminalWorkspace({
                         placeholder="搜索在线服务器"
                         aria-label="搜索在线服务器"
                       />
-                    </div>
+                    </label>
                     <button
                       type="button"
-                      className="ghost"
+                      className="rt-text-button rt-batch-select-all"
                       onClick={() => setBatchSelection(batchServers.map(server => Number(server.id)))}
                       disabled={!batchServers.length}
                     >全选筛选结果</button>
-                    <button type="button" className="ghost" onClick={() => setBatchSelection([])} disabled={!batchSelection.length}>清空</button>
+                    <button type="button" className="rt-text-button" onClick={() => setBatchSelection([])} disabled={!batchSelection.length}>清空</button>
                   </div>
                   {batchServers.length ? (
-                    <ul className="terminal-server-list is-checkable">
+                    <ul className="rt-server-grid">
                       {batchServers.map(server => {
                         const id = Number(server.id)
+                        const checked = batchSelection.includes(id)
                         return (
-                          <li key={id}>
-                            <label className="terminal-server-check">
-                              <input type="checkbox" checked={batchSelection.includes(id)} onChange={() => toggleBatchServer(id)} />
-                              <span className="terminal-server-flag">
-                                <RegionFlag code={serverRegionCode(server)} size={18} />
-                              </span>
-                              <span className="terminal-server-name">{serverDisplayName(server)}</span>
-                              {sessions.some(entry => entry.serverId === id) ? <span className="muted terminal-server-hint">复用已有会话</span> : null}
+                          <li key={id} className={`rt-server${checked ? ' is-selected' : ''}`}>
+                            <label className="rt-server-check">
+                              <input type="checkbox" className="rt-check" checked={checked} onChange={() => toggleBatchServer(id)} />
+                              <span className="rt-server-flag"><RegionFlag code={serverRegionCode(server)} size={18} /></span>
+                              <span className="rt-server-name">{serverDisplayName(server)}</span>
+                              {sessions.some(entry => entry.serverId === id) ? <span className="rt-server-hint is-connected">复用会话</span> : null}
                             </label>
                           </li>
                         )
                       })}
                     </ul>
-                  ) : <p className="muted">没有可连接的在线服务器</p>}
-                  <div className="terminal-batch-actions">
-                    <span className="muted">已选 {batchSelection.length} 台 · 会话上限 {maxTerminalSessions}</span>
-                    <button type="button" onClick={() => void runBatch()} disabled={!batchSelection.length || !batchCommand.trim()}>
-                      <Play size={14} aria-hidden="true" />连接并执行
+                  ) : <p className="rt-form-empty">没有可连接的在线服务器</p>}
+                  <div className="rt-action-bar rt-batch-bar">
+                    <div className="rt-action-info">
+                      <span className="rt-selected-count">已选 <strong>{batchSelection.length}</strong> 台</span>
+                      <span className="rt-action-note">会话上限 {maxTerminalSessions}</span>
+                    </div>
+                    <button type="button" className="rt-primary rt-run" onClick={() => void runBatch()} disabled={!batchSelection.length || !batchCommand.trim()}>
+                      <Play size={13} aria-hidden="true" />连接并执行
                     </button>
                   </div>
                 </div>
               ) : null}
             </div>
+            {inSessions && activeSession ? (
+              <footer className="rt-statusbar" aria-label="终端状态">
+                <span className={`rt-state is-${phaseTone(activeSession)}`}><span className="rt-state-dot" aria-hidden="true" />{sessionPhaseLabel(activeSession)}</span>
+                {info?.username ? <span className="rt-status-item">{info.username}@{activeSession.serverName}</span> : null}
+                {info?.shell ? <span className="rt-status-item">{info.shell}</span> : null}
+                {info || activeSession.state.loginEnv ? <span className="rt-status-item">{modeLabel(info?.mode || activeSession.state.mode)}</span> : null}
+                {info?.cwd ? <span className="rt-status-item rt-status-wide">{info.cwd}</span> : null}
+                <span className="rt-status-spacer" />
+                {info?.term ? <span className="rt-status-item rt-status-wide">{info.term}</span> : null}
+                <span className="rt-status-item">会话 {sessions.length}/{maxTerminalSessions}</span>
+              </footer>
+            ) : null}
           </div>
         </div>
       </MotionDialogPanel>
