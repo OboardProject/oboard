@@ -60,8 +60,9 @@ const (
 	frameTypeRequest  = 0x05 // request/response RPC (path + JSON body)
 	frameTypeResponse = 0x06 // RPC response (status + JSON body)
 	frameTypeData     = 0x07 // binary data chunk for transfer streams
-	frameTypePing     = 0x08 // keepalive; peer answers with frameTypePing
+	frameTypePing     = 0x08 // keepalive request; peer answers with frameTypePong
 	frameTypeGoAway   = 0x09 // graceful shutdown notice before close
+	frameTypePong     = 0x0a // keepalive response; never answered
 )
 
 // ErrFrameTooLarge is returned when a frame header announces a payload the

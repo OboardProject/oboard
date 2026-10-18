@@ -169,10 +169,12 @@ func (s *Session) Run(onMessage func(map[string]json.RawMessage) error, onReques
 		}
 		switch f.frameType {
 		case frameTypePing:
-			if err := s.WriteFrame(frame{frameType: frameTypePing}); err != nil {
+			if err := s.WriteFrame(frame{frameType: frameTypePong}); err != nil {
 				s.shutdown(err)
 				return err
 			}
+		case frameTypePong:
+			// The next read refreshes the deadline without sending a reply.
 		case frameTypeGoAway:
 			s.shutdown(errors.New("client sent goaway"))
 			return ErrClosed
