@@ -2,11 +2,54 @@ package pluginsandbox
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func TestSandboxDiagnosticsRemainBounded(t *testing.T) {
+	command := &Command{}
+	prefix := "bwrap: creating new namespace failed: Operation not permitted\n"
+	_, _ = fmt.Fprint(&command.stderr, prefix)
+	var writers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		writers.Go(func() {
+			payload := strings.Repeat("x", maxDiagnosticBytes*2)
+			if n, err := command.stderr.Write([]byte(payload)); err != nil || n != len(payload) {
+				t.Errorf("diagnostic overflow must be discarded without failing stderr: %d, %v", n, err)
+			}
+			_ = command.Diagnostics()
+		})
+	}
+	writers.Wait()
+	got := command.Diagnostics()
+	if len(got) != maxDiagnosticBytes || !strings.HasPrefix(got, prefix) {
+		t.Fatalf("lost startup diagnostics or exceeded limit: %q", got)
+	}
+}
+
+func TestOOMKilledRequiresCgroupEvidence(t *testing.T) {
+	group := t.TempDir()
+	command := &Command{group: group}
+	for _, tc := range []struct {
+		events string
+		killed bool
+	}{
+		{"low 0\nhigh 0\nmax 3\noom 1\noom_kill 0\noom_group_kill 0\n", false},
+		{"oom_kill 1\noom_group_kill 0\n", true},
+		{"oom_kill 0\noom_group_kill 1\n", true},
+	} {
+		if err := os.WriteFile(filepath.Join(group, "memory.events"), []byte(tc.events), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if got := command.OOMKilled(); got != tc.killed {
+			t.Fatalf("OOMKilled = %v for %q", got, tc.events)
+		}
+	}
+}
 
 func TestSandboxHasOnlyWorkerMountAndRPCDescriptors(t *testing.T) {
 	args := sandboxArgs("/opt/private/worker", "-runner")

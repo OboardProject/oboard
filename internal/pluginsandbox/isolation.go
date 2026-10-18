@@ -46,6 +46,9 @@ func ProbeIsolation() IsolationStatus {
 	if err == nil {
 		defer command.Close()
 		err = command.Cmd.Run()
+		if err != nil && command.Diagnostics() != "" {
+			err = fmt.Errorf("%w: %s", err, command.Diagnostics())
+		}
 	}
 	if err != nil {
 		return IsolationStatus{Mode: "unavailable", Reason: "plugin isolation unavailable: " + err.Error()}
@@ -114,6 +117,39 @@ type Command struct {
 	group   string
 	fd      *os.File
 	cleaned bool
+	stderr  diagnosticBuffer
+}
+
+// Diagnostics retains a bounded prefix of sandbox startup errors, including
+// failures that happen before the runner can send an RPC response.
+func (c *Command) Diagnostics() string {
+	return c.stderr.String()
+}
+
+type diagnosticBuffer struct {
+	sync.Mutex
+	data []byte
+}
+
+const maxDiagnosticBytes = 4096
+
+func (b *diagnosticBuffer) Write(p []byte) (int, error) {
+	b.Lock()
+	defer b.Unlock()
+	n := len(p)
+	if remaining := maxDiagnosticBytes - len(b.data); remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		b.data = append(b.data, p...)
+	}
+	return n, nil
+}
+
+func (b *diagnosticBuffer) String() string {
+	b.Lock()
+	defer b.Unlock()
+	return strings.TrimSpace(strings.ToValidUTF8(string(b.data), ""))
 }
 
 // OOMKilled reports whether the kernel killed the runner for exceeding its
@@ -207,6 +243,8 @@ func IsolatedCommand(ctx context.Context, self string, memoryMiB int, mode strin
 	}
 	command.fd = fd
 	cmd := exec.CommandContext(ctx, bwrap, sandboxArgs(self, mode)...)
+	cmd.Stderr = &command.stderr
+	cmd.WaitDelay = time.Second
 	cmd.Env = []string{"LANG=C", "GOMAXPROCS=1"}
 	if err := attachCgroup(cmd, fd); err != nil {
 		command.Close()

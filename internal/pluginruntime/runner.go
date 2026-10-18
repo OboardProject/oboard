@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -78,12 +79,14 @@ func RunIsolated(ctx context.Context, self string, request RunnerRequest, call C
 	defer responseWrite.Close()
 	command, err := pluginsandbox.IsolatedCommand(ctx, self, request.Limits.MemoryMiB, "-runner")
 	if err != nil {
+		log.Printf("plugin runner isolation setup failed: %v", err)
 		report.Outcome = Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "plugin isolation unavailable"}
 		return report
 	}
 	defer command.Close()
 	command.Cmd.ExtraFiles = []*os.File{requestRead, responseWrite}
 	if err := command.Cmd.Start(); err != nil {
+		log.Printf("plugin runner start failed: %v", err)
 		report.Outcome = Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "cannot start runner"}
 		return report
 	}
@@ -92,6 +95,9 @@ func RunIsolated(ctx context.Context, self string, request RunnerRequest, call C
 	defer func() {
 		_ = command.Cmd.Process.Kill()
 		<-waited
+		if report.Outcome.Code == "RUNTIME_UNAVAILABLE" {
+			log.Printf("plugin runner stopped: %v; diagnostics: %s", command.Cmd.ProcessState, command.Diagnostics())
+		}
 	}()
 	stop := context.AfterFunc(ctx, func() { _ = responseRead.Close(); _ = requestWrite.Close() })
 	defer stop()
@@ -154,7 +160,7 @@ func runnerFailure(ctx context.Context, command *pluginsandbox.Command) Outcome 
 	case errors.Is(ctx.Err(), context.Canceled):
 		return Outcome{Code: "CANCELLED", Message: "the run was cancelled"}
 	default:
-		return Outcome{Code: "RESOURCE_LIMIT", Message: "the runner stopped unexpectedly"}
+		return Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "the runner stopped unexpectedly; check plugin worker service logs"}
 	}
 }
 
@@ -222,6 +228,7 @@ func ServeRunner() {
 		_ = encoder.Encode(frame{Kind: "done", Payload: mustRaw(outcome)})
 	}
 	if err := pluginsandbox.HardenRunner(); err != nil {
+		fmt.Fprintf(os.Stderr, "runner hardening failed: %v\n", err)
 		done(Outcome{Code: "RUNTIME_UNAVAILABLE", Message: "runner hardening failed"})
 		os.Exit(1)
 	}
@@ -277,6 +284,7 @@ func ServeIsolationProbe() {
 		os.Exit(1)
 	}
 	if err := pluginsandbox.HardenRunner(); err != nil {
+		fmt.Fprintf(os.Stderr, "isolation probe hardening failed: %v\n", err)
 		os.Exit(1)
 	}
 	if err := pluginsandbox.VerifyHardened("/worker"); err != nil {
