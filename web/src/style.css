@@ -11329,13 +11329,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   opacity: 0.65;
 }
 
-.server-monitor-axis-text {
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  fill: var(--muted);
-  opacity: 0.8;
-}
-
 .server-monitor-line {
   fill: none;
   stroke-width: 1.8;

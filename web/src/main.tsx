@@ -8331,6 +8331,15 @@ function buildSmoothArea(pts: { x: number; y: number }[], baselineY: number) {
   return `${linePath} L ${last.x.toFixed(1)},${baselineY.toFixed(1)} L ${first.x.toFixed(1)},${baselineY.toFixed(1)} Z`
 }
 
+// The plot stretches to its card with preserveAspectRatio="none"; zero-length
+// round-capped strokes stay circular where an SVG circle would turn oval.
+function HoverDot({ x, y, color }: { x: number; y: number; color: string }) {
+  return <g className="server-monitor-dot-glow">
+    <line x1={x} y1={y} x2={x} y2={y} stroke="#ffffff" strokeWidth="12" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    <line x1={x} y1={y} x2={x} y2={y} stroke={color} strokeWidth="8" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+  </g>
+}
+
 function ServerMonitorMetricCard({
   title,
   value,
@@ -8375,7 +8384,7 @@ function ServerMonitorMetricCard({
   const W = 400
   const H = 125
   const padL = 6
-  const padR = 48
+  const padR = 64
   const padT = 10
   const padB = 115
   const plotW = W - padL - padR
@@ -8502,14 +8511,8 @@ function ServerMonitorMetricCard({
               {/* Grid lines and right Y-axis scale */}
               {[0, 0.5, 1].map((pct, i) => {
                 const y = padB - pct * plotH
-                const scaleVal = pct * max
                 return (
-                  <g key={i}>
-                    <line x1={padL} y1={y} x2={padL + plotW} y2={y} className="server-monitor-grid-line" strokeDasharray="3 3" />
-                    <text x={W - 2} y={y + 3} textAnchor="end" className="server-monitor-axis-text">
-                      {formatScale(scaleVal)}
-                    </text>
-                  </g>
+                  <line key={i} x1={padL} y1={y} x2={padL + plotW} y2={y} className="server-monitor-grid-line" strokeDasharray="3 3" />
                 )
               })}
 
@@ -8555,28 +8558,13 @@ function ServerMonitorMetricCard({
                     strokeDasharray="2 2"
                   />
                   {hasSecondary && (
-                    <circle
-                      cx={getX(hoverIdx)}
-                      cy={getY(secondary[hoverIdx] || 0)}
-                      r="4"
-                      fill={secondaryColor}
-                      stroke="#ffffff"
-                      strokeWidth="2"
-                      className="server-monitor-dot-glow"
-                    />
+                    <HoverDot x={getX(hoverIdx)} y={getY(secondary[hoverIdx] || 0)} color={secondaryColor} />
                   )}
-                  <circle
-                    cx={getX(hoverIdx)}
-                    cy={getY(primary[hoverIdx] || 0)}
-                    r="4"
-                    fill={primaryColor}
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                    className="server-monitor-dot-glow"
-                  />
+                  <HoverDot x={getX(hoverIdx)} y={getY(primary[hoverIdx] || 0)} color={primaryColor} />
                 </g>
               )}
             </svg>
+            {[0, 0.5, 1].map(pct => <span key={pct} className="server-monitor-axis-label" style={{ top: `${((padB - pct * plotH) / H) * 100}%` }}>{formatScale(pct * max)}</span>)}
           </div>
 
           <div className="server-monitor-card-footer">

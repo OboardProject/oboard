@@ -470,3 +470,30 @@
 .lp-target-copy small { display: block; text-overflow: ellipsis; }
 .lp-target-copy small > span { margin-left: 8px; }
 .monitor-tabs button:focus-visible { outline: 2px solid color-mix(in srgb, var(--focus-ring) 45%, transparent); outline-offset: -2px; }
+
+/* ---------- load view fills the fixed window ---------- */
+
+.monitor-dialog .monitor-body { display: flex; flex-direction: column; }
+.monitor-view { display: flex; flex: 1 0 auto; flex-direction: column; }
+.monitor-view > .server-monitor-panel { flex: 1 0 auto; }
+.monitor-view .server-monitor-metric-grid { flex: 1 0 auto; grid-auto-rows: minmax(220px, 1fr); gap: 12px; }
+.monitor-view .server-monitor-metric-card { padding: 14px 16px 12px; border-color: var(--border-color); border-radius: var(--radius-lg); }
+.monitor-view .server-monitor-metric-plot { flex: 1 1 auto; height: auto; min-height: 110px; margin: 6px 0 4px; }
+.monitor-view .server-monitor-metric-plot svg { position: absolute; inset: 0; }
+
+.server-monitor-axis-label {
+  position: absolute;
+  right: 0;
+  translate: 0 -50%;
+  color: var(--text-muted);
+  font-family: var(--font-numeric);
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .monitor-view .server-monitor-metric-grid { grid-auto-rows: minmax(190px, auto); }
+}
