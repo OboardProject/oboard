@@ -122,7 +122,6 @@ export function ServerUnifiedTelemetryChart({
     observer.observe(canvas)
     return () => observer.disconnect()
   }, [])
-  const chartTitleID = React.useId()
   const chartDescriptionID = React.useId()
   const gradientPrefix = React.useId().replace(/:/g, '')
   const hasPercentageSeries = includeResources
@@ -270,11 +269,11 @@ export function ServerUnifiedTelemetryChart({
           style={{ height: H }}
           preserveAspectRatio="none"
           role="img"
-          aria-labelledby={`${chartTitleID} ${chartDescriptionID}`}
+          aria-label="服务器监控趋势"
+          aria-describedby={chartDescriptionID}
           onPointerMove={handlePointerMove}
           onPointerLeave={() => setHoveredIdx(null)}
         >
-          <title id={chartTitleID}>服务器监控趋势</title>
           <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色异常区块表示该时间桶发生实际公网探测丢包，普通缺报不会标记为丢包；灰色虚线为跨离线时段的断点连接。</desc>
           <defs>
             {activeSeries.map((series, index) => (
@@ -385,7 +384,7 @@ export function ServerUnifiedTelemetryChart({
                     <div key={series.id} className="komari-tooltip-row">
                       <span className="komari-tooltip-label">
                         <span className="komari-legend-dot" style={{ backgroundColor: series.color }} />
-                        {series.label}
+                        <span className="komari-tooltip-name">{series.label}</span>
                       </span>
                       <span className="komari-tooltip-val">{formattedVal}{originalNote}</span>
                     </div>

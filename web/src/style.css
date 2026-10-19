@@ -23990,8 +23990,11 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  /* Placed by its left edge near the chart side, so size from content
+     instead of the space left before the container edge. */
+  width: max-content;
   min-width: 140px;
-  max-width: 280px;
+  max-width: min(320px, 80vw);
   transition: left 0.06s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -24029,10 +24032,19 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
+.komari-tooltip-label .komari-legend-dot { flex: 0 0 auto; }
+.komari-tooltip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
 .komari-tooltip-val {
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
   color: var(--text-strong);
