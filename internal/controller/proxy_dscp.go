@@ -147,6 +147,10 @@ func (s *Server) reconcileProxyDSCP(ctx context.Context, server *model.Server, r
 	if desired.Revision == 0 || server.Status != model.ServerOnline || !serverSupportsCapability(*server, model.ProxyDSCPCapability) || !serverSupportsCapability(*server, model.ProxyDSCPKernelCapability) {
 		return
 	}
+	// Binary capabilities alone do not mean the kernel local API is ready.
+	if !validProxyDSCPReport(report) {
+		return
+	}
 	if _, err = s.store.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeProxyDSCP); err == nil || !errors.Is(err, sql.ErrNoRows) {
 		return
 	}

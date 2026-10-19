@@ -71,11 +71,36 @@ func TestProxyDSCPConvergenceAcknowledgementAndRetry(t *testing.T) {
 	s.reconcileProxyDSCP(ctx, node, nil)
 	s.reconcileProxyDSCP(ctx, node, nil)
 	tasks, e := db.ListTasksByServer(ctx, node.ID, 20)
+	if e != nil || len(tasks) != 0 {
+		t.Fatal("task dispatched before kernel ready", tasks, e)
+	}
+	ready := &model.ProxyDSCPReport{State: "disabled", Value: 46}
+	s.reconcileProxyDSCP(ctx, node, ready)
+	s.reconcileProxyDSCP(ctx, node, ready)
+	tasks, e = db.ListTasksByServer(ctx, node.ID, 20)
 	if e != nil || len(tasks) != 1 || tasks[0].Type != model.AgentTaskTypeProxyDSCP {
 		t.Fatal(tasks, e)
 	}
 	if tasks[0].ConfigVersion != 0 {
 		t.Fatal("DSCP changed deployment version")
+	}
+	if e := db.CompleteTask(ctx, tasks[0].ID, "failed", `{}`); e != nil {
+		t.Fatal(e)
+	}
+	s.reconcileProxyDSCP(ctx, node, ready)
+	tasks, e = db.ListTasksByServer(ctx, node.ID, 20)
+	if e != nil || len(tasks) != 1 {
+		t.Fatal("failed revision retried automatically", tasks, e)
+	}
+	desired, e = db.SetServerProxyDSCP(ctx, *node, nil, true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	s.reconcileProxyDSCP(ctx, node, nil)
+	s.reconcileProxyDSCP(ctx, node, ready)
+	tasks, e = db.ListTasksByServer(ctx, node.ID, 20)
+	if e != nil || len(tasks) != 2 {
+		t.Fatal("explicit retry not dispatched after readiness", tasks, e)
 	}
 	report := &model.ProxyDSCPReport{ProxyDSCPPolicy: desired, State: "partial", Value: 46, Excluded: []string{"hysteria2", "ipv6-mptcp"}}
 	s.reconcileProxyDSCP(ctx, node, report)
