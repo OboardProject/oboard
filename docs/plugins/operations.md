@@ -6,7 +6,7 @@
 
 管理员在插件页开启“插件执行”，并可设置运行策略：暂停全部计划、全局并发（1–8）、单次最长时间（5–120 秒）、日志与执行记录保留天数。
 
-节点侧诊断还需要在该节点上显式允许插件诊断（Agent 本地 `plugins_enabled` 开关，默认关闭，主控无法远程开启）。
+节点侧诊断受 Agent 本地 `plugins_enabled` 开关约束：Standard 模式默认允许，可在节点上执行 `obag remote-access deny plugins` 关闭；Hardened 模式默认拒绝，需在节点上执行 `obag remote-access allow plugins`。主控无法远程开启。
 
 ## 实例
 
