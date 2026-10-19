@@ -3,6 +3,7 @@ import { Select } from './ui/select'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './settings/SettingsLayout'
 import type { DialogApi } from './ui/dialog-context'
 import { blockingDeploymentNotice } from '../config-health'
+import { bbrQdiscHints, bbrQdiscOptions, cakeBandwidthHint, cakeBandwidthMaxMbit, parseBBRQdisc, type BBRQdisc } from './server/bbr-options'
 
 export interface AgentSettingsPanelProps {
   data: any
@@ -68,29 +69,6 @@ function getTrafficTimezoneLabel(timezone: string) {
   } catch {
     return timezone
   }
-}
-
-type BBRQdisc = 'fq' | 'cake' | 'fq_pie' | 'off'
-
-const bbrQdiscOptions: { value: BBRQdisc; label: string }[] = [
-  { value: 'fq', label: 'BBR + FQ（默认）' },
-  { value: 'cake', label: 'BBR + CAKE' },
-  { value: 'fq_pie', label: 'BBR + FQ-PIE' },
-  { value: 'off', label: '不修改' },
-]
-
-const bbrQdiscHints: Record<BBRQdisc, string> = {
-  fq: '通用推荐，需要 Linux 4.9 及以上。',
-  cake: '需要 Linux 4.19 及以上，可额外限制出站带宽来减少排队延迟；内核不支持时自动改用 FQ。',
-  fq_pie: '需要 Linux 5.6 及以上，在 FQ 的基础上主动控制队列延迟；内核不支持时自动改用 FQ。',
-  off: '安装时不修改系统的拥塞控制和队列算法。',
-}
-
-const cakeBandwidthMaxMbit = 100000
-
-function parseBBRQdisc(value: unknown): BBRQdisc {
-  const qdisc = String(value || 'fq')
-  return bbrQdiscOptions.some(option => option.value === qdisc) ? qdisc as BBRQdisc : 'fq'
 }
 
 function parseCakeBandwidth(value: unknown): string {
@@ -264,13 +242,13 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
         <SettingsSwitchRow label="中国大陆主控优先" description="开启后，中国大陆服务器优先从主控下载资源，其他服务器遵循上方下载来源设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆主控优先" />
       </SettingsGroup>
       <SettingsGroup title="网络优化" description="统一作用于所有服务器，在首次安装 Agent 时执行；已安装的服务器需重新安装才会生效。">
-        <SettingsRow label="拥塞控制" description={`${bbrQdiscHints[bbrQdisc]}只在安装 Agent 时生效，修改后需在服务器上重新运行安装命令。失败不影响安装。`}>
+        <SettingsRow label="拥塞控制" description={`${bbrQdiscHints[bbrQdisc]}只在安装 Agent 时生效，修改后需在服务器上重新运行安装命令。服务器设置中可单独覆盖。失败不影响安装。`}>
           <Select aria-label="拥塞控制" value={bbrQdisc} onChange={handleBBRQdiscChange} disabled={Boolean(savingKey)} className="agent-select-field">
-            {bbrQdiscOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            {bbrQdiscOptions.map(option => <option key={option.value} value={option.value}>{option.value === 'fq' ? `${option.label}（默认）` : option.label}</option>)}
           </Select>
         </SettingsRow>
         {bbrQdisc === 'cake' && (
-          <SettingsRow label="CAKE 带宽" description="可选。按服务器实际上行带宽的 90%–95% 填写，让排队发生在本机而不是上游，从而降低延迟和丢包。填错会限制速度；留空表示不限速。仅作用于出站方向。" htmlFor="cake-bandwidth-mbit">
+          <SettingsRow label="CAKE 带宽" description={cakeBandwidthHint} htmlFor="cake-bandwidth-mbit">
             <div className="agent-cake-bandwidth">
               <input id="cake-bandwidth-mbit" type="number" inputMode="numeric" min={0} max={cakeBandwidthMaxMbit} step={1} placeholder="不限速" value={cakeBandwidth} disabled={Boolean(savingKey)} onChange={event => setCakeBandwidth(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') saveCakeBandwidth() }} aria-label="CAKE 带宽（Mbit/s）" aria-invalid={!isCakeBandwidthValid} className="agent-input-field" />
               <span className="agent-cake-unit">Mbit/s</span>

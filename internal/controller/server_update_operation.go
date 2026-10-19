@@ -61,6 +61,8 @@ type serverUpdateChanges struct {
 	AuthorizationFastLane    *bool                     `json:"authorization_fast_lane,omitempty"`
 	RuntimeUsersEnabled      *bool                     `json:"runtime_users_enabled,omitempty"`
 	StealthEnabled           *bool                     `json:"stealth_enabled,omitempty"`
+	BBRQdisc                 *string                   `json:"bbr_qdisc,omitempty"`
+	BBRCakeBandwidthMbit     *int                      `json:"bbr_cake_bandwidth_mbit,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -249,6 +251,8 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("authorization_fast_lane", changes.AuthorizationFastLane != nil, func() {})
 	set("runtime_users_enabled", changes.RuntimeUsersEnabled != nil, func() {})
 	set("stealth_enabled", changes.StealthEnabled != nil, func() { next.StealthEnabled = *changes.StealthEnabled })
+	set("bbr_qdisc", changes.BBRQdisc != nil, func() { next.BBRQdisc = *changes.BBRQdisc })
+	set("bbr_cake_bandwidth_mbit", changes.BBRCakeBandwidthMbit != nil, func() { next.BBRCakeBandwidthMbit = *changes.BBRCakeBandwidthMbit })
 	return changed
 }
 

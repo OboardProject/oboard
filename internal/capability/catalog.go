@@ -283,6 +283,7 @@ func defaultDescriptors() []Descriptor {
 		"users_confirmed": boolValue, "users_pending_reason": stringValue, "users_fallback": stringValue,
 		"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
 		"stealth_enabled": boolValue,
+		"bbr_qdisc":       stringValue, "bbr_cake_bandwidth_mbit": map[string]any{"type": "integer"},
 	})
 	user := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "username": stringValue, "nickname": stringValue,
@@ -740,6 +741,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"service_start_at":          stringValue, "expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly", "semiannual", "annual"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空时自动按 service_start_at(优先)或 expires_at 的日推导(仅日精度),例如 2025-07-05 起租即每月5日重置"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "为空时同上自动推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags": serverDisplayTagsSchema(),
+			"bbr_qdisc":    map[string]any{"type": "string", "enum": []string{"", "off", "fq", "cake", "fq_pie"}, "description": "单台服务器的 BBR 安装覆盖：空字符串跟随系统设置 server_default_bbr_qdisc；只影响此服务器之后签发的安装命令，已安装服务器需重新运行安装命令"}, "bbr_cake_bandwidth_mbit": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "description": "仅 bbr_qdisc=cake 时使用的出站整形带宽 Mbit/s，0 为不限速"},
 		}, "name", "auto_renew_enabled")
 		serverInput["if"] = map[string]any{"properties": map[string]any{"auto_renew_enabled": map[string]any{"const": true}}}
 		serverInput["then"] = map[string]any{"required": []string{"renewal_cycle"}}
@@ -772,6 +774,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空且账期日期变更时自动按当前 service_start_at(优先)或 expires_at 的日推导；仅设置 traffic_reset_day 时自动使用 month_day"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "单独设置时自动将 traffic_reset_mode 切换为 month_day；为空时可按账期日期推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags":            serverDisplayTagsSchema(),
 			"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
+			"bbr_qdisc": map[string]any{"type": "string", "enum": []string{"", "off", "fq", "cake", "fq_pie"}, "description": "单台服务器的 BBR 安装覆盖：空字符串跟随系统设置 server_default_bbr_qdisc；只影响此服务器之后签发的安装命令，已安装服务器需重新运行安装命令"}, "bbr_cake_bandwidth_mbit": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "description": "仅 bbr_qdisc=cake 时使用的出站整形带宽 Mbit/s，0 为不限速"},
 			"stealth_enabled": map[string]any{"type": "boolean", "description": "安全进程开关：开启后必须通过 servers.enrollment.issue 获取安装命令并在服务器重新安装 Agent；安装命令自动启动随机目录、进程名和服务名的新 Agent，成功后清理旧安装。关闭时已注册且在线的服务器会收到 apply_stealth 任务"},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"operation_id": stringValue, "server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"

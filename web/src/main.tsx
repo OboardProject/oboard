@@ -319,6 +319,7 @@ const UserDashboardPage = lazySurface(() => import('./pages/UserDashboardPage').
 const AccountPage = lazySurface(() => import('./pages/AccountPage').then(module => ({ default: module.AccountPage })))
 const PluginsWorkspace = lazySurface(() => import('./features/plugins/PluginsWorkspace').then(module => ({ default: module.PluginsWorkspace })))
 import { automationLandingTab, isAutomationNavTab, navTabVisible as automationEntryVisible } from './automation-nav'
+import { bbrQdiscHints, bbrQdiscLabel, bbrQdiscOptions, cakeBandwidthHint, cakeBandwidthMaxMbit, parseBBRQdisc } from './components/server/bbr-options'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -1114,6 +1115,7 @@ const fieldLabels: Record<string, string> = {
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_record_id: 'DDNS 记录', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
   ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', stealth_enabled: '安全进程',
+  bbr_qdisc: '拥塞控制', bbr_cake_bandwidth_mbit: 'CAKE 带宽',
   os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
   tls: 'TLS', certificate_mode: '证书模式', certificate_id: '证书', certificate_domain: '证书域名', config_json: 'JSON 配置', match_json: '匹配规则 JSON', result_json: '结果 JSON', events: '事件',
   proxy_uuid: '代理 UUID', proxy_password: '代理密码', speed_limit_mbps: '限速 Mbps', traffic_limit_bytes: '流量额度', traffic_used_bytes: '已用流量', subscription_token: '订阅令牌',
@@ -6262,7 +6264,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number; latency_probe_interval_seconds?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: true, renewal_cycle: '' as '' | 'monthly' | 'quarterly' | 'semiannual' | 'annual', expiry_notify_enabled: true, display_tags: [] }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, stealth_enabled: false, bbr_qdisc: '', bbr_cake_bandwidth_mbit: 0, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: true, renewal_cycle: '' as '' | 'monthly' | 'quarterly' | 'semiannual' | 'annual', expiry_notify_enabled: true, display_tags: [] }
 }
 
 const serverSettingTabs = [
@@ -7160,8 +7162,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
             />
           )}
         </div>}
-    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
-    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} panelBBR={panelBBRFromDefaults(creationDefaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} panelBBR={panelBBRFromDefaults(creationDefaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} role={role} onResetTraffic={() => void resetServerTraffic(detailServer)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{aboutServer && <ServerAboutDialog server={aboutServer} onClose={() => setAboutServer(null)} />}</AnimatePresence>
@@ -7603,7 +7605,7 @@ const serverSettingSectionMeta: Record<ServerSettingsTab, { icon: React.Componen
   billing: { icon: CalendarDays, desc: '到期、续期与周期流量' },
   network: { icon: Network, desc: '入口地址、监听与端口池' },
   monitor: { icon: Activity, desc: '回报频率、审计与离线提醒' },
-  system: { icon: ShieldCheck, desc: '安全进程、时间校准与远程控制' },
+  system: { icon: ShieldCheck, desc: '安全进程、时间校准、网络优化与远程控制' },
 }
 
 type ServerSettingsDialogProps = {
@@ -7618,9 +7620,49 @@ type ServerSettingsDialogProps = {
   client?: any
   notify?: (message: string, tone?: string) => void
   role?: Role
+  panelBBR?: PanelBBRDefaults
 }
 
-export function ServerSettingsDialog({ mode, server, draft, update, onCancel, onSubmit, servers, connectionAuditGated, client, notify, role = 'viewer' }: ServerSettingsDialogProps) {
+type PanelBBRDefaults = { qdisc?: string; cakeMbit?: number }
+
+function panelBBRFromDefaults(defaults: any): PanelBBRDefaults | undefined {
+  if (!defaults || defaults.panel_bbr_qdisc === undefined) return undefined
+  return { qdisc: defaults.panel_bbr_qdisc, cakeMbit: Number(defaults.panel_bbr_cake_bandwidth_mbit) || 0 }
+}
+
+function ServerBBRSettings({ draft, update, creating, enrolled, panelBBR }: { draft: any; update: (patch: Record<string, any>) => void; creating: boolean; enrolled: boolean; panelBBR?: PanelBBRDefaults }) {
+  const override = String(draft.bbr_qdisc || '')
+  const followLabel = panelBBR ? `跟随系统设置（${bbrQdiscLabel(panelBBR.qdisc, panelBBR.cakeMbit)}）` : '跟随系统设置'
+  const effective = override ? parseBBRQdisc(override) : panelBBR ? parseBBRQdisc(panelBBR.qdisc) : undefined
+  const scope = creating ? '安装 Agent 时生效。' : enrolled ? '只在安装时生效：保存后需重新生成接入命令并在服务器上执行。' : '保存后生成的接入命令会使用此设置。'
+  const mbit = Number(draft.bbr_cake_bandwidth_mbit) || 0
+  return <SettingGroup title="网络优化">
+    <SettingRow label="拥塞控制" description={`${effective ? bbrQdiscHints[effective] : ''}${scope}`}>
+      <Select value={override} onChange={e => update({ bbr_qdisc: e.target.value, ...(e.target.value === 'cake' ? {} : { bbr_cake_bandwidth_mbit: 0 }) })} aria-label="拥塞控制">
+        <option value="">{followLabel}</option>
+        {bbrQdiscOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </Select>
+    </SettingRow>
+    {override === 'cake' && <SettingRow label="CAKE 带宽" description={cakeBandwidthHint}>
+      <div className="ss-unit-input">
+        <input
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={cakeBandwidthMaxMbit}
+          step={1}
+          placeholder="不限速"
+          aria-label="CAKE 带宽（Mbit/s）"
+          value={mbit > 0 ? mbit : ''}
+          onChange={e => update({ bbr_cake_bandwidth_mbit: e.target.value === '' ? 0 : Math.max(0, Math.min(cakeBandwidthMaxMbit, Math.floor(Number(e.target.value) || 0))) })}
+        />
+        <span className="ss-unit">Mbit/s</span>
+      </div>
+    </SettingRow>}
+  </SettingGroup>
+}
+
+export function ServerSettingsDialog({ mode, server, draft, update, onCancel, onSubmit, servers, connectionAuditGated, client, notify, role = 'viewer', panelBBR }: ServerSettingsDialogProps) {
   const creating = mode === 'create'
   const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
@@ -7873,6 +7915,7 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
                 <TimeCorrectionSelector value={draft.time_correction_mode || 'auto'} onChange={value => update({ time_correction_mode: value })} />
               </SettingRow>
             </SettingGroup>
+            <ServerBBRSettings draft={draft} update={update} creating={creating} enrolled={Boolean(server?.agent_id)} panelBBR={panelBBR} />
             {!creating && server && <SettingGroup title="远程控制">
               <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={hasManagementAccess(role)} />
             </SettingGroup>}
@@ -7889,9 +7932,9 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
   </MotionDialogPanel>
 }
 
-function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
+function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated, panelBBR }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; panelBBR?: PanelBBRDefaults }) {
   const update = (patch: Record<string, any>) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
-  return <ServerSettingsDialog mode="create" draft={draft} update={update} onCancel={onCancel} onSubmit={onSubmit} servers={servers} connectionAuditGated={connectionAuditGated} />
+  return <ServerSettingsDialog mode="create" draft={draft} update={update} onCancel={onCancel} onSubmit={onSubmit} servers={servers} connectionAuditGated={connectionAuditGated} panelBBR={panelBBR} />
 }
 
 function serverToDraft(server: Server) {
@@ -7914,10 +7957,10 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<boolean>; servers?: Server[]; connectionAuditGated?: boolean }) {
+function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated, panelBBR }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<boolean>; servers?: Server[]; connectionAuditGated?: boolean; panelBBR?: PanelBBRDefaults }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const update = (patch: Record<string, any>) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
-  return <ServerSettingsDialog mode="edit" server={server} draft={draft} update={update} onCancel={onCancel} onSubmit={() => onSubmit(draft)} servers={servers} connectionAuditGated={connectionAuditGated} client={client} notify={notify} role={role} />
+  return <ServerSettingsDialog mode="edit" server={server} draft={draft} update={update} onCancel={onCancel} onSubmit={() => onSubmit(draft)} servers={servers} connectionAuditGated={connectionAuditGated} client={client} notify={notify} role={role} panelBBR={panelBBR} />
 }
 
 function ServerExtendExpiryDialog({ server, onCancel, onSubmit }: { server: Server; onCancel: () => void; onSubmit: (server: Server, days: number) => Promise<void> }) {
@@ -11785,7 +11828,7 @@ export function ProxyOverview({ data, client, load, selectedServer, setSelectedS
         </aside>}
       </div>
     </div>
-    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} panelBBR={panelBBRFromDefaults(data.server_creation_defaults)} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog notify={notify} mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog notify={notify} mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>

@@ -132,6 +132,38 @@ func validAgentInstallCakeBandwidth(mbit int) bool {
 	return mbit >= 0 && mbit <= agentInstallCakeBandwidthMaxMbit
 }
 
+// normalizeServerBBROverride validates a server's BBR install override. An
+// empty qdisc follows the panel-wide setting; the bandwidth only survives for
+// a cake override.
+func normalizeServerBBROverride(v *model.Server) error {
+	if strings.TrimSpace(v.BBRQdisc) == "" {
+		v.BBRQdisc, v.BBRCakeBandwidthMbit = "", 0
+		return nil
+	}
+	qdisc, ok := normalizeAgentInstallBBRQdisc(v.BBRQdisc)
+	if !ok {
+		return errors.New("bbr_qdisc must be empty, off, fq, cake, or fq_pie")
+	}
+	if !validAgentInstallCakeBandwidth(v.BBRCakeBandwidthMbit) {
+		return fmt.Errorf("bbr_cake_bandwidth_mbit must be between 0 and %d", agentInstallCakeBandwidthMaxMbit)
+	}
+	v.BBRQdisc = qdisc
+	if qdisc != "cake" {
+		v.BBRCakeBandwidthMbit = 0
+	}
+	return nil
+}
+
+// serverAgentInstallBBR applies a server's own BBR override on top of the
+// panel-wide qdisc and cake bandwidth.
+func serverAgentInstallBBR(srv model.Server, qdisc string, cakeMbit int) (string, int) {
+	override, ok := normalizeAgentInstallBBRQdisc(srv.BBRQdisc)
+	if !ok {
+		return qdisc, cakeMbit
+	}
+	return override, srv.BBRCakeBandwidthMbit
+}
+
 // agentInstallBBRValues renders the explicit BBR qdisc and cake bandwidth
 // literals. The bandwidth only matters for cake; other choices always carry 0
 // so the installer never shapes traffic for a qdisc that cannot.
@@ -174,9 +206,9 @@ func agentInstallCommand(baseURL, bbrValue, cakeBandwidthValue, tcpTuningValue, 
 		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
 }
 
-// agentEnrollmentCommand renders the Linux install command. The BBR qdisc and
-// TCP tuning are panel-wide settings, so every issued command reads the current
-// settings instead of a per-server choice.
+// agentEnrollmentCommand renders the Linux install command. Every issued
+// command reads the current panel-wide BBR qdisc and TCP tuning settings; a
+// server's own BBR override, when set, replaces the panel qdisc.
 func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serverID ...int64) (string, map[string]any, error) {
 	base, err := s.publicBaseURL(ctx)
 	if err != nil {
@@ -187,6 +219,13 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serve
 		return "", nil, err
 	}
 	qdisc, cakeMbit, tcpTuning := agentInstallTuningSettings(settings)
+	if len(serverID) == 1 && serverID[0] > 0 {
+		srv, err := s.store.GetServer(ctx, serverID[0])
+		if err != nil {
+			return "", nil, err
+		}
+		qdisc, cakeMbit = serverAgentInstallBBR(*srv, qdisc, cakeMbit)
+	}
 	bbrValue, cakeBandwidthValue := agentInstallBBRValues(qdisc, cakeMbit)
 	tcpTuningValue, stealthValue := agentInstallTCPTuningValue(tcpTuning), agentInstallStealthValue(stealth)
 	command := agentInstallCommand(base, bbrValue, cakeBandwidthValue, tcpTuningValue, stealthValue)

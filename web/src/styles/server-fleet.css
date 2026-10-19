@@ -1237,6 +1237,9 @@ button.fleet-chip:hover:not(:disabled).is-danger { background: color-mix(in srgb
 .ss-row-control > .ui-select,
 .ss-row-control > button[aria-haspopup="listbox"] { width: 100%; }
 .ss-inline-action { align-self: flex-start; min-height: 32px; padding: 0 10px; font-size: 13px; }
+.ss-unit-input { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ss-unit-input > input { flex: 1 1 auto; min-width: 0; }
+.ss-unit { flex: none; color: var(--muted); font-size: 13px; }
 .ss-row-control > .ss-inline-action { align-self: flex-end; }
 .ss-error { margin: 0; color: var(--fleet-red); font-size: 12.5px; }
 .ss-group-body > .access-note { margin: 0; padding: 12px 16px; border: 0; border-radius: 0; }
