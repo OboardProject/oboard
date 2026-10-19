@@ -475,12 +475,16 @@ func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, t
 		if bucketIndex < 0 || bucketIndex >= bucketCount {
 			continue
 		}
-		if stat.Kind != "public" && latencyCount > 0 {
-			result.Points = append(result.Points, model.ServerRegionalLatencyPoint{
-				TaskID: stat.TaskID, TaskName: stat.TaskName, Province: stat.Province, Carrier: stat.Carrier,
-				Kind: "regional", Available: true, CheckedAt: from.Add(time.Duration(bucketIndex) * bucket),
-				LatencyMS: float64(latencySum) / float64(latencyCount), MinLatencyMS: pointMin.Int64, MaxLatencyMS: pointMax.Int64, Count: latencyCount,
-			})
+		if stat.Kind != "public" {
+			bucketAt := from.Add(time.Duration(bucketIndex) * bucket)
+			if latencyCount > 0 {
+				result.Points = append(result.Points, model.ServerRegionalLatencyPoint{
+					TaskID: stat.TaskID, TaskName: stat.TaskName, Province: stat.Province, Carrier: stat.Carrier,
+					Kind: "regional", Available: true, CheckedAt: bucketAt,
+					LatencyMS: float64(latencySum) / float64(latencyCount), MinLatencyMS: pointMin.Int64, MaxLatencyMS: pointMax.Int64, Count: latencyCount,
+				})
+			}
+			result.Points = appendRegionalFailurePoint(result.Points, stat.TaskID, stat.TaskName, stat.Province, stat.Carrier, bucketAt, stat.ReportCount-stat.AvailableCount)
 		}
 		at := parseTime(checkedAt)
 		if peakMS.Valid && (item.PeakLatencyMS == nil || peakMS.Float64 > *item.PeakLatencyMS) {
@@ -528,7 +532,10 @@ func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, t
 		if left.TaskName != right.TaskName {
 			return left.TaskName < right.TaskName
 		}
-		return left.TaskID < right.TaskID
+		if left.TaskID != right.TaskID {
+			return left.TaskID < right.TaskID
+		}
+		return left.Available && !right.Available
 	})
 	result.Stats = stats
 	return result, nil
@@ -678,4 +685,17 @@ func (s *Store) DeleteLatencyProbeResults(ctx context.Context, serverID int64) e
 	}
 	s.invalidateLatencyHistory(serverID)
 	return nil
+}
+
+// appendRegionalFailurePoint records the failed reports of one probe-task
+// bucket as an unavailable point so charts can break that task's curve at the
+// failure instead of guessing from sampling gaps. Count is the failed reports.
+func appendRegionalFailurePoint(points []model.ServerRegionalLatencyPoint, taskID int64, taskName, province, carrier string, at time.Time, failed int64) []model.ServerRegionalLatencyPoint {
+	if failed <= 0 {
+		return points
+	}
+	return append(points, model.ServerRegionalLatencyPoint{
+		TaskID: taskID, TaskName: taskName, Province: province, Carrier: carrier,
+		Kind: "regional", Available: false, CheckedAt: at, Count: failed,
+	})
 }

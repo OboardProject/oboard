@@ -69,7 +69,7 @@ export function ServerUnifiedTelemetryChart({
   const fallbackEnd = useMemo(() => Date.now(), [resourcePoints, latencyPoints, regionalProbes, failedProbePoints, windowHours, windowEndAt])
   const responseEnd = windowEndAt ? new Date(windowEndAt).getTime() : fallbackEnd
   const windowEndMS = Number.isFinite(responseEnd) ? responseEnd : fallbackEnd
-  const { seriesList, buckets: rawBuckets } = useMemo(() => {
+  const { seriesList, buckets: rawBuckets, failedBuckets } = useMemo(() => {
     if (aligned) return aligned
     return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, bucketCount, now: windowEndMS })
   }, [aligned, resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, windowEndMS, bucketCount])
@@ -143,10 +143,24 @@ export function ServerUnifiedTelemetryChart({
     bucketCount: buckets.length,
     now: Number.isFinite(windowEndMS) ? windowEndMS : Date.now(),
   }), [failedProbePoints, windowHours, buckets.length, windowEndMS])
-  const failedProbeCountByBucket = useMemo(
-    () => new Map(failedProbeBuckets.map(point => [point.index, point.count])),
-    [failedProbeBuckets],
+  // Failed probes per series: the public probe reports them separately, probe
+  // tasks carry them in their own sample stream.
+  const seriesFailures = useMemo<Record<string, { index: number; count: number }[]>>(
+    () => ({ ...(failedBuckets || {}), public_latency: failedProbeBuckets }),
+    [failedBuckets, failedProbeBuckets],
   )
+  const failureMarkers = useMemo(() => {
+    const byBucket = new Map<number, { series: MetricSeries; count: number }[]>()
+    activeSeries.forEach(series => {
+      if (series.unit !== 'ms') return
+      ;(seriesFailures[series.id] || []).forEach(point => {
+        const list = byBucket.get(point.index) || []
+        list.push({ series, count: point.count })
+        byBucket.set(point.index, list)
+      })
+    })
+    return byBucket
+  }, [activeSeries, seriesFailures])
 
   const getY = (val: number, series: MetricSeries) => {
     if (series.yAxis === 'left') {
@@ -159,7 +173,7 @@ export function ServerUnifiedTelemetryChart({
 
   const chartPaths = useMemo(() => (
     activeSeries.map((series, seriesIndex) => {
-      const segments = splitSeriesSegments(buckets, series.id, connectGaps)
+      const segments = splitSeriesSegments(buckets, series.id, connectGaps, (seriesFailures[series.id] || []).map(point => point.index))
       if (segments.length === 0) return null
       return (
         <g key={series.id}>
@@ -214,7 +228,7 @@ export function ServerUnifiedTelemetryChart({
         </g>
       )
     })
-  ), [activeSeries, buckets, connectGaps, maxLatency, W, H, padL, gradientPrefix])
+  ), [activeSeries, buckets, connectGaps, seriesFailures, maxLatency, W, H, padL, gradientPrefix])
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!svgRef.current || !buckets.length) return
@@ -225,7 +239,7 @@ export function ServerUnifiedTelemetryChart({
   }
 
   const hoveredBucket = hoveredIdx !== null ? buckets[hoveredIdx] : null
-  const hoveredFailedProbeCount = hoveredIdx !== null ? failedProbeCountByBucket.get(hoveredIdx) || 0 : 0
+  const hoveredFailures = hoveredIdx !== null ? failureMarkers.get(hoveredIdx) || [] : []
 
   return (
     <div className="komari-chart-container">
@@ -274,7 +288,7 @@ export function ServerUnifiedTelemetryChart({
           onPointerMove={handlePointerMove}
           onPointerLeave={() => setHoveredIdx(null)}
         >
-          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色异常区块表示该时间桶发生实际公网探测丢包，普通缺报不会标记为丢包；灰色虚线为跨离线时段的断点连接。</desc>
+          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色竖线表示该时间桶有探测失败，曲线在失败处断开，开启断点连接后忽略失败直接相连；灰色虚线为长时间无数据时的连接。</desc>
           <defs>
             {activeSeries.map((series, index) => (
               <linearGradient key={series.id} id={`${gradientPrefix}-${index}`} x1="0" y1="0" x2="0" y2="1">
@@ -302,20 +316,13 @@ export function ServerUnifiedTelemetryChart({
             )
           })}
           <g className="komari-loss-bands" aria-hidden="true">
-            {failedProbeBuckets.map(point => {
-              const startX = getBucketStartX(point.index)
+            {Array.from(failureMarkers.keys()).map(index => {
+              const startX = getBucketStartX(index)
               return (
-                <rect
-                  key={point.index}
-                  x={startX}
-                  y={padT}
-                  width={Math.max(1, getBucketEndX(point.index) - startX)}
-                  height={plotH}
-                  rx="1.5"
-                  fill="var(--danger, #ef4444)"
-                  fillOpacity="0.14"
-                  pointerEvents="none"
-                />
+                <g key={index}>
+                  <rect x={startX} y={padT} width={Math.max(1, getBucketEndX(index) - startX)} height={plotH} fill="#ef4444" fillOpacity="0.08" pointerEvents="none" />
+                  <line x1={getX(index)} y1={padT} x2={getX(index)} y2={padB} className="komari-failure-line" vectorEffect="non-scaling-stroke" />
+                </g>
               )
             })}
           </g>
@@ -362,15 +369,15 @@ export function ServerUnifiedTelemetryChart({
             >
               <div className="komari-tooltip-time">{hoveredBucket.timeLabel}</div>
               <div className="komari-tooltip-list">
-                {hoveredFailedProbeCount > 0 && (
-                  <div className="komari-tooltip-row">
+                {hoveredFailures.map(({ series, count }) => (
+                  <div key={`failed-${series.id}`} className="komari-tooltip-row is-failure">
                     <span className="komari-tooltip-label">
-                      <span className="komari-legend-dot" style={{ backgroundColor: 'var(--danger, #ef4444)' }} />
-                      公网探测
+                      <span className="komari-legend-dot" style={{ backgroundColor: '#ef4444' }} />
+                      <span className="komari-tooltip-name">{series.label}</span>
                     </span>
-                    <span className="komari-tooltip-val">丢包{hoveredFailedProbeCount > 1 ? ` × ${hoveredFailedProbeCount}` : ''}</span>
+                    <span className="komari-tooltip-val">探测失败{count > 1 ? ` × ${count}` : ''}</span>
                   </div>
-                )}
+                ))}
                 {activeSeries.map(series => {
                   const val = hoveredBucket.values[series.id]
                   if (val == null) return null
@@ -417,14 +424,14 @@ function ChartDrawOptions({
       type="button"
       className={`komari-chart-option${connectGaps ? ' active' : ''}`}
       aria-pressed={connectGaps}
-      title="跨离线时段连接相邻采样点，并以灰色虚线与阴影标示离线；正常采样间隔始终相连"
+      title="忽略探测失败，直接连接前后两个成功点，失败处仍以红线标出；长时间无数据时以灰色虚线连接"
       onClick={() => onConnectGaps(value => !value)}
     >断点连接</button>
     <button
       type="button"
       className={`komari-chart-option${clipSpikes ? ' active' : ''}`}
       aria-pressed={clipSpikes}
-      title="削除短暂延迟毛刺；保留持续高延迟、丢包和原始统计"
+      title="去掉前后都正常、单独突然升高的异常点；持续升高和统计数据不受影响"
       onClick={() => onClipSpikes(value => !value)}
     >削峰</button>
   </div>

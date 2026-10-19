@@ -48,7 +48,7 @@ export type ConnectivityResponse = {
   buckets: ConnectivityBucket[]
   latency_points: { at: string; avg_ms: number; min_ms: number; max_ms: number; count: number }[]
   failed_probe_points: { at: string; count: number }[]
-  regional_latency_points: { kind: 'regional' | 'custom'; task_id?: number; task_name?: string; province: string; carrier: string; available: true; latency_ms: number; min_latency_ms: number; max_latency_ms: number; count: number; checked_at: string }[]
+  regional_latency_points: { kind: 'regional' | 'custom'; task_id?: number; task_name?: string; province: string; carrier: string; available: boolean; latency_ms: number; min_latency_ms: number; max_latency_ms: number; count: number; checked_at: string }[]
   probe_target_stats: LatencyProbeTargetStat[]
   regional_data_start_at: string | null
   outages: { started_at: string; ended_at: string | null; duration_seconds: number; cause: string; started_before_window: boolean }[]

@@ -85,17 +85,21 @@ export interface SeriesSegmentPoint {
   value: number
 }
 
-// One maximal run of points whose spacing stays within normal reporting
-// jitter. `bridgeFrom` is set only when the connect-gaps switch bridges the
-// offline gap in front of this segment; it carries the last point before the
-// gap so the chart can draw the bridge with distinct offline styling.
+// One run of points the chart draws as a single line. `bridgeFrom` is set only
+// when the connect-gaps switch joins this run to the previous one across a
+// failure or a silent gap; it carries the last point before the gap so the
+// chart can draw that join with distinct styling.
 export interface SeriesSegment {
   points: SeriesSegmentPoint[]
   bridgeFrom?: SeriesSegmentPoint
 }
 
-// Reports arrive at a fixed cadence, so a spacing within twice the observed
-// median interval is sampling jitter, not downtime.
+// Successful samples of one probe task always connect, however long its probe
+// interval is relative to a chart bucket. A line breaks only where the task
+// actually failed between two successes, or where it went silent for much
+// longer than its own cadence (agent offline, task paused).
+const SILENT_GAP_INTERVALS = 6
+
 function medianReportingInterval(points: SeriesSegmentPoint[]): number {
   if (points.length < 2) return 1
   const intervals: number[] = []
@@ -138,7 +142,11 @@ export function formatBucketTime(ts: number): string {
   return `${month}-${day} ${hours}:${mins}`
 }
 
-export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: string, connectGaps = false): SeriesSegment[] {
+// failedIndexes lists the buckets in which this series recorded a failed probe.
+// A failure strictly between two successful buckets breaks the line; with
+// connectGaps the two successes are joined anyway and the failure stays visible
+// as a red marker.
+export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: string, connectGaps = false, failedIndexes: number[] = []): SeriesSegment[] {
   const points: SeriesSegmentPoint[] = []
   buckets.forEach((bucket, index) => {
     const value = bucket.values[seriesID]
@@ -146,33 +154,58 @@ export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: str
   })
   if (points.length === 0) return []
 
-  const jitterTolerance = Math.ceil(medianReportingInterval(points) * 2)
+  const failures = [...failedIndexes].sort((a, b) => a - b)
+  let cursor = 0
+  const failedBetween = (from: number, to: number) => {
+    while (cursor < failures.length && failures[cursor] <= from) cursor += 1
+    return cursor < failures.length && failures[cursor] < to
+  }
+  const silentLimit = Math.ceil(medianReportingInterval(points) * SILENT_GAP_INTERVALS)
   const segments: SeriesSegment[] = [{ points: [points[0]] }]
   for (let index = 1; index < points.length; index += 1) {
-    const gap = points[index].index - points[index - 1].index
-    if (gap > jitterTolerance) {
-      segments.push({ points: [], bridgeFrom: connectGaps ? points[index - 1] : undefined })
+    const previous = points[index - 1]
+    const current = points[index]
+    const failed = failedBetween(previous.index, current.index)
+    const silent = current.index - previous.index > silentLimit
+    if (failed && connectGaps && !silent) {
+      segments[segments.length - 1].points.push(current)
+      continue
     }
-    segments[segments.length - 1].points.push(points[index])
+    if (failed || silent) segments.push({ points: [], bridgeFrom: connectGaps ? previous : undefined })
+    segments[segments.length - 1].points.push(current)
   }
   return segments
 }
 
-// Upper-only five-point Hampel filter; gaps and sustained changes stay intact.
+// Upper-only Hampel filter over each series' own successful samples, so empty
+// buckets between sparse probes never disable it. A sample is replaced by the
+// median of its five-sample neighbourhood only when it stands far above that
+// median while the neighbourhood itself is calm; two or more high samples in a
+// row keep the median high and survive as a real latency change.
 export function suppressLatencySpikes(buckets: UnifiedBucketPoint[], seriesList: MetricSeries[]): UnifiedBucketPoint[] {
   const result = buckets.map(bucket => ({ ...bucket, values: { ...bucket.values } }))
-  const median = (values: number[]) => values.sort((a, b) => a - b)[2]
+  const median = (values: number[]) => {
+    const sorted = [...values].sort((a, b) => a - b)
+    const middle = Math.floor(sorted.length / 2)
+    return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+  }
   for (const series of seriesList) {
     if (series.unit !== 'ms') continue
-    for (let index = 2; index < buckets.length - 2; index += 1) {
-      const window = buckets.slice(index - 2, index + 3).map(bucket => bucket.values[series.id])
-      if (window.some(value => value == null || !Number.isFinite(value) || value < 0)) continue
-      const values = window as number[]
-      const baseline = median([...values])
-      const deviation = median(values.map(value => Math.abs(value - baseline)))
-      if (values[2] > baseline + Math.max(10, 3 * 1.4826 * deviation)) {
-        result[index].values[series.id] = baseline
-      }
+    const samples: { index: number; value: number }[] = []
+    buckets.forEach((bucket, index) => {
+      const value = bucket.values[series.id]
+      if (value != null && Number.isFinite(value) && value >= 0) samples.push({ index, value })
+    })
+    if (samples.length < 3) continue
+    // A spike needs a normal neighbour on both sides, so the first and last
+    // samples are never judged.
+    for (let position = 1; position < samples.length - 1; position += 1) {
+      const window = samples.slice(Math.max(0, position - 2), Math.min(samples.length, position + 3)).map(sample => sample.value)
+      if (window.length < 3) continue
+      const baseline = median(window)
+      const deviation = median(window.map(value => Math.abs(value - baseline)))
+      const threshold = Math.max(5, baseline * 0.5, 3 * 1.4826 * deviation)
+      if (samples[position].value > baseline + threshold) result[samples[position].index].values[series.id] = baseline
     }
   }
   return result
@@ -233,6 +266,7 @@ export function alignUnifiedMetrics({
 }): {
   seriesList: MetricSeries[]
   buckets: UnifiedBucketPoint[]
+  failedBuckets: Record<string, { index: number; count: number }[]>
 } {
   const windowMs = Math.max(1, windowHours) * 3600 * 1000
   const startTime = now - windowMs
@@ -299,6 +333,13 @@ export function alignUnifiedMetrics({
     latencyTotals.set(key, total)
   }
 
+  const failureTotals = new Map<string, Map<number, number>>()
+  const addFailure = (seriesID: string, bucketIndex: number, count: number) => {
+    const counts = failureTotals.get(seriesID) || new Map<number, number>()
+    counts.set(bucketIndex, (counts.get(bucketIndex) || 0) + Math.max(1, count))
+    failureTotals.set(seriesID, counts)
+  }
+
   // 4. Map resourcePoints (CPU & Memory)
   if (includeResources) resourcePoints.forEach(pt => {
     const ts = new Date(pt.sampled_at).getTime()
@@ -333,9 +374,13 @@ export function alignUnifiedMetrics({
 
     const isAggregated = Boolean(probe.at)
     const timeString = isAggregated ? probe.at : probe.checked_at
+    if (!isAggregated && probe.available === false) {
+      const failedIndex = timeString ? getBucketIndex(new Date(timeString).getTime()) : -1
+      if (failedIndex >= 0) addFailure(`reg_${key}`, failedIndex, Number(probe.count) || 1)
+      return
+    }
     const rawValue = isAggregated ? probe.avg_ms : probe.latency_ms
     if (!timeString || rawValue == null) return
-    if (!isAggregated && probe.available === false) return
 
     const value = Number(rawValue)
     if (!Number.isFinite(value)) return
@@ -349,7 +394,12 @@ export function alignUnifiedMetrics({
     buckets[total.bucketIndex].values[total.seriesID] = total.weightedSum / total.weight
   })
 
-  return { seriesList, buckets }
+  const failedBuckets: Record<string, { index: number; count: number }[]> = {}
+  failureTotals.forEach((counts, seriesID) => {
+    failedBuckets[seriesID] = Array.from(counts.entries()).sort((a, b) => a[0] - b[0]).map(([index, count]) => ({ index, count }))
+  })
+
+  return { seriesList, buckets, failedBuckets }
 }
 
 export function alignFailedProbePoints({

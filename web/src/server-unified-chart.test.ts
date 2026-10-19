@@ -30,12 +30,12 @@ describe('server-unified-chart helper', () => {
     expect(monitorSource).toContain('fill={`url(#${gradientPrefix}-${seriesIndex})`}')
   })
 
-  it('renders failed probe buckets as anomaly-colored time bands instead of vertical markers', () => {
+  it('marks every failed probe bucket with a red line and names the failing series in the tooltip', () => {
     expect(monitorSource).toContain('className="komari-loss-bands"')
-    expect(monitorSource).toContain('fill="var(--danger, #ef4444)"')
-    expect(monitorSource).toContain('红色异常区块表示该时间桶发生实际公网探测丢包')
-    expect(monitorSource).toContain('丢包{hoveredFailedProbeCount > 1')
-    expect(monitorSource).not.toContain('className="komari-loss-marker"')
+    expect(monitorSource).toContain('className="komari-failure-line"')
+    expect(monitorSource).toContain('public_latency: failedProbeBuckets')
+    expect(monitorSource).toContain('探测失败{count > 1')
+    expect(monitorStyles).toMatch(/\.komari-failure-line\s*\{[^}]*stroke:\s*#ef4444/)
   })
 
   it('formats bucket time correctly', () => {
@@ -179,6 +179,26 @@ describe('server-unified-chart helper', () => {
     ])
   })
 
+  it('keeps a slow probe connected across empty buckets and breaks only where it failed', () => {
+    // A 3-bucket probe interval: successes every third bucket, one failure at bucket 7.
+    const values = [5, null, null, 5, null, null, 5, null, null, 6, null, null, 6]
+    const buckets = values.map((value, index) => ({ timestamp: index, timeLabel: `t${index}`, values: { reg_task_1: value } }))
+
+    expect(splitSeriesSegments(buckets, 'reg_task_1', false).map(segment => segment.points.map(point => point.index))).toEqual([[0, 3, 6, 9, 12]])
+    expect(splitSeriesSegments(buckets, 'reg_task_1', false, [7]).map(segment => segment.points.map(point => point.index))).toEqual([[0, 3, 6], [9, 12]])
+
+    const connected = splitSeriesSegments(buckets, 'reg_task_1', true, [7])
+    expect(connected.map(segment => segment.points.map(point => point.index))).toEqual([[0, 3, 6, 9, 12]])
+    expect(connected[0].bridgeFrom).toBeUndefined()
+  })
+
+  it('ignores failures inside a bucket that still has a success and bridges long silence only when asked', () => {
+    const values = [5, 5, 5, null, null, null, null, null, null, null, 5, 5]
+    const buckets = values.map((value, index) => ({ timestamp: index, timeLabel: `t${index}`, values: { reg_task_1: value } }))
+    expect(splitSeriesSegments(buckets, 'reg_task_1', false, [1]).map(segment => segment.points.length)).toEqual([3, 2])
+    expect(splitSeriesSegments(buckets, 'reg_task_1', true, [1])[1].bridgeFrom).toEqual({ index: 2, value: 5 })
+  })
+
   it('uses linear paths by default and only emits curves when smoothing is enabled', () => {
     const points = [{ x: 0, y: 10 }, { x: 10, y: 5 }, { x: 20, y: 12 }]
     expect(buildLinePath(points, false)).toBe('M 0.0,10.0 L 10.0,5.0 L 20.0,12.0')
@@ -219,6 +239,26 @@ describe('server-unified-chart helper', () => {
     })
 
     expect(result.buckets[0].values.public_latency).toBe(25)
+  })
+
+  it('turns failed task reports into per-series failure buckets without averaging them in', () => {
+    const now = Date.parse('2026-10-19T12:00:00Z')
+    const at = (minutes: number) => new Date(now - minutes * 60_000).toISOString()
+    const aligned = alignUnifiedMetrics({
+      includeResources: false,
+      windowHours: 1,
+      bucketCount: 60,
+      now,
+      regionalProbes: [
+        { kind: 'custom', task_id: 7, task_name: '上海电信', available: true, latency_ms: 30, count: 1, checked_at: at(30) },
+        { kind: 'custom', task_id: 7, task_name: '上海电信', available: false, latency_ms: 0, count: 2, checked_at: at(20) },
+        { kind: 'custom', task_id: 9, task_name: '只有失败', available: false, latency_ms: 0, count: 1, checked_at: at(10) },
+      ],
+    })
+    expect(aligned.failedBuckets.reg_task_7).toEqual([{ index: 40, count: 2 }])
+    expect(aligned.failedBuckets.reg_task_9).toEqual([{ index: 50, count: 1 }])
+    expect(aligned.buckets.filter(bucket => bucket.values.reg_task_7 != null).map(bucket => bucket.values.reg_task_7)).toEqual([30])
+    expect(aligned.seriesList.some(series => series.id === 'reg_task_9')).toBe(true)
   })
 
   it('includes custom probe tasks that have no province or carrier', () => {
@@ -272,8 +312,13 @@ describe('optional latency spike suppression', () => {
   it('preserves sustained plateaus, steps and ordinary variation', () => {
     for (const values of [[20,20,200,200,200,20,20], [20,20,200,200,200,200], [20,22,25,21,20]]) expect(filter(values)).toEqual(values)
   })
-  it('does not cross missing samples or guess at window boundaries', () => {
-    for (const values of [[20,null,200,20,20], [20,20,200,null,20], [200,20,20,20,200]]) expect(filter(values)).toEqual(values)
+  it('judges sparse probes by their own neighbouring samples across empty buckets', () => {
+    expect(filter([20, null, 200, 20, 20])).toEqual([20, null, 20, 20, 20])
+    expect(filter([20, 20, 200, null, 20])).toEqual([20, 20, 20, null, 20])
+    expect(filter([1, null, 1, null, 9, null, 1, null, 1])).toEqual([1, null, 1, null, 1, null, 1, null, 1])
+  })
+  it('never judges the first or last sample and keeps small or sustained rises', () => {
+    for (const values of [[200, 20, 20, 20, 200], [1, 1, 3, 1, 1], [1, 1, 9, 9, 9, 1, 1]]) expect(filter(values)).toEqual(values)
   })
   it('does not manufacture low spikes when drawing the default smooth curve', () => {
     const path = buildLinePath([{ x: 0, y: 10 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 10 }], DEFAULT_SMOOTH_LINES)

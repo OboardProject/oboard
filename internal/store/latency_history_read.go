@@ -166,8 +166,11 @@ func (a *latencyReadAccumulator) result() LatencyBucketResult {
 			if d.reports > d.available {
 				result.Failures = append(result.Failures, LatencyFailurePoint{At: at, Count: d.reports - d.available})
 			}
-		} else if d.count > 0 {
-			result.Points = append(result.Points, model.ServerRegionalLatencyPoint{Kind: "regional", TaskID: d.taskID, TaskName: d.taskName, Province: d.province, Carrier: d.carrier, Available: true, CheckedAt: at, LatencyMS: float64(d.sum) / float64(d.count), MinLatencyMS: d.minimum.Int64, MaxLatencyMS: d.maximum.Int64, Count: d.count})
+		} else {
+			if d.count > 0 {
+				result.Points = append(result.Points, model.ServerRegionalLatencyPoint{Kind: "regional", TaskID: d.taskID, TaskName: d.taskName, Province: d.province, Carrier: d.carrier, Available: true, CheckedAt: at, LatencyMS: float64(d.sum) / float64(d.count), MinLatencyMS: d.minimum.Int64, MaxLatencyMS: d.maximum.Int64, Count: d.count})
+			}
+			result.Points = appendRegionalFailurePoint(result.Points, d.taskID, d.taskName, d.province, d.carrier, at, d.reports-d.available)
 		}
 	}
 	for _, t := range totals {
@@ -200,7 +203,10 @@ func (a *latencyReadAccumulator) result() LatencyBucketResult {
 		if a.TaskName != b.TaskName {
 			return a.TaskName < b.TaskName
 		}
-		return a.TaskID < b.TaskID
+		if a.TaskID != b.TaskID {
+			return a.TaskID < b.TaskID
+		}
+		return a.Available && !b.Available
 	})
 	return result
 }

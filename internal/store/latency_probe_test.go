@@ -159,12 +159,25 @@ func TestRegionalLatencyPointsAverageSuccessfulTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 1 {
-		t.Fatalf("regional points = %#v, want one successful target", points)
+	// Failed reports become their own unavailable points so charts can break a
+	// task's curve exactly where it failed; they never dilute the latency average.
+	if len(points) != 3 {
+		t.Fatalf("regional points = %#v, want one success and two failure points", points)
 	}
-	point := points[0]
-	if point.Kind != "regional" || !point.Available || point.Province != "广东" || point.Carrier != "中国电信" || point.LatencyMS != 20 || point.MinLatencyMS != 10 || point.MaxLatencyMS != 30 || point.Count != 2 {
-		t.Fatalf("aggregated point = %#v", point)
+	var success *model.ServerRegionalLatencyPoint
+	failed := map[string]int64{}
+	for index := range points {
+		if points[index].Available {
+			success = &points[index]
+		} else {
+			failed[points[index].Province] += points[index].Count
+		}
+	}
+	if success == nil || success.Kind != "regional" || success.Province != "广东" || success.Carrier != "中国电信" || success.LatencyMS != 20 || success.MinLatencyMS != 10 || success.MaxLatencyMS != 30 || success.Count != 2 {
+		t.Fatalf("aggregated point = %#v", success)
+	}
+	if failed["广东"] != 1 || failed["四川"] != 1 || len(failed) != 2 {
+		t.Fatalf("failure points = %#v", failed)
 	}
 	if dataStart == nil || !dataStart.Equal(from.Add(-time.Hour)) {
 		t.Fatalf("data start = %v, want %s", dataStart, from.Add(-time.Hour))
@@ -445,8 +458,11 @@ func TestLatencyBucketsShareReadAndPreserveValidity(t *testing.T) {
 	if count := db.db.stmts.Load() - before; count != 2 {
 		t.Fatalf("statements=%d want aggregate + indexed data start", count)
 	}
-	if len(result.Points) != 1 || len(result.Stats) != 2 {
+	if len(result.Points) != 2 || len(result.Stats) != 2 {
 		t.Fatalf("result=%+v", result)
+	}
+	if failure := result.Points[1]; failure.Available || failure.TaskID != 8 || failure.Count != 1 || failure.LatencyMS != 0 {
+		t.Fatalf("failure point=%+v", failure)
 	}
 	point, stat := result.Points[0], result.Stats[1]
 	if point.Count != 2 || point.LatencyMS != 50 || point.MinLatencyMS != 10 || point.MaxLatencyMS != 90 {
