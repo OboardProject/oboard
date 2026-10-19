@@ -1359,7 +1359,7 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 
 // TestAgentInstallCommandUsesPanelWideTuningSettings verifies that every
 // issued install command, including a re-issue for an existing server, carries
-// the current panel-wide BBR + FQ and TCP tuning switches.
+// the current panel-wide BBR qdisc, cake bandwidth and TCP tuning settings.
 func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -1374,18 +1374,29 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "tuning-server"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "tuning-server", "renewal_cycle": "monthly"}, http.StatusCreated)
 	path := fmt.Sprintf("/api/v1/ui/servers/%d/enroll-token", int64(created["server"].(map[string]any)["id"].(float64)))
 
 	command := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='1'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
 		t.Fatalf("fresh panel defaults not rendered: %s", command)
 	}
-	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_enabled": false, "server_default_tcp_tuning_enabled": true}, http.StatusOK)
-	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
-		t.Fatalf("panel-wide switches not applied to re-issued command: %s", command)
+	settings := request(t, h, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)["settings"].(map[string]any)
+	if settings["server_default_bbr_qdisc"] != "fq" || settings["server_default_bbr_cake_bandwidth_mbit"] != float64(0) {
+		t.Fatalf("settings defaults = %v / %v", settings["server_default_bbr_qdisc"], settings["server_default_bbr_cake_bandwidth_mbit"])
 	}
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "cake", "server_default_bbr_cake_bandwidth_mbit": 950, "server_default_tcp_tuning_enabled": true}, http.StatusOK)
+	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='cake'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='950'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
+		t.Fatalf("panel-wide settings not applied to re-issued command: %s", command)
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "fq_pie"}, http.StatusOK)
+	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq_pie'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") {
+		t.Fatalf("cake bandwidth leaked into a non-cake command: %s", command)
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "bbr2"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_cake_bandwidth_mbit": 100001}, http.StatusBadRequest)
 }
 
 func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {

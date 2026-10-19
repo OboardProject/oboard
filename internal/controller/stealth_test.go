@@ -137,11 +137,11 @@ func TestServerPatchStealthRoundTrip(t *testing.T) {
 }
 
 func TestAgentInstallCommandCarriesStealthSwitch(t *testing.T) {
-	enabled := agentInstallCommand("https://panel.example.com", agentInstallBBRValue(true), agentInstallTCPTuningValue(false), agentInstallStealthValue(true))
+	enabled := agentInstallCommand("https://panel.example.com", "fq", "0", agentInstallTCPTuningValue(false), agentInstallStealthValue(true))
 	if !strings.Contains(enabled, "OBOARD_INSTALL_STEALTH='1'") {
 		t.Fatalf("install command missing stealth switch: %s", enabled)
 	}
-	disabled := agentInstallCommand("https://panel.example.com/", agentInstallBBRValue(false), agentInstallTCPTuningValue(false), agentInstallStealthValue(false))
+	disabled := agentInstallCommand("https://panel.example.com/", "off", "0", agentInstallTCPTuningValue(false), agentInstallStealthValue(false))
 	if !strings.Contains(disabled, "OBOARD_INSTALL_STEALTH='0'") {
 		t.Fatalf("install command missing explicit stealth off: %s", disabled)
 	}
@@ -301,7 +301,7 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 	for _, want := range []string{
 		"https://panel.example.com/install/agent.sh",
 		"OBOARD_ENROLL_TOKEN=" + shellSingleQuote(result["enrollment_token"].(string)),
-		"OBOARD_INSTALL_BBR='1'", "OBOARD_INSTALL_STEALTH='1'",
+		"OBOARD_INSTALL_BBR='fq'", "OBOARD_INSTALL_STEALTH='1'",
 		"OBOARD_STEALTH_ADDR='transport.example.com:443'", "OBOARD_STEALTH_PIN='test-pin'",
 	} {
 		if !strings.Contains(command, want) {

@@ -107,11 +107,43 @@ func enrollmentServerView(srv model.Server) map[string]any {
 	}
 }
 
-func agentInstallBBRValue(enabled bool) string {
-	if enabled {
-		return "1"
+// agentInstallBBRQdiscs lists the queue disciplines the shell installer may
+// pair with BBR. "off" leaves the host's congestion control untouched.
+var agentInstallBBRQdiscs = []string{"off", "fq", "cake", "fq_pie"}
+
+const (
+	agentInstallBBRDefaultQdisc       = "fq"
+	agentInstallCakeBandwidthMaxMbit  = 100000
+	settingServerDefaultBBRQdisc      = "server_default_bbr_qdisc"
+	settingServerDefaultCakeBandwidth = "server_default_bbr_cake_bandwidth_mbit"
+)
+
+func normalizeAgentInstallBBRQdisc(value string) (string, bool) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, qdisc := range agentInstallBBRQdiscs {
+		if value == qdisc {
+			return value, true
+		}
 	}
-	return "0"
+	return "", false
+}
+
+func validAgentInstallCakeBandwidth(mbit int) bool {
+	return mbit >= 0 && mbit <= agentInstallCakeBandwidthMaxMbit
+}
+
+// agentInstallBBRValues renders the explicit BBR qdisc and cake bandwidth
+// literals. The bandwidth only matters for cake; other choices always carry 0
+// so the installer never shapes traffic for a qdisc that cannot.
+func agentInstallBBRValues(qdisc string, cakeMbit int) (string, string) {
+	normalized, ok := normalizeAgentInstallBBRQdisc(qdisc)
+	if !ok {
+		normalized = agentInstallBBRDefaultQdisc
+	}
+	if normalized != "cake" || !validAgentInstallCakeBandwidth(cakeMbit) {
+		cakeMbit = 0
+	}
+	return normalized, strconv.Itoa(cakeMbit)
 }
 
 // agentInstallTCPTuningValue renders the TCP tuning switch for install
@@ -134,15 +166,16 @@ func agentInstallStealthValue(enabled bool) string {
 	return "0"
 }
 
-func agentInstallCommand(baseURL, bbrValue, tcpTuningValue, stealthValue string) string {
+func agentInstallCommand(baseURL, bbrValue, cakeBandwidthValue, tcpTuningValue, stealthValue string) string {
 	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(baseURL, "/")+"/install/agent.sh") +
 		` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR=` + shellSingleQuote(bbrValue) +
+		` OBOARD_INSTALL_BBR_CAKE_BANDWIDTH=` + shellSingleQuote(cakeBandwidthValue) +
 		` OBOARD_INSTALL_TCP_TUNING=` + shellSingleQuote(tcpTuningValue) +
 		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
 }
 
-// agentEnrollmentCommand renders the Linux install command. BBR + FQ and TCP
-// tuning are panel-wide switches, so every issued command reads the current
+// agentEnrollmentCommand renders the Linux install command. The BBR qdisc and
+// TCP tuning are panel-wide settings, so every issued command reads the current
 // settings instead of a per-server choice.
 func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serverID ...int64) (string, map[string]any, error) {
 	base, err := s.publicBaseURL(ctx)
@@ -153,10 +186,11 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serve
 	if err != nil {
 		return "", nil, err
 	}
-	bbr, tcpTuning := agentInstallTuningSettings(settings)
-	bbrValue, tcpTuningValue, stealthValue := agentInstallBBRValue(bbr), agentInstallTCPTuningValue(tcpTuning), agentInstallStealthValue(stealth)
-	command := agentInstallCommand(base, bbrValue, tcpTuningValue, stealthValue)
-	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_TCP_TUNING": tcpTuningValue, "OBOARD_INSTALL_STEALTH": stealthValue}
+	qdisc, cakeMbit, tcpTuning := agentInstallTuningSettings(settings)
+	bbrValue, cakeBandwidthValue := agentInstallBBRValues(qdisc, cakeMbit)
+	tcpTuningValue, stealthValue := agentInstallTCPTuningValue(tcpTuning), agentInstallStealthValue(stealth)
+	command := agentInstallCommand(base, bbrValue, cakeBandwidthValue, tcpTuningValue, stealthValue)
+	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH": cakeBandwidthValue, "OBOARD_INSTALL_TCP_TUNING": tcpTuningValue, "OBOARD_INSTALL_STEALTH": stealthValue}
 	if stealth {
 		if len(serverID) != 1 {
 			return "", nil, fmt.Errorf("server ID is required for security-process layout")

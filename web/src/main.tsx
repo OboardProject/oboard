@@ -7350,7 +7350,7 @@ function AgentInstallDialog({ server, installCommand, updateCommand, uninstallCo
   const windows = windowsAvailable && platform === 'windows'
   const actionTitle = action === 'install' ? '安装' : action === 'update' ? '更新' : '卸载'
   const actionDescription = action === 'install'
-    ? '安装 Agent 和内核并连接当前面板，BBR + FQ 与 TCP 调优按系统设置执行。'
+    ? '安装 Agent 和内核并连接当前面板，拥塞控制（BBR）与 TCP 调优按系统设置执行。'
     : action === 'update'
       ? '从当前面板更新 Agent 和内核，保留配置。'
       : '移除 Agent、内核和本机配置。'

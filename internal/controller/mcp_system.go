@@ -282,7 +282,7 @@ var settingsAutomationFields = map[string]bool{
 	"audit_action": true, "traffic_timezone": true,
 	"subscription_age_policy": true, "dns_always_resolve": true, "subscription_custom_path_mode": true,
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
-	"server_default_mtu_mode": true, "server_default_bbr_enabled": true, "server_default_tcp_tuning_enabled": true,
+	"server_default_mtu_mode": true, "server_default_bbr_qdisc": true, "server_default_bbr_cake_bandwidth_mbit": true, "server_default_tcp_tuning_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
 	"server_monitoring_retention_days":          true,
 	"notification_server_offline_after_seconds": true,
@@ -632,10 +632,23 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, err
 		}
 	}
-	if value, ok := fields["server_default_bbr_enabled"]; ok {
-		if err := setBool(settingServerDefaultBBREnabled, value); err != nil {
+	if value, ok := fields[settingServerDefaultBBRQdisc]; ok {
+		var raw string
+		if err := json.Unmarshal(value, &raw); err != nil {
 			return nil, err
 		}
+		qdisc, valid := normalizeAgentInstallBBRQdisc(raw)
+		if !valid {
+			return nil, errors.New("server_default_bbr_qdisc must be off, fq, cake, or fq_pie")
+		}
+		updates[settingServerDefaultBBRQdisc] = qdisc
+	}
+	if value, ok := fields[settingServerDefaultCakeBandwidth]; ok {
+		var mbit int
+		if err := json.Unmarshal(value, &mbit); err != nil || !validAgentInstallCakeBandwidth(mbit) {
+			return nil, fmt.Errorf("server_default_bbr_cake_bandwidth_mbit must be between 0 and %d", agentInstallCakeBandwidthMaxMbit)
+		}
+		updates[settingServerDefaultCakeBandwidth] = strconv.Itoa(mbit)
 	}
 	if value, ok := fields["server_default_tcp_tuning_enabled"]; ok {
 		if err := setBool(settingServerDefaultTCPTuningEnabled, value); err != nil {

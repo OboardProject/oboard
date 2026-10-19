@@ -47,6 +47,9 @@
 .settings-feedback[role="alert"] { color: var(--danger); }
 .signal-settings .agent-ntp-list { padding-top: 14px; }
 .signal-settings .agent-ntp-actions { display: flex; justify-content: flex-end; padding-top: 12px; }
+.signal-settings .agent-cake-bandwidth { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.signal-settings .agent-cake-bandwidth input { width: 120px; min-width: 0; }
+.signal-settings .agent-cake-unit { color: var(--muted); font-size: 13px; white-space: nowrap; }
 
 .signal-presets > .settings-group > .settings-group-body { padding-top: 16px; }
 .signal-presets .node-presets-toolbar { align-items: flex-start; gap: 16px; }

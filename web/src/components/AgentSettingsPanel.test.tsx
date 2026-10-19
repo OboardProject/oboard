@@ -12,7 +12,8 @@ describe('AgentSettingsPanel', () => {
   const mockData = {
     settings: {
       server_default_mtu_mode: 'detect',
-      server_default_bbr_enabled: 'true',
+      server_default_bbr_qdisc: 'fq',
+      server_default_bbr_cake_bandwidth_mbit: 0,
       server_default_time_correction_mode: 'auto',
       time_check_ntp_servers: ['time.cloudflare.com', 'time.google.com', 'ntp.aliyun.com'],
       traffic_timezone: 'Asia/Shanghai',
@@ -146,7 +147,7 @@ describe('AgentSettingsPanel', () => {
     expect(mockNotify).toHaveBeenCalledWith('NTP 时间源已保存', 'success')
   })
 
-  it('defaults BBR + FQ to true and auto-saves when toggled', async () => {
+  it('defaults the congestion control to BBR + FQ and auto-saves a new qdisc', async () => {
     const mockClient = { request: vi.fn(async () => ({ status: 'ok' })) }
     const mockLoad = vi.fn(async () => undefined)
     const mockNotify = vi.fn()
@@ -155,29 +156,54 @@ describe('AgentSettingsPanel', () => {
       root.render(<AgentSettingsPanel data={{ settings: {} }} client={mockClient} load={mockLoad} notify={mockNotify} />)
     })
 
-    const bbrSwitch = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="BBR + FQ"]')!
-    expect(bbrSwitch).not.toBeNull()
-    expect(bbrSwitch.checked).toBe(true)
+    const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="拥塞控制"]')!
+    expect(trigger).not.toBeNull()
+    expect(trigger.textContent).toContain('BBR + FQ（默认）')
+    expect(container.querySelector('[aria-label="CAKE 带宽（Mbit/s）"]')).toBeNull()
 
-    await act(async () => {
-      bbrSwitch.click()
-    })
+    await act(async () => trigger.click())
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(options.map(option => option.textContent)).toEqual(['BBR + FQ（默认）', 'BBR + CAKE', 'BBR + FQ-PIE', '不修改'])
+    await act(async () => options.find(option => option.textContent === 'BBR + FQ-PIE')!.click())
 
     expect(mockClient.request).toHaveBeenCalledWith('/settings', {
       method: 'POST',
-      body: JSON.stringify({ server_default_bbr_enabled: false }),
+      body: JSON.stringify({ server_default_bbr_qdisc: 'fq_pie' }),
     })
-    expect(mockNotify).toHaveBeenCalledWith('BBR + FQ 设置已保存', 'success')
+    expect(mockNotify).toHaveBeenCalledWith('拥塞控制设置已保存', 'success')
   })
 
-  it('restores the persisted BBR value and shows an error when auto-save fails', async () => {
+  it('saves an optional CAKE bandwidth only when cake is selected', async () => {
+    const client = { request: vi.fn(async () => ({ status: 'ok' })) }
+    const data = { settings: { ...mockData.settings, server_default_bbr_qdisc: 'cake', server_default_bbr_cake_bandwidth_mbit: 0 } }
+    act(() => root.render(<AgentSettingsPanel data={data} client={client} load={vi.fn(async () => undefined)} notify={vi.fn()} />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="CAKE 带宽（Mbit/s）"]')!
+    expect(input).not.toBeNull()
+    expect(input.value).toBe('')
+    const save = [...container.querySelectorAll('button')].find(button => button.textContent === '保存')!
+    expect(save.disabled).toBe(true)
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    act(() => { setValue.call(input, '200000'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    expect(save.disabled).toBe(true)
+    act(() => { setValue.call(input, '950'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    expect(save.disabled).toBe(false)
+    await act(async () => save.click())
+    expect(client.request).toHaveBeenCalledWith('/settings', {
+      method: 'POST',
+      body: JSON.stringify({ server_default_bbr_cake_bandwidth_mbit: 950 }),
+    })
+  })
+
+  it('restores the persisted qdisc and shows an error when auto-save fails', async () => {
     const client = { request: vi.fn(async () => { throw new Error('保存失败，请重试') }) }
     act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={vi.fn()} />))
-    const toggle = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="BBR + FQ"]')!
-    await act(async () => toggle.click())
-    expect(toggle.checked).toBe(true)
+    const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="拥塞控制"]')!
+    await act(async () => trigger.click())
+    await act(async () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent === 'BBR + CAKE')!.click())
+    expect(trigger.textContent).toContain('BBR + FQ（默认）')
+    expect(container.querySelector('[aria-label="CAKE 带宽（Mbit/s）"]')).toBeNull()
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('保存失败，请重试')
-    expect(toggle.disabled).toBe(false)
+    expect(trigger.disabled).toBe(false)
   })
 
   it('keeps NTP drafts after failure and disables saving an empty time source', async () => {

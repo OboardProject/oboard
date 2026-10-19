@@ -52,7 +52,6 @@ import (
 
 const (
 	settingServerDefaultMTUMode           = "server_default_mtu_mode"
-	settingServerDefaultBBREnabled        = "server_default_bbr_enabled"
 	settingServerDefaultTCPTuningEnabled  = "server_default_tcp_tuning_enabled"
 	settingServerDefaultTimeCorrection    = "server_default_time_correction_mode"
 	settingServerMonitoringRetentionDays  = "server_monitoring_retention_days"
@@ -1090,7 +1089,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			UpdateWindowStartHour                     *int               `json:"update_window_start_hour"`
 			UpdateWindowEndHour                       *int               `json:"update_window_end_hour"`
 			ServerDefaultMTUMode                      *string            `json:"server_default_mtu_mode"`
-			ServerDefaultBBREnabled                   *bool              `json:"server_default_bbr_enabled"`
+			ServerDefaultBBRQdisc                     *string            `json:"server_default_bbr_qdisc"`
+			ServerDefaultCakeBandwidthMbit            *int               `json:"server_default_bbr_cake_bandwidth_mbit"`
 			ServerDefaultTCPTuningEnabled             *bool              `json:"server_default_tcp_tuning_enabled"`
 			ServerDefaultTimeCorrection               *string            `json:"server_default_time_correction_mode"`
 			ServerMonitoringRetentionDays             *int               `json:"server_monitoring_retention_days"`
@@ -1512,12 +1512,28 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingServerDefaultMTUMode)
 		}
-		if req.ServerDefaultBBREnabled != nil {
-			if err := s.store.SetSetting(r.Context(), settingServerDefaultBBREnabled, strconv.FormatBool(*req.ServerDefaultBBREnabled)); err != nil {
+		if req.ServerDefaultBBRQdisc != nil {
+			qdisc, ok := normalizeAgentInstallBBRQdisc(*req.ServerDefaultBBRQdisc)
+			if !ok {
+				fail(w, errors.New("server_default_bbr_qdisc must be off, fq, cake, or fq_pie"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingServerDefaultBBRQdisc, qdisc); err != nil {
 				fail(w, err, http.StatusInternalServerError)
 				return
 			}
-			changed = append(changed, settingServerDefaultBBREnabled)
+			changed = append(changed, settingServerDefaultBBRQdisc)
+		}
+		if req.ServerDefaultCakeBandwidthMbit != nil {
+			if !validAgentInstallCakeBandwidth(*req.ServerDefaultCakeBandwidthMbit) {
+				fail(w, fmt.Errorf("server_default_bbr_cake_bandwidth_mbit must be between 0 and %d", agentInstallCakeBandwidthMaxMbit), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingServerDefaultCakeBandwidth, strconv.Itoa(*req.ServerDefaultCakeBandwidthMbit)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingServerDefaultCakeBandwidth)
 		}
 		if req.ServerDefaultTCPTuningEnabled != nil {
 			if err := s.store.SetSetting(r.Context(), settingServerDefaultTCPTuningEnabled, strconv.FormatBool(*req.ServerDefaultTCPTuningEnabled)); err != nil {
@@ -1729,7 +1745,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 }
 
 func (s *Server) publicSettingsValues(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingDNSAlwaysResolve: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: false, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTCPTuningEnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingDNSAlwaysResolve: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: false, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBRQdisc: agentInstallBBRDefaultQdisc, settingServerDefaultCakeBandwidth: 0, settingServerDefaultTCPTuningEnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[resourceDownloadSourceSetting] = "controller"
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
@@ -1758,6 +1774,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowEndHourSetting] = updateWindowHour(items, updateWindowEndHourSetting, updateWindowDefaultEndHour)
 	out[settingSubscriptionControllerDirectEnabled] = settingBool(items, settingSubscriptionControllerDirectEnabled, false)
 	out[settingDNSAlwaysResolve] = settingBool(items, settingDNSAlwaysResolve, false)
+	out[settingServerDefaultBBRQdisc], out[settingServerDefaultCakeBandwidth], _ = agentInstallTuningSettings(items)
 	if leadDays, err := parseExpiryNotifyLeadDays(items[settingServerExpiryNotifyLeadDays]); err == nil {
 		out[settingServerExpiryNotifyLeadDays] = leadDays
 	}
@@ -1832,10 +1849,15 @@ func (s *Server) cachedStorageDiagnostics(ctx context.Context) (store.StorageDia
 	return diagnostics, nil
 }
 
-// agentInstallTuningSettings returns the panel-wide BBR + FQ and TCP tuning
-// switches that every issued Linux install command carries.
-func agentInstallTuningSettings(settings map[string]string) (bbr, tcpTuning bool) {
-	return settingBool(settings, settingServerDefaultBBREnabled, true), settingBool(settings, settingServerDefaultTCPTuningEnabled, false)
+// agentInstallTuningSettings returns the panel-wide BBR qdisc, cake bandwidth
+// and TCP tuning switch that every issued Linux install command carries.
+func agentInstallTuningSettings(settings map[string]string) (qdisc string, cakeMbit int, tcpTuning bool) {
+	qdisc, ok := normalizeAgentInstallBBRQdisc(settings[settingServerDefaultBBRQdisc])
+	if !ok {
+		qdisc = agentInstallBBRDefaultQdisc
+	}
+	cakeMbit = settingInt(settings, settingServerDefaultCakeBandwidth, 0, 0, agentInstallCakeBandwidthMaxMbit)
+	return qdisc, cakeMbit, settingBool(settings, settingServerDefaultTCPTuningEnabled, false)
 }
 
 func serverCreationDefaults(settings map[string]string) (model.MTUMode, model.TimeCorrectionMode) {
@@ -16552,7 +16574,13 @@ ALLOW_PANEL_UPDATE=${OBOARD_ALLOW_PANEL_UPDATE:-1}
 UPDATE_SOURCE=${OBOARD_UPDATE_SOURCE:-panel}
 UPDATE_REPO=${OBOARD_UPDATE_REPO:-OboardProject/oboard-agent}
 OBOARD_PURGE=${OBOARD_PURGE:-1}
-INSTALL_BBR=${OBOARD_INSTALL_BBR:-0}
+INSTALL_BBR=${OBOARD_INSTALL_BBR:-off}
+INSTALL_BBR_CAKE_BANDWIDTH=${OBOARD_INSTALL_BBR_CAKE_BANDWIDTH:-0}
+BBR_QDISC_REQUESTED=
+BBR_QDISC_APPLIED=
+CAKE_SHAPER_SERVICE=oboard-cake-shaper
+CAKE_SHAPER_SYSTEMD_DIR=${OBOARD_CAKE_SHAPER_SYSTEMD_DIR:-/etc/systemd/system}
+CAKE_SHAPER_OPENRC_DIR=${OBOARD_CAKE_SHAPER_OPENRC_DIR:-/etc/init.d}
 INSTALL_TCP_TUNING=${OBOARD_INSTALL_TCP_TUNING:-0}
 STEALTH_MODE=${OBOARD_INSTALL_STEALTH:-0}
 TCP_TUNING_PROC_DIR=${OBOARD_TCP_TUNING_PROC_DIR:-/proc/sys}
@@ -16561,11 +16589,12 @@ BBR_AVAILABLE_PATH=${OBOARD_BBR_AVAILABLE_PATH:-/proc/sys/net/ipv4/tcp_available
 BBR_CONGESTION_PATH=${OBOARD_BBR_CONGESTION_PATH:-/proc/sys/net/ipv4/tcp_congestion_control}
 BBR_QDISC_PATH=${OBOARD_BBR_QDISC_PATH:-/proc/sys/net/core/default_qdisc}
 BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-oboard-bbr.conf}
-# The security-process layout must not leave OBoard-named files behind; BBR
-# uses a neutral sysctl file name instead.
+# The security-process layout must not leave OBoard-named files behind; BBR,
+# TCP tuning and the cake shaper use neutral names instead.
 if [ "$STEALTH_MODE" = 1 ]; then
   BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-net-tuning.conf}
   TCP_TUNING_CONFIG_PATH=${OBOARD_TCP_TUNING_CONFIG_PATH:-/etc/sysctl.d/99-net-params.conf}
+  CAKE_SHAPER_SERVICE=net-egress-shaper
 fi
 RELEASE_PUBLIC_KEY=__RELEASE_PUBLIC_KEY__
 ACME_SH_VERSION=3.1.4
@@ -17144,12 +17173,53 @@ PY
 
 bbr_requested() {
   case "$INSTALL_BBR" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-    0|false|FALSE|no|NO|off|OFF|'') return 1 ;;
+    off|'') return 1 ;;
+    fq|cake|fq_pie) BBR_QDISC_REQUESTED=$INSTALL_BBR ;;
     *)
       echo "BBR 安装选项无效，请回到面板重新复制安装命令。" >&2
       exit 1
       ;;
+  esac
+  case "$INSTALL_BBR_CAKE_BANDWIDTH" in
+    0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]|100000) ;;
+    *)
+      echo "cake 带宽安装选项无效，请回到面板重新复制安装命令。" >&2
+      exit 1
+      ;;
+  esac
+  return 0
+}
+
+bbr_qdisc_label() {
+  case "$1" in
+    fq_pie) echo "FQ-PIE" ;;
+    cake) echo "CAKE" ;;
+    *) echo "FQ" ;;
+  esac
+}
+
+bbr_kernel_release() {
+  printf '%s' "${OBOARD_KERNEL_RELEASE:-$(uname -r 2>/dev/null || true)}"
+}
+
+# Compares the running kernel's major.minor against the minimum a feature was
+# merged in. An unparsable release is treated as too old.
+kernel_version_at_least() {
+  kernel_release=$(bbr_kernel_release)
+  kernel_major=$(printf '%s' "$kernel_release" | sed -n 's/^\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1/p')
+  kernel_minor=$(printf '%s' "$kernel_release" | sed -n 's/^\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\2/p')
+  [ -n "$kernel_major" ] && [ -n "$kernel_minor" ] || return 1
+  [ "$kernel_major" -gt "$1" ] && return 0
+  [ "$kernel_major" -eq "$1" ] && [ "$kernel_minor" -ge "$2" ]
+}
+
+# BBR needs 4.9. cake (4.19) and fq_pie (5.6) also rely on BBR's internal
+# pacing (4.13), which both minimums already cover.
+bbr_qdisc_min_kernel() {
+  case "$1" in
+    cake) echo "4 19" ;;
+    fq_pie) echo "5 6" ;;
+    *) echo "4 9" ;;
   esac
 }
 
@@ -17161,7 +17231,7 @@ bbr_available() {
   return 1
 }
 
-persist_bbr_fq() {
+persist_bbr_qdisc() {
   if [ -L "$BBR_CONFIG_PATH" ] || { [ -e "$BBR_CONFIG_PATH" ] && [ ! -f "$BBR_CONFIG_PATH" ]; }; then
     echo "BBR 配置保存位置不是普通文件：$BBR_CONFIG_PATH" >&2
     return 1
@@ -17172,7 +17242,7 @@ persist_bbr_fq() {
   bbr_config_new="$BBR_CONFIG_PATH.new.$$"
   rm -f "$bbr_config_new"
   if ! (umask 077; printf '%s\n' \
-    'net.core.default_qdisc = fq' \
+    "net.core.default_qdisc = $1" \
     'net.ipv4.tcp_congestion_control = bbr' > "$bbr_config_new"); then
     rm -f "$bbr_config_new"
     return 1
@@ -17187,11 +17257,152 @@ persist_bbr_fq() {
   fi
 }
 
-enable_bbr_fq() {
+bbr_restore_previous() {
+  [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
+  [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
+}
+
+# Interfaces that carry the default IPv4/IPv6 routes, i.e. the egress links
+# the queue discipline actually matters for.
+bbr_default_interfaces() {
+  command -v ip >/dev/null 2>&1 || return 0
+  { ip -o -4 route show default 2>/dev/null; ip -o -6 route show default 2>/dev/null; } |
+    awk '{for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1)}' | sort -u |
+    while IFS= read -r bbr_iface; do
+      case "$bbr_iface" in
+        ''|*[!A-Za-z0-9_.:-]*) continue ;;
+      esac
+      if [ "${#bbr_iface}" -le 15 ]; then
+        printf '%s\n' "$bbr_iface"
+      fi
+    done
+}
+
+# default_qdisc only covers queues created afterwards. Rebuild the root of
+# each egress interface so the choice takes effect without a reboot; a
+# multi-queue NIC keeps mq and gets new per-queue children. noqueue devices
+# (veth, tunnels) stay untouched, as default_qdisc would leave them.
+bbr_refresh_interface_qdisc() {
+  bbr_root_qdisc=$(tc qdisc show dev "$1" root 2>/dev/null || true)
+  case "$bbr_root_qdisc" in
+    'qdisc noqueue'*) return 0 ;;
+  esac
+  tc qdisc replace dev "$1" root mq >/dev/null 2>&1 && return 0
+  tc qdisc replace dev "$1" root "$2" >/dev/null 2>&1
+}
+
+cake_shaper_command() {
+  printf '%s qdisc replace dev %s root cake bandwidth %smbit' "$1" "$2" "$3"
+}
+
+remove_cake_shaper() {
+  case "$SERVICE_MANAGER" in
+    systemd)
+      [ -f "$CAKE_SHAPER_SYSTEMD_DIR/$CAKE_SHAPER_SERVICE.service" ] || return 0
+      systemctl disable "$CAKE_SHAPER_SERVICE" >> "${INSTALL_LOG:-/dev/null}" 2>&1 || true
+      rm -f "$CAKE_SHAPER_SYSTEMD_DIR/$CAKE_SHAPER_SERVICE.service"
+      systemctl daemon-reload >> "${INSTALL_LOG:-/dev/null}" 2>&1 || true
+      ;;
+    openrc)
+      [ -f "$CAKE_SHAPER_OPENRC_DIR/$CAKE_SHAPER_SERVICE" ] || return 0
+      rc-update del "$CAKE_SHAPER_SERVICE" default >> "${INSTALL_LOG:-/dev/null}" 2>&1 || true
+      rm -f "$CAKE_SHAPER_OPENRC_DIR/$CAKE_SHAPER_SERVICE"
+      ;;
+    *) return 0 ;;
+  esac
+  echo "已移除之前安装的 CAKE 带宽整形开机任务。"
+}
+
+# cake bandwidth is per interface and cannot be expressed through sysctl, so it
+# is applied with tc now and replayed at boot by a oneshot service. Returns 1
+# when nothing was shaped and 2 when shaping runs but will not survive a reboot.
+configure_cake_shaper() {
+  cake_mbit=$1
+  cake_tc=$(command -v tc 2>/dev/null || true)
+  if [ -z "$cake_tc" ]; then
+    echo "未能设置 CAKE 带宽：系统缺少 tc 命令（iproute2），CAKE 将不限速运行。" >&2
+    return 1
+  fi
+  cake_ifaces=$(bbr_default_interfaces)
+  if [ -z "$cake_ifaces" ]; then
+    echo "未能设置 CAKE 带宽：没有找到默认路由所在的网卡，CAKE 将不限速运行。" >&2
+    return 1
+  fi
+  cake_applied=
+  for cake_iface in $cake_ifaces; do
+    if "$cake_tc" qdisc replace dev "$cake_iface" root cake bandwidth "${cake_mbit}mbit" >> "${INSTALL_LOG:-/dev/null}" 2>&1; then
+      cake_applied="$cake_applied $cake_iface"
+    else
+      echo "网卡 $cake_iface 未接受 CAKE 带宽设置（tc 版本过旧或环境不允许），已跳过。" >&2
+    fi
+  done
+  if [ -z "$cake_applied" ]; then
+    return 1
+  fi
+  case "$SERVICE_MANAGER" in
+    systemd)
+      cake_unit_new="$CAKE_SHAPER_SYSTEMD_DIR/$CAKE_SHAPER_SERVICE.service.new.$$"
+      {
+        printf '%s\n' '[Unit]' 'Description=Network egress queue shaping' 'After=network-online.target' 'Wants=network-online.target' '' '[Service]' 'Type=oneshot' 'RemainAfterExit=yes'
+        for cake_iface in $cake_applied; do
+          printf 'ExecStart=-%s\n' "$(cake_shaper_command "$cake_tc" "$cake_iface" "$cake_mbit")"
+        done
+        printf '%s\n' '' '[Install]' 'WantedBy=multi-user.target'
+      } > "$cake_unit_new" && chmod 0644 "$cake_unit_new" && mv -f "$cake_unit_new" "$CAKE_SHAPER_SYSTEMD_DIR/$CAKE_SHAPER_SERVICE.service" || {
+        rm -f "$cake_unit_new"
+        echo "CAKE 带宽已在当前运行中生效，但未能写入开机任务，重启后会恢复为不限速。" >&2
+        return 2
+      }
+      systemctl daemon-reload >> "${INSTALL_LOG:-/dev/null}" 2>&1 || true
+      systemctl enable "$CAKE_SHAPER_SERVICE" >> "${INSTALL_LOG:-/dev/null}" 2>&1 || {
+        echo "CAKE 带宽已在当前运行中生效，但未能启用开机任务，重启后会恢复为不限速。" >&2
+        return 2
+      }
+      ;;
+    openrc)
+      cake_unit_new="$CAKE_SHAPER_OPENRC_DIR/$CAKE_SHAPER_SERVICE.new.$$"
+      {
+        printf '%s\n' '#!/sbin/openrc-run' '' 'description="Network egress queue shaping"' '' 'depend() {' '  need net' '}' '' 'start() {' '  ebegin "Applying egress queue shaping"'
+        for cake_iface in $cake_applied; do
+          printf '  %s || true\n' "$(cake_shaper_command "$cake_tc" "$cake_iface" "$cake_mbit")"
+        done
+        printf '%s\n' '  eend 0' '}'
+      } > "$cake_unit_new" && chmod 0755 "$cake_unit_new" && mv -f "$cake_unit_new" "$CAKE_SHAPER_OPENRC_DIR/$CAKE_SHAPER_SERVICE" || {
+        rm -f "$cake_unit_new"
+        echo "CAKE 带宽已在当前运行中生效，但未能写入开机任务，重启后会恢复为不限速。" >&2
+        return 2
+      }
+      rc-update add "$CAKE_SHAPER_SERVICE" default >> "${INSTALL_LOG:-/dev/null}" 2>&1 || {
+        echo "CAKE 带宽已在当前运行中生效，但未能启用开机任务，重启后会恢复为不限速。" >&2
+        return 2
+      }
+      ;;
+    *)
+      echo "CAKE 带宽已在当前运行中生效，但未识别服务管理器，重启后会恢复为不限速。" >&2
+      return 2
+      ;;
+  esac
+  echo "CAKE 出站带宽已设为 ${cake_mbit} Mbit/s（网卡：${cake_applied# }），并会在重启后继续生效。"
+}
+
+enable_bbr_qdisc() {
   bbr_requested || {
     return 0
   }
-  echo "正在启用 BBR + FQ..."
+  bbr_qdisc=$BBR_QDISC_REQUESTED
+  echo "正在启用 BBR + $(bbr_qdisc_label "$bbr_qdisc")..."
+  if ! kernel_version_at_least 4 9; then
+    echo "未能启用 BBR：当前内核 $(bbr_kernel_release) 低于 4.9，不支持 BBR，安装程序不会自动更换内核。" >&2
+    return 1
+  fi
+  if [ "$bbr_qdisc" != fq ]; then
+    # shellcheck disable=SC2046
+    if ! kernel_version_at_least $(bbr_qdisc_min_kernel "$bbr_qdisc"); then
+      set -- $(bbr_qdisc_min_kernel "$bbr_qdisc")
+      echo "当前内核 $(bbr_kernel_release) 不支持 $(bbr_qdisc_label "$bbr_qdisc")（需要 $1.$2 及以上），改用 BBR + FQ。" >&2
+      bbr_qdisc=fq
+    fi
+  fi
   if ! bbr_available; then
     if ! command -v modprobe >/dev/null 2>&1; then
       echo "未能加载 BBR：当前系统没有可用的 BBR 模块，也缺少 modprobe。" >&2
@@ -17203,40 +17414,75 @@ enable_bbr_fq() {
     fi
   fi
   if command -v modprobe >/dev/null 2>&1; then
-    modprobe sch_fq 2>/dev/null || true
+    modprobe "sch_$bbr_qdisc" 2>/dev/null || true
   fi
   if [ ! -r "$BBR_CONGESTION_PATH" ] || [ ! -w "$BBR_CONGESTION_PATH" ] || [ ! -r "$BBR_QDISC_PATH" ] || [ ! -w "$BBR_QDISC_PATH" ]; then
-    echo "未能启用 BBR + FQ：当前环境不允许修改内核网络参数，常见于受限容器。" >&2
+    echo "未能启用 BBR：当前环境不允许修改内核网络参数，常见于受限容器。" >&2
     return 1
   fi
   previous_bbr=$(cat "$BBR_CONGESTION_PATH" 2>/dev/null || true)
   previous_qdisc=$(cat "$BBR_QDISC_PATH" 2>/dev/null || true)
-  if ! printf '%s\n' fq > "$BBR_QDISC_PATH" || ! printf '%s\n' bbr > "$BBR_CONGESTION_PATH"; then
-    [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
-    [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
-    echo "未能启用 BBR + FQ：当前环境拒绝修改内核网络参数。" >&2
+  # The kernel rejects a default_qdisc whose module it cannot load, which is
+  # the authoritative check for distribution kernels built without it.
+  if ! printf '%s\n' "$bbr_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null; then
+    if [ "$bbr_qdisc" = fq ]; then
+      bbr_restore_previous
+      echo "未能启用 BBR + FQ：当前环境拒绝修改内核网络参数。" >&2
+      return 1
+    fi
+    echo "当前内核没有提供 $(bbr_qdisc_label "$bbr_qdisc") 模块，改用 BBR + FQ。" >&2
+    bbr_qdisc=fq
+    modprobe sch_fq 2>/dev/null || true
+    if ! printf '%s\n' fq > "$BBR_QDISC_PATH" 2>/dev/null; then
+      bbr_restore_previous
+      echo "未能启用 BBR + FQ：当前环境拒绝修改内核网络参数。" >&2
+      return 1
+    fi
+  fi
+  bbr_label=$(bbr_qdisc_label "$bbr_qdisc")
+  if ! printf '%s\n' bbr > "$BBR_CONGESTION_PATH" 2>/dev/null; then
+    bbr_restore_previous
+    echo "未能启用 BBR + $bbr_label：当前环境拒绝修改内核网络参数。" >&2
     return 1
   fi
-  if [ "$(cat "$BBR_QDISC_PATH" 2>/dev/null)" != fq ] || [ "$(cat "$BBR_CONGESTION_PATH" 2>/dev/null)" != bbr ]; then
-    [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
-    [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
-    echo "未能启用 BBR + FQ：内核没有接受新的网络参数。" >&2
+  if [ "$(cat "$BBR_QDISC_PATH" 2>/dev/null)" != "$bbr_qdisc" ] || [ "$(cat "$BBR_CONGESTION_PATH" 2>/dev/null)" != bbr ]; then
+    bbr_restore_previous
+    echo "未能启用 BBR + $bbr_label：内核没有接受新的网络参数。" >&2
     return 1
   fi
-  if ! persist_bbr_fq; then
-    [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
-    [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
-    echo "无法保存 BBR + FQ 设置，已恢复原来的网络设置。" >&2
+  if ! persist_bbr_qdisc "$bbr_qdisc"; then
+    bbr_restore_previous
+    echo "无法保存 BBR + $bbr_label 设置，已恢复原来的网络设置。" >&2
     return 1
   fi
-  echo "BBR + FQ 已启用，并会在重启后继续生效。"
+  BBR_QDISC_APPLIED=$bbr_qdisc
+  echo "BBR + $bbr_label 已启用，并会在重启后继续生效。"
+  if [ "$bbr_qdisc" = cake ] && [ "$INSTALL_BBR_CAKE_BANDWIDTH" != 0 ]; then
+    cake_status=0
+    configure_cake_shaper "$INSTALL_BBR_CAKE_BANDWIDTH" || cake_status=$?
+    [ "$cake_status" -eq 1 ] || return 0
+    remove_cake_shaper
+  else
+    if [ "$INSTALL_BBR_CAKE_BANDWIDTH" != 0 ] && [ "$BBR_QDISC_REQUESTED" = cake ]; then
+      echo "已改用 FQ，CAKE 带宽设置未使用。" >&2
+    fi
+    remove_cake_shaper
+  fi
+  if command -v tc >/dev/null 2>&1; then
+    for bbr_iface in $(bbr_default_interfaces); do
+      bbr_refresh_interface_qdisc "$bbr_iface" "$bbr_qdisc" ||
+        echo "网卡 $bbr_iface 的队列未能立即切换，将在网卡重新初始化或重启后生效。" >&2
+    done
+  else
+    echo "系统缺少 tc 命令，已有网卡的队列将在重启后切换为 $bbr_label。"
+  fi
 }
 
-try_enable_bbr_fq() {
-  if enable_bbr_fq; then
+try_enable_bbr_qdisc() {
+  if enable_bbr_qdisc; then
     return 0
   fi
-  echo "提示：BBR + FQ 未能启用，Agent 安装将继续，其他功能不受影响。你可以稍后在宿主机确认内核支持和参数权限。" >&2
+  echo "提示：BBR 未能启用，Agent 安装将继续，其他功能不受影响。你可以稍后在宿主机确认内核支持和参数权限。" >&2
   return 0
 }
 
@@ -17331,11 +17577,13 @@ enable_tcp_tuning() {
   echo "正在应用 TCP 调优参数..."
   if command -v modprobe >/dev/null 2>&1; then
     modprobe tcp_bbr 2>/dev/null || true
-    modprobe sch_fq 2>/dev/null || true
+    modprobe "sch_${BBR_QDISC_APPLIED:-fq}" 2>/dev/null || true
   fi
   tuning_list="${TMPDIR:-/tmp}/oboard-tcp-tuning.$$"
   rm -f "$tuning_list"
-  if ! (umask 077; tcp_tuning_parameters > "$tuning_list"); then
+  # The fixed set pairs bbr with fq; follow the qdisc the BBR step really
+  # applied so the two sysctl files never disagree at boot.
+  if ! (umask 077; tcp_tuning_parameters | sed "s/^net.core.default_qdisc=fq\$/net.core.default_qdisc=${BBR_QDISC_APPLIED:-fq}/" > "$tuning_list"); then
     rm -f "$tuning_list"
     echo "未能准备 TCP 调优参数列表。" >&2
     return 1
@@ -18090,7 +18338,7 @@ case "$ACTION" in
     if [ "$STEALTH_MODE" = 1 ]; then
       resolve_update_policy
       if [ ! -d "$STEALTH_INSTALL_DIR" ]; then
-        try_enable_bbr_fq
+        try_enable_bbr_qdisc
         try_enable_tcp_tuning
       fi
       # Security-process install: the binaries prefer the GitHub release
@@ -18245,7 +18493,7 @@ case "$ACTION" in
       write_units
       echo "[4/4] 注册并启动 Agent 服务"
       resolve_update_policy
-      try_enable_bbr_fq
+      try_enable_bbr_qdisc
       try_enable_tcp_tuning
       if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
         -config "$CONFIG_PATH" \

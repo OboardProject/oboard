@@ -518,7 +518,7 @@ namespace OBoard {
     Write-Step '[1/4] 检查运行环境'
     Protect-Root
     Write-InstallLog "==== $(Get-Date -Format o) $Action windows/$ArchValue ===="
-    if ($env:OBOARD_INSTALL_BBR -eq '1' -or $env:OBOARD_INSTALL_TCP_TUNING -eq '1') {
+    if (($env:OBOARD_INSTALL_BBR -and $env:OBOARD_INSTALL_BBR -ne 'off') -or $env:OBOARD_INSTALL_TCP_TUNING -eq '1') {
         Write-Host 'BBR 与 TCP 调优仅适用于 Linux 服务器，Windows 安装已跳过。'
     }
     $target = Get-TargetVersion

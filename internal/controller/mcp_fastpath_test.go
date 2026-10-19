@@ -403,14 +403,14 @@ func TestMCPServerOnboardRedeemedActionEnablesBBR(t *testing.T) {
 	data, _ := redeemed["data"].(map[string]any)
 	action, _ := data["action"].(map[string]any)
 	environment, _ := action["environment"].(map[string]any)
-	if got := environment["OBOARD_INSTALL_BBR"]; got != "1" {
+	if got := environment["OBOARD_INSTALL_BBR"]; got != "fq" {
 		t.Fatalf("OBOARD_INSTALL_BBR=%#v action=%#v", got, action)
 	}
 	command, _ := action["command"].(string)
 	if strings.Contains(command, "${OBOARD_INSTALL_BBR") {
 		t.Fatalf("install command still interpolates BBR template: %s", command)
 	}
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='1'") {
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") {
 		t.Fatalf("install command missing inlined BBR value: %s", command)
 	}
 }

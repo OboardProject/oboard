@@ -70,6 +70,34 @@ function getTrafficTimezoneLabel(timezone: string) {
   }
 }
 
+type BBRQdisc = 'fq' | 'cake' | 'fq_pie' | 'off'
+
+const bbrQdiscOptions: { value: BBRQdisc; label: string }[] = [
+  { value: 'fq', label: 'BBR + FQ（默认）' },
+  { value: 'cake', label: 'BBR + CAKE' },
+  { value: 'fq_pie', label: 'BBR + FQ-PIE' },
+  { value: 'off', label: '不修改' },
+]
+
+const bbrQdiscHints: Record<BBRQdisc, string> = {
+  fq: '通用推荐，需要 Linux 4.9 及以上。',
+  cake: '需要 Linux 4.19 及以上，可额外限制出站带宽来减少排队延迟；内核不支持时自动改用 FQ。',
+  fq_pie: '需要 Linux 5.6 及以上，在 FQ 的基础上主动控制队列延迟；内核不支持时自动改用 FQ。',
+  off: '安装时不修改系统的拥塞控制和队列算法。',
+}
+
+const cakeBandwidthMaxMbit = 100000
+
+function parseBBRQdisc(value: unknown): BBRQdisc {
+  const qdisc = String(value || 'fq')
+  return bbrQdiscOptions.some(option => option.value === qdisc) ? qdisc as BBRQdisc : 'fq'
+}
+
+function parseCakeBandwidth(value: unknown): string {
+  const mbit = Number(value)
+  return Number.isInteger(mbit) && mbit > 0 ? String(mbit) : ''
+}
+
 const defaultTimeCheckNTPServers = ['time.cloudflare.com', 'time.google.com', 'ntp.aliyun.com']
 const monitoringRetentionOptions = [1, 3, 7, 15, 30]
 
@@ -80,7 +108,8 @@ function parseNTPServers(value: unknown): string[] {
 
 export function AgentSettingsPanel({ data, client, load, notify, confirm }: AgentSettingsPanelProps) {
   const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState<string>(String(data.settings?.server_default_mtu_mode || 'detect'))
-  const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState<boolean>(String(data.settings?.server_default_bbr_enabled ?? 'true') === 'true')
+  const [bbrQdisc, setBBRQdisc] = useState<BBRQdisc>(() => parseBBRQdisc(data.settings?.server_default_bbr_qdisc))
+  const [cakeBandwidth, setCakeBandwidth] = useState<string>(() => parseCakeBandwidth(data.settings?.server_default_bbr_cake_bandwidth_mbit))
   const [serverDefaultTCPTuningEnabled, setServerDefaultTCPTuningEnabled] = useState<boolean>(String(data.settings?.server_default_tcp_tuning_enabled ?? 'false') === 'true')
   const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'auto') as TimeCorrectionMode)
   const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => parseNTPServers(data.settings?.time_check_ntp_servers))
@@ -92,11 +121,12 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
 
   useEffect(() => {
     setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
-    setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled ?? 'true') === 'true')
+    setBBRQdisc(parseBBRQdisc(data.settings?.server_default_bbr_qdisc))
+    setCakeBandwidth(parseCakeBandwidth(data.settings?.server_default_bbr_cake_bandwidth_mbit))
     setServerDefaultTCPTuningEnabled(String(data.settings?.server_default_tcp_tuning_enabled ?? 'false') === 'true')
     setServerDefaultTimeCorrectionMode((data.settings?.server_default_time_correction_mode || 'auto') as TimeCorrectionMode)
     setTimeCheckNTPServers(parseNTPServers(data.settings?.time_check_ntp_servers))
-  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled, data.settings?.server_default_tcp_tuning_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])
+  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_qdisc, data.settings?.server_default_bbr_cake_bandwidth_mbit, data.settings?.server_default_tcp_tuning_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])
 
   useEffect(() => {
     setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai')
@@ -107,6 +137,11 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const isNTPDirty = useMemo(() => {
     return timeCheckNTPServers.some((val, idx) => val.trim() !== (originalNTPServers[idx] || '').trim())
   }, [timeCheckNTPServers, originalNTPServers])
+
+  const savedCakeBandwidth = parseCakeBandwidth(data.settings?.server_default_bbr_cake_bandwidth_mbit)
+  const cakeBandwidthValue = cakeBandwidth.trim() === '' ? 0 : Number(cakeBandwidth)
+  const isCakeBandwidthValid = Number.isInteger(cakeBandwidthValue) && cakeBandwidthValue >= 0 && cakeBandwidthValue <= cakeBandwidthMaxMbit
+  const isCakeBandwidthDirty = cakeBandwidth.trim() !== savedCakeBandwidth
 
   const autoSaveSetting = async (payload: Record<string, any>, successMessage: string, rollback?: () => void) => {
     if (savingKey) return
@@ -133,9 +168,15 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
     void autoSaveSetting({ server_default_mtu_mode: val }, 'MTU 设置已保存', () => setServerDefaultMTUMode(serverDefaultMTUMode))
   }
 
-  const handleBBRChange = (checked: boolean) => {
-    setServerDefaultBBREnabled(checked)
-    void autoSaveSetting({ server_default_bbr_enabled: checked }, 'BBR + FQ 设置已保存', () => setServerDefaultBBREnabled(serverDefaultBBREnabled))
+  const handleBBRQdiscChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = parseBBRQdisc(e.target.value)
+    setBBRQdisc(val)
+    void autoSaveSetting({ server_default_bbr_qdisc: val }, '拥塞控制设置已保存', () => setBBRQdisc(bbrQdisc))
+  }
+
+  const saveCakeBandwidth = () => {
+    if (!isCakeBandwidthValid) return
+    void autoSaveSetting({ server_default_bbr_cake_bandwidth_mbit: cakeBandwidthValue }, cakeBandwidthValue ? `CAKE 带宽已设为 ${cakeBandwidthValue} Mbit/s` : 'CAKE 已设为不限速')
   }
 
   const handleTCPTuningChange = (checked: boolean) => {
@@ -223,7 +264,20 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
         <SettingsSwitchRow label="中国大陆主控优先" description="开启后，中国大陆服务器优先从主控下载资源，其他服务器遵循上方下载来源设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆主控优先" />
       </SettingsGroup>
       <SettingsGroup title="网络优化" description="统一作用于所有服务器，在首次安装 Agent 时执行；已安装的服务器需重新安装才会生效。">
-        <SettingsSwitchRow label="BBR + FQ" description="在支持的 Linux 节点上启用 BBR 与 FQ 网络优化，失败不影响安装。" checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="BBR + FQ" />
+        <SettingsRow label="拥塞控制" description={`${bbrQdiscHints[bbrQdisc]}只在安装 Agent 时生效，修改后需在服务器上重新运行安装命令。失败不影响安装。`}>
+          <Select aria-label="拥塞控制" value={bbrQdisc} onChange={handleBBRQdiscChange} disabled={Boolean(savingKey)} className="agent-select-field">
+            {bbrQdiscOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </Select>
+        </SettingsRow>
+        {bbrQdisc === 'cake' && (
+          <SettingsRow label="CAKE 带宽" description="可选。按服务器实际上行带宽的 90%–95% 填写，让排队发生在本机而不是上游，从而降低延迟和丢包。填错会限制速度；留空表示不限速。仅作用于出站方向。" htmlFor="cake-bandwidth-mbit">
+            <div className="agent-cake-bandwidth">
+              <input id="cake-bandwidth-mbit" type="number" inputMode="numeric" min={0} max={cakeBandwidthMaxMbit} step={1} placeholder="不限速" value={cakeBandwidth} disabled={Boolean(savingKey)} onChange={event => setCakeBandwidth(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') saveCakeBandwidth() }} aria-label="CAKE 带宽（Mbit/s）" aria-invalid={!isCakeBandwidthValid} className="agent-input-field" />
+              <span className="agent-cake-unit">Mbit/s</span>
+              <button type="button" onClick={saveCakeBandwidth} disabled={!isCakeBandwidthDirty || !isCakeBandwidthValid || Boolean(savingKey)}>保存</button>
+            </div>
+          </SettingsRow>
+        )}
         <SettingsSwitchRow label="TCP 调优" description="写入固定的 TCP/UDP 缓冲区与转发参数，当前系统不支持的项自动跳过。" checked={serverDefaultTCPTuningEnabled} onChange={handleTCPTuningChange} disabled={Boolean(savingKey)} ariaLabel="TCP 调优" />
       </SettingsGroup>
       <SettingsGroup title="新服务器默认值" description="创建服务器时自动带入，可在创建窗口中单独修改。">

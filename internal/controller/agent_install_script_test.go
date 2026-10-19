@@ -88,9 +88,11 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 	script := testAgentInstallScript(t)
 	for _, want := range []string{
 		"OBOARD_INSTALL_BBR",
-		"enable_bbr_fq",
-		"try_enable_bbr_fq",
-		"net.core.default_qdisc = fq",
+		"INSTALL_BBR=${OBOARD_INSTALL_BBR:-off}",
+		"OBOARD_INSTALL_BBR_CAKE_BANDWIDTH",
+		"enable_bbr_qdisc",
+		"try_enable_bbr_qdisc",
+		"net.core.default_qdisc = $1",
 		"net.ipv4.tcp_congestion_control = bbr",
 		"安装程序不会自动更换内核",
 		"[1/4] 检查运行环境",
@@ -107,15 +109,18 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 		}
 	}
 	installCase := shellCaseBranch(t, script, "install)", "update)")
-	if !strings.Contains(installCase, "try_enable_bbr_fq") {
-		t.Fatal("Agent install branch does not enable requested BBR + FQ")
+	if strings.Count(installCase, "try_enable_bbr_qdisc") != 2 {
+		t.Fatal("both Agent install branches must apply the requested BBR qdisc")
 	}
-	if strings.Index(installCase, "try_enable_bbr_fq") > strings.Index(installCase, "-enroll-only") {
-		t.Fatal("Agent installer consumes the enrollment token before attempting BBR + FQ")
+	if strings.Index(installCase, "try_enable_bbr_qdisc") > strings.Index(installCase, "-enroll-only") {
+		t.Fatal("Agent installer consumes the enrollment token before attempting BBR")
+	}
+	if strings.Index(installCase, "try_enable_bbr_qdisc") > strings.Index(installCase, "try_enable_tcp_tuning") {
+		t.Fatal("TCP tuning must run after BBR so it can follow the applied qdisc")
 	}
 	updateCase := shellCaseBranch(t, script, "update)", "uninstall)")
-	if strings.Contains(updateCase, "try_enable_bbr_fq") {
-		t.Fatal("Agent update branch repeats BBR + FQ configuration")
+	if strings.Contains(updateCase, "try_enable_bbr_qdisc") || strings.Contains(updateCase, "configure_cake_shaper") {
+		t.Fatal("Agent update branch repeats BBR configuration")
 	}
 	for _, shellName := range []string{"bash", "dash"} {
 		shell, err := exec.LookPath(shellName)
@@ -377,105 +382,218 @@ func TestAgentInstallScriptSkipsStandardPathRegistration(t *testing.T) {
 	}
 }
 
-func TestAgentInstallScriptContinuesWhenBBRFQIsUnavailable(t *testing.T) {
-	script := testAgentInstallScript(t)
-	shell := testPOSIXShell(t)
-	root := t.TempDir()
-	available := filepath.Join(root, "available")
-	writeTestFile(t, available, "reno cubic bbr\n")
+// bbrHarness renders the BBR helpers against fake sysctl files, a fake PATH
+// (ip, tc, modprobe, systemctl) and a fake kernel release.
+type bbrHarness struct {
+	root, available, congestion, qdisc, config, unitDir, bin, tcLog string
+}
 
-	harness := strings.Join([]string{
+func newBBRHarness(t *testing.T) bbrHarness {
+	t.Helper()
+	root := t.TempDir()
+	h := bbrHarness{
+		root:       root,
+		available:  filepath.Join(root, "available"),
+		congestion: filepath.Join(root, "congestion"),
+		qdisc:      filepath.Join(root, "qdisc"),
+		config:     filepath.Join(root, "sysctl.d", "99-oboard-bbr.conf"),
+		unitDir:    filepath.Join(root, "systemd"),
+		bin:        filepath.Join(root, "bin"),
+		tcLog:      filepath.Join(root, "tc.log"),
+	}
+	writeTestFile(t, h.available, "reno cubic bbr\n")
+	writeTestFile(t, h.congestion, "cubic\n")
+	writeTestFile(t, h.qdisc, "fq_codel\n")
+	for _, dir := range []string{h.bin, h.unitDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeExecutable(t, filepath.Join(h.bin, "ip"), `#!/bin/sh
+case "$*" in
+  *-4*) echo "default via 203.0.113.1 dev eth0 proto static" ;;
+  *-6*) echo "default via fe80::1 dev eth0 proto ra metric 1024" ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(h.bin, "tc"), `#!/bin/sh
+echo "$*" >> "$TEST_TC_LOG"
+case "$*" in
+  "qdisc show"*) echo "qdisc mq 0: root" ;;
+  *"root mq"*) exit "${TEST_TC_MQ_STATUS:-0}" ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(h.bin, "modprobe"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(h.bin, "systemctl"), "#!/bin/sh\necho \"systemctl $*\" >> \"$TEST_TC_LOG\"\n")
+	return h
+}
+
+func (h bbrHarness) run(t *testing.T, script, qdisc, bandwidth, kernel string, extra ...string) (string, error) {
+	t.Helper()
+	lines := []string{
 		"set -eu",
-		"INSTALL_BBR=1",
-		"BBR_AVAILABLE_PATH=" + shellQuote(available),
-		"BBR_CONGESTION_PATH=" + shellQuote(filepath.Join(root, "missing-congestion")),
-		"BBR_QDISC_PATH=" + shellQuote(filepath.Join(root, "missing-qdisc")),
-		"BBR_CONFIG_PATH=" + shellQuote(filepath.Join(root, "99-oboard-bbr.conf")),
-		extractShellFunction(t, script, "bbr_requested"),
-		extractShellFunction(t, script, "bbr_available"),
-		extractShellFunction(t, script, "persist_bbr_fq"),
-		extractShellFunction(t, script, "enable_bbr_fq"),
-		extractShellFunction(t, script, "try_enable_bbr_fq"),
-		"try_enable_bbr_fq",
-		"echo install-continued",
-	}, "\n")
-	output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+		"INSTALL_BBR=" + shellQuote(qdisc),
+		"INSTALL_BBR_CAKE_BANDWIDTH=" + shellQuote(bandwidth),
+		"BBR_QDISC_REQUESTED=",
+		"BBR_QDISC_APPLIED=",
+		"SERVICE_MANAGER=systemd",
+		"CAKE_SHAPER_SERVICE=oboard-cake-shaper",
+		"CAKE_SHAPER_SYSTEMD_DIR=" + shellQuote(h.unitDir),
+		"CAKE_SHAPER_OPENRC_DIR=" + shellQuote(filepath.Join(h.root, "init.d")),
+		"BBR_AVAILABLE_PATH=" + shellQuote(h.available),
+		"BBR_CONGESTION_PATH=" + shellQuote(h.congestion),
+		"BBR_QDISC_PATH=" + shellQuote(h.qdisc),
+		"BBR_CONFIG_PATH=" + shellQuote(h.config),
+	}
+	for _, name := range []string{"bbr_requested", "bbr_qdisc_label", "bbr_kernel_release", "kernel_version_at_least", "bbr_qdisc_min_kernel", "bbr_available", "persist_bbr_qdisc", "bbr_restore_previous", "bbr_default_interfaces", "bbr_refresh_interface_qdisc", "cake_shaper_command", "remove_cake_shaper", "configure_cake_shaper", "enable_bbr_qdisc", "try_enable_bbr_qdisc"} {
+		lines = append(lines, extractShellFunction(t, script, name))
+	}
+	cmd := exec.Command(testPOSIXShell(t), "-c", strings.Join(append(lines, extra...), "\n"))
+	cmd.Env = append(os.Environ(), "PATH="+h.bin+":"+os.Getenv("PATH"), "OBOARD_KERNEL_RELEASE="+kernel, "TEST_TC_LOG="+h.tcLog)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func (h bbrHarness) tcCalls(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(h.tcLog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestAgentInstallScriptContinuesWhenBBRIsUnavailable(t *testing.T) {
+	script := testAgentInstallScript(t)
+	h := newBBRHarness(t)
+	h.congestion = filepath.Join(h.root, "missing-congestion")
+	output, err := h.run(t, script, "fq", "0", "6.1.0-18-amd64", "try_enable_bbr_qdisc", "echo install-continued")
 	if err != nil {
 		t.Fatalf("unavailable BBR stopped installation: %v\n%s", err, output)
 	}
-	text := string(output)
-	if !strings.Contains(text, "常见于受限容器") || !strings.Contains(text, "Agent 安装将继续") || !strings.Contains(text, "install-continued") {
+	if !strings.Contains(output, "常见于受限容器") || !strings.Contains(output, "Agent 安装将继续") || !strings.Contains(output, "install-continued") {
 		t.Fatalf("unexpected unavailable BBR output:\n%s", output)
 	}
 }
 
 func TestAgentInstallScriptEnablesAndPersistsBBRFQ(t *testing.T) {
 	script := testAgentInstallScript(t)
-	shell := testPOSIXShell(t)
-	root := t.TempDir()
-	available := filepath.Join(root, "available")
-	congestion := filepath.Join(root, "congestion")
-	qdisc := filepath.Join(root, "qdisc")
-	config := filepath.Join(root, "sysctl.d", "99-oboard-bbr.conf")
-	writeTestFile(t, available, "reno cubic bbr\n")
-	writeTestFile(t, congestion, "cubic\n")
-	writeTestFile(t, qdisc, "fq_codel\n")
-
-	harness := strings.Join([]string{
-		"set -eu",
-		"INSTALL_BBR=1",
-		"BBR_AVAILABLE_PATH=" + shellQuote(available),
-		"BBR_CONGESTION_PATH=" + shellQuote(congestion),
-		"BBR_QDISC_PATH=" + shellQuote(qdisc),
-		"BBR_CONFIG_PATH=" + shellQuote(config),
-		extractShellFunction(t, script, "bbr_requested"),
-		extractShellFunction(t, script, "bbr_available"),
-		extractShellFunction(t, script, "persist_bbr_fq"),
-		extractShellFunction(t, script, "enable_bbr_fq"),
-		"enable_bbr_fq",
-	}, "\n")
-	if output, err := exec.Command(shell, "-c", harness).CombinedOutput(); err != nil {
+	h := newBBRHarness(t)
+	if output, err := h.run(t, script, "fq", "0", "6.1.0-18-amd64", "enable_bbr_qdisc", `echo "applied=$BBR_QDISC_APPLIED"`); err != nil || !strings.Contains(output, "applied=fq") {
 		t.Fatalf("enable BBR + FQ failed: %v\n%s", err, output)
 	}
-	assertTestFile(t, congestion, "bbr\n")
-	assertTestFile(t, qdisc, "fq\n")
-	assertTestFile(t, config, "net.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n")
-	assertPathMode(t, config, 0o600)
+	assertTestFile(t, h.congestion, "bbr\n")
+	assertTestFile(t, h.qdisc, "fq\n")
+	assertTestFile(t, h.config, "net.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n")
+	assertPathMode(t, h.config, 0o600)
+	if calls := h.tcCalls(t); !strings.Contains(calls, "qdisc replace dev eth0 root mq") || strings.Contains(calls, "cake") {
+		t.Fatalf("egress interface was not refreshed with the new default qdisc:\n%s", calls)
+	}
+}
+
+func TestAgentInstallScriptAppliesCakeWithBandwidth(t *testing.T) {
+	script := testAgentInstallScript(t)
+	h := newBBRHarness(t)
+	output, err := h.run(t, script, "cake", "950", "6.1.0-18-amd64", "enable_bbr_qdisc")
+	if err != nil {
+		t.Fatalf("enable BBR + CAKE failed: %v\n%s", err, output)
+	}
+	assertTestFile(t, h.qdisc, "cake\n")
+	assertTestFile(t, h.config, "net.core.default_qdisc = cake\nnet.ipv4.tcp_congestion_control = bbr\n")
+	calls := h.tcCalls(t)
+	if !strings.Contains(calls, "qdisc replace dev eth0 root cake bandwidth 950mbit") || strings.Contains(calls, "root mq") {
+		t.Fatalf("cake shaping was not applied to the egress interface:\n%s", calls)
+	}
+	if !strings.Contains(calls, "systemctl enable oboard-cake-shaper") {
+		t.Fatalf("cake shaper unit was not enabled:\n%s", calls)
+	}
+	unit, err := os.ReadFile(filepath.Join(h.unitDir, "oboard-cake-shaper.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(unit), "qdisc replace dev eth0 root cake bandwidth 950mbit") || !strings.Contains(string(unit), "Type=oneshot") {
+		t.Fatalf("unexpected cake shaper unit:\n%s", unit)
+	}
+	if !strings.Contains(output, "950 Mbit/s") {
+		t.Fatalf("cake bandwidth is not reported:\n%s", output)
+	}
+
+	// Reinstalling with plain fq removes the boot-time shaper.
+	output, err = h.run(t, script, "fq", "0", "6.1.0-18-amd64", "enable_bbr_qdisc")
+	if err != nil {
+		t.Fatalf("switching back to fq failed: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(h.unitDir, "oboard-cake-shaper.service")); !os.IsNotExist(err) {
+		t.Fatalf("cake shaper unit survived a switch to fq: %v", err)
+	}
+	assertTestFile(t, h.qdisc, "fq\n")
+}
+
+func TestAgentInstallScriptFallsBackToFQOnOldKernel(t *testing.T) {
+	script := testAgentInstallScript(t)
+	for _, tc := range []struct{ qdisc, kernel, want string }{
+		{"cake", "4.14.0-xen", "需要 4.19 及以上"},
+		{"fq_pie", "5.4.0-150-generic", "需要 5.6 及以上"},
+	} {
+		h := newBBRHarness(t)
+		output, err := h.run(t, script, tc.qdisc, "500", tc.kernel, "enable_bbr_qdisc")
+		if err != nil {
+			t.Fatalf("%s on %s failed: %v\n%s", tc.qdisc, tc.kernel, err, output)
+		}
+		if !strings.Contains(output, tc.want) || !strings.Contains(output, "改用 BBR + FQ") {
+			t.Fatalf("%s on %s did not explain the fallback:\n%s", tc.qdisc, tc.kernel, output)
+		}
+		assertTestFile(t, h.qdisc, "fq\n")
+		if strings.Contains(h.tcCalls(t), "cake") {
+			t.Fatalf("%s fallback still shaped with cake:\n%s", tc.qdisc, h.tcCalls(t))
+		}
+	}
+
+	h := newBBRHarness(t)
+	output, err := h.run(t, script, "fq", "0", "4.4.0-210-generic", "enable_bbr_qdisc")
+	if err == nil || !strings.Contains(output, "低于 4.9") {
+		t.Fatalf("BBR was attempted on a kernel without it: %v\n%s", err, output)
+	}
+	assertTestFile(t, h.congestion, "cubic\n")
+}
+
+func TestAgentInstallScriptRejectsInvalidBBRValues(t *testing.T) {
+	script := testAgentInstallScript(t)
+	for _, tc := range []struct{ qdisc, bandwidth string }{{"1", "0"}, {"pfifo", "0"}, {"cake", "-5"}, {"cake", "0100"}, {"cake", "100001"}} {
+		h := newBBRHarness(t)
+		output, err := h.run(t, script, tc.qdisc, tc.bandwidth, "6.1.0", "enable_bbr_qdisc")
+		if err == nil || !strings.Contains(output, "请回到面板重新复制安装命令") {
+			t.Fatalf("invalid BBR option %+v was accepted: %v\n%s", tc, err, output)
+		}
+		assertTestFile(t, h.congestion, "cubic\n")
+	}
 }
 
 func TestAgentInstallScriptRollsBackBBRWhenPersistenceFails(t *testing.T) {
 	script := testAgentInstallScript(t)
-	shell := testPOSIXShell(t)
-	root := t.TempDir()
-	available := filepath.Join(root, "available")
-	congestion := filepath.Join(root, "congestion")
-	qdisc := filepath.Join(root, "qdisc")
-	config := filepath.Join(root, "invalid-config")
-	writeTestFile(t, available, "reno cubic bbr\n")
-	writeTestFile(t, congestion, "cubic\n")
-	writeTestFile(t, qdisc, "fq_codel\n")
-	if err := os.Mkdir(config, 0o700); err != nil {
+	h := newBBRHarness(t)
+	h.config = filepath.Join(h.root, "invalid-config")
+	if err := os.Mkdir(h.config, 0o700); err != nil {
 		t.Fatal(err)
 	}
-
-	harness := strings.Join([]string{
-		"set -eu",
-		"INSTALL_BBR=1",
-		"BBR_AVAILABLE_PATH=" + shellQuote(available),
-		"BBR_CONGESTION_PATH=" + shellQuote(congestion),
-		"BBR_QDISC_PATH=" + shellQuote(qdisc),
-		"BBR_CONFIG_PATH=" + shellQuote(config),
-		extractShellFunction(t, script, "bbr_requested"),
-		extractShellFunction(t, script, "bbr_available"),
-		extractShellFunction(t, script, "persist_bbr_fq"),
-		extractShellFunction(t, script, "enable_bbr_fq"),
-		"enable_bbr_fq",
-	}, "\n")
-	if output, err := exec.Command(shell, "-c", harness).CombinedOutput(); err == nil {
+	if output, err := h.run(t, script, "cake", "0", "6.1.0", "enable_bbr_qdisc"); err == nil {
 		t.Fatalf("invalid BBR persistence path was accepted\n%s", output)
 	}
-	assertTestFile(t, congestion, "cubic\n")
-	assertTestFile(t, qdisc, "fq_codel\n")
+	assertTestFile(t, h.congestion, "cubic\n")
+	assertTestFile(t, h.qdisc, "fq_codel\n")
+}
+
+func TestAgentInstallScriptTCPTuningFollowsBBRQdisc(t *testing.T) {
+	script := testAgentInstallScript(t)
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc-sys")
+	config := filepath.Join(root, "sysctl.d", "99-oboard-tcp.conf")
+	qdisc := writeTestProcKey(t, proc, "net.core.default_qdisc", "fq_codel\n")
+	harness := tcpTuningHarness(t, script, proc, config, "BBR_QDISC_APPLIED=cake", "enable_tcp_tuning")
+	if output, err := exec.Command(testPOSIXShell(t), "-c", harness).CombinedOutput(); err != nil {
+		t.Fatalf("enable_tcp_tuning failed: %v\n%s", err, output)
+	}
+	assertTestFile(t, qdisc, "cake\n")
+	assertTestFile(t, config, "net.core.default_qdisc = cake\n")
 }
 
 func TestAgentScriptsSelectUpdateTempWithSystemdReserve(t *testing.T) {

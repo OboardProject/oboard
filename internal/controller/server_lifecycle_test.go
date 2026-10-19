@@ -77,24 +77,33 @@ func TestServerLifecycleDoesNotWaitForCredentialReconciliation(t *testing.T) {
 }
 
 func TestAgentInstallCommandInlinesBBRLiteral(t *testing.T) {
-	enabled := agentInstallCommand("https://panel.example.com", agentInstallBBRValue(true), "0", "0")
-	disabled := agentInstallCommand("https://panel.example.com/", agentInstallBBRValue(false), "0", "0")
-	for _, command := range []string{enabled, disabled} {
+	for _, tc := range []struct {
+		qdisc     string
+		mbit      int
+		wantQdisc string
+		wantMbit  string
+	}{
+		{"fq", 500, "fq", "0"},
+		{"cake", 950, "cake", "950"},
+		{"cake", 0, "cake", "0"},
+		{"fq_pie", 100, "fq_pie", "0"},
+		{"off", 300, "off", "0"},
+		{"bogus", 0, "fq", "0"},
+	} {
+		bbr, bandwidth := agentInstallBBRValues(tc.qdisc, tc.mbit)
+		command := agentInstallCommand("https://panel.example.com/", bbr, bandwidth, "0", "0")
 		if strings.Contains(command, "${OBOARD_INSTALL_BBR") {
 			t.Fatalf("command still interpolates BBR template: %s", command)
 		}
-	}
-	if !strings.Contains(enabled, "OBOARD_INSTALL_BBR='1'") {
-		t.Fatalf("enabled command=%s", enabled)
-	}
-	if !strings.Contains(disabled, "OBOARD_INSTALL_BBR='0'") {
-		t.Fatalf("disabled command=%s", disabled)
+		if !strings.Contains(command, "OBOARD_INSTALL_BBR='"+tc.wantQdisc+"'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='"+tc.wantMbit+"'") {
+			t.Fatalf("%+v command=%s", tc, command)
+		}
 	}
 }
 
 func TestAgentInstallCommandInlinesTCPTuningLiteral(t *testing.T) {
-	enabled := agentInstallCommand("https://panel.example.com", "0", agentInstallTCPTuningValue(true), "0")
-	disabled := agentInstallCommand("https://panel.example.com/", "0", agentInstallTCPTuningValue(false), "0")
+	enabled := agentInstallCommand("https://panel.example.com", "fq", "0", agentInstallTCPTuningValue(true), "0")
+	disabled := agentInstallCommand("https://panel.example.com/", "fq", "0", agentInstallTCPTuningValue(false), "0")
 	for _, command := range []string{enabled, disabled} {
 		if strings.Contains(command, "${OBOARD_INSTALL_TCP_TUNING") {
 			t.Fatalf("command still interpolates the TCP tuning template: %s", command)

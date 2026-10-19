@@ -1250,6 +1250,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migratePlanVersionPointers(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateServerDefaultBBRQdisc(ctx); err != nil {
+		return err
+	}
 	if err := s.MigratePlanReconcileStates(ctx); err != nil {
 		return err
 	}
