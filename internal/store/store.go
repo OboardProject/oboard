@@ -3097,6 +3097,17 @@ func (s *Store) SetServerEnrollmentHash(ctx context.Context, serverID int64, has
 	return err
 }
 
+// PinServerBBRQdisc records the BBR choice an issued install command carries on
+// a server that still follows the panel, so a later panel-wide change no longer
+// reaches it. An explicit server override is never replaced.
+func (s *Store) PinServerBBRQdisc(ctx context.Context, serverID int64, qdisc string, cakeMbit int) error {
+	if strings.TrimSpace(qdisc) == "" {
+		return errors.New("bbr qdisc is required")
+	}
+	_, err := s.db.ExecContext(ctx, `update servers set bbr_qdisc=?, bbr_cake_bandwidth_mbit=?, updated_at=? where id=? and bbr_qdisc=''`, qdisc, cakeMbit, now(), serverID)
+	return err
+}
+
 // ClaimServerEnrollment atomically consumes a one-time enrollment hash and binds
 // long-term Agent credentials. Returns sql.ErrNoRows when the hash is missing,
 // expired, or already consumed (including concurrent claims).

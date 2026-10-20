@@ -7634,7 +7634,8 @@ function ServerBBRSettings({ draft, update, creating, enrolled, panelBBR }: { dr
   const override = String(draft.bbr_qdisc || '')
   const followLabel = panelBBR ? `跟随系统设置（${bbrQdiscLabel(panelBBR.qdisc, panelBBR.cakeMbit)}）` : '跟随系统设置'
   const effective = override ? parseBBRQdisc(override) : panelBBR ? parseBBRQdisc(panelBBR.qdisc) : undefined
-  const scope = creating ? '安装 Agent 时生效。' : enrolled ? '只在安装时生效：保存后需重新生成接入命令并在服务器上执行。' : '保存后生成的接入命令会使用此设置。'
+  const pinNote = override ? '' : '生成接入命令时会固定为当时的系统设置，之后修改系统设置不影响此服务器。'
+  const scope = (creating ? '安装 Agent 时生效。' : enrolled ? '只在安装时生效：保存后需重新生成接入命令并在服务器上执行。' : '保存后生成的接入命令会使用此设置。') + pinNote
   const mbit = Number(draft.bbr_cake_bandwidth_mbit) || 0
   return <SettingGroup title="网络优化">
     <SettingRow label="拥塞控制" description={`${effective ? bbrQdiscHints[effective] : ''}${scope}`}>

@@ -93,6 +93,9 @@ func (s *Server) issueServerEnrollmentToken(ctx context.Context, serverID int64)
 	if err := s.store.SetServerEnrollmentHash(ctx, srv.ID, security.HashSecret(token), expiresAt); err != nil {
 		return "", time.Time{}, nil, err
 	}
+	if err := s.pinServerAgentInstallBBR(ctx, *srv); err != nil {
+		return "", time.Time{}, nil, err
+	}
 	updated, err := s.store.GetServer(ctx, srv.ID)
 	if err != nil {
 		return "", time.Time{}, nil, err
@@ -164,6 +167,24 @@ func serverAgentInstallBBR(srv model.Server, qdisc string, cakeMbit int) (string
 	return override, srv.BBRCakeBandwidthMbit
 }
 
+// pinServerAgentInstallBBR fixes the panel-wide BBR choice onto a server that
+// still follows the panel when its enrollment token is issued. The install
+// command carries that choice as a literal, so the server keeps it after the
+// panel setting changes; choosing "follow" again re-pins at the next issue.
+func (s *Server) pinServerAgentInstallBBR(ctx context.Context, srv model.Server) error {
+	if strings.TrimSpace(srv.BBRQdisc) != "" {
+		return nil
+	}
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return err
+	}
+	qdisc, cakeMbit, _ := agentInstallTuningSettings(settings)
+	qdisc, cakeValue := agentInstallBBRValues(qdisc, cakeMbit)
+	cakeMbit, _ = strconv.Atoi(cakeValue)
+	return s.store.PinServerBBRQdisc(ctx, srv.ID, qdisc, cakeMbit)
+}
+
 // agentInstallBBRValues renders the explicit BBR qdisc and cake bandwidth
 // literals. The bandwidth only matters for cake; other choices always carry 0
 // so the installer never shapes traffic for a qdisc that cannot.
@@ -208,7 +229,8 @@ func agentInstallCommand(baseURL, bbrValue, cakeBandwidthValue, tcpTuningValue, 
 
 // agentEnrollmentCommand renders the Linux install command. Every issued
 // command reads the current panel-wide BBR qdisc and TCP tuning settings; a
-// server's own BBR override, when set, replaces the panel qdisc.
+// server's own BBR override, pinned when its enrollment token is issued,
+// replaces the panel qdisc.
 func (s *Server) agentEnrollmentCommand(ctx context.Context, stealth bool, serverID ...int64) (string, map[string]any, error) {
 	base, err := s.publicBaseURL(ctx)
 	if err != nil {

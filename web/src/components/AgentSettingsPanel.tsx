@@ -242,7 +242,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
         <SettingsSwitchRow label="中国大陆主控优先" description="开启后，中国大陆服务器优先从主控下载资源，其他服务器遵循上方下载来源设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆主控优先" />
       </SettingsGroup>
       <SettingsGroup title="网络优化" description="统一作用于所有服务器，在首次安装 Agent 时执行；已安装的服务器需重新安装才会生效。">
-        <SettingsRow label="拥塞控制" description={`${bbrQdiscHints[bbrQdisc]}只在安装 Agent 时生效，修改后需在服务器上重新运行安装命令。服务器设置中可单独覆盖。失败不影响安装。`}>
+        <SettingsRow label="拥塞控制" description={`${bbrQdiscHints[bbrQdisc]}只在安装 Agent 时生效，作为之后生成接入命令的服务器的默认值；已生成过接入命令的服务器保持当时的选择，可在服务器设置中单独修改。失败不影响安装。`}>
           <Select aria-label="拥塞控制" value={bbrQdisc} onChange={handleBBRQdiscChange} disabled={Boolean(savingKey)} className="agent-select-field">
             {bbrQdiscOptions.map(option => <option key={option.value} value={option.value}>{option.value === 'fq' ? `${option.label}（默认）` : option.label}</option>)}
           </Select>

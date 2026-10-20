@@ -197,7 +197,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"subscription_controller_direct_enabled": boolValue,
 			"subscription_custom_path_mode":          map[string]any{"type": "string", "enum": []string{"disabled", "selective", "enabled"}},
 			"server_default_mtu_mode":                stringValue,
-			"server_default_bbr_qdisc":               map[string]any{"type": "string", "enum": []string{"off", "fq", "cake", "fq_pie"}, "description": "首次安装 Agent 时与 BBR 搭配的队列算法，默认 fq；off 表示安装时不修改拥塞控制。只在安装阶段生效，已安装服务器需重新运行安装脚本。内核版本不足时安装脚本自动改用 fq。"},
+			"server_default_bbr_qdisc":               map[string]any{"type": "string", "enum": []string{"off", "fq", "cake", "fq_pie"}, "description": "首次安装 Agent 时与 BBR 搭配的队列算法，默认 fq；off 表示安装时不修改拥塞控制。只在安装阶段生效，已安装服务器需重新运行安装脚本；已签发过接入令牌的服务器保持签发时的选择，不受之后修改影响。内核版本不足时安装脚本自动改用 fq。"},
 			"server_default_bbr_cake_bandwidth_mbit": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "description": "仅 cake 使用：出站整形带宽（Mbit/s），0 表示不限速。建议设为服务器实际上行带宽的 90%-95%。"},
 			"server_default_tcp_tuning_enabled":      boolValue,
 			"server_default_time_correction_mode":    stringValue, "time_check_ntp_servers": stringArray(0, 8),

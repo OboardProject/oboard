@@ -1357,9 +1357,10 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_mtu_mode": "always"}, http.StatusBadRequest)
 }
 
-// TestAgentInstallCommandUsesPanelWideTuningSettings verifies that every
-// issued install command, including a re-issue for an existing server, carries
-// the current panel-wide BBR qdisc, cake bandwidth and TCP tuning settings.
+// TestAgentInstallCommandUsesPanelWideTuningSettings verifies that issued
+// install commands carry the panel-wide BBR qdisc, cake bandwidth and TCP
+// tuning settings, and that a server following the panel is pinned to the BBR
+// choice of its first issued command so a later panel change cannot reach it.
 func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -1375,11 +1376,19 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "tuning-server", "renewal_cycle": "monthly"}, http.StatusCreated)
-	path := fmt.Sprintf("/api/v1/ui/servers/%d/enroll-token", int64(created["server"].(map[string]any)["id"].(float64)))
+	serverPath := fmt.Sprintf("/api/v1/ui/servers/%d", int64(created["server"].(map[string]any)["id"].(float64)))
+	path := serverPath + "/enroll-token"
+	storedBBR := func(serverPath string) (any, any) {
+		server := request(t, h, http.MethodGet, serverPath, token, nil, http.StatusOK)["server"].(map[string]any)
+		return server["bbr_qdisc"], server["bbr_cake_bandwidth_mbit"]
+	}
 
 	command := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
 	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='0'") {
 		t.Fatalf("fresh panel defaults not rendered: %s", command)
+	}
+	if qdisc, mbit := storedBBR(serverPath); qdisc != "fq" || mbit != float64(0) {
+		t.Fatalf("issued command did not pin the panel choice: %v / %v", qdisc, mbit)
 	}
 	settings := request(t, h, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)["settings"].(map[string]any)
 	if settings["server_default_bbr_qdisc"] != "fq" || settings["server_default_bbr_cake_bandwidth_mbit"] != float64(0) {
@@ -1387,19 +1396,30 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	}
 	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "cake", "server_default_bbr_cake_bandwidth_mbit": 950, "server_default_tcp_tuning_enabled": true}, http.StatusOK)
 	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='cake'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='950'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
-		t.Fatalf("panel-wide settings not applied to re-issued command: %s", command)
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") || !strings.Contains(command, "OBOARD_INSTALL_TCP_TUNING='1'") {
+		t.Fatalf("panel BBR change reached a pinned server, or TCP tuning stopped following the panel: %s", command)
+	}
+
+	// A server first issued after the change pins the new panel choice and
+	// keeps it through the next panel change.
+	other := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "follow-server", "renewal_cycle": "monthly"}, http.StatusCreated)
+	otherServerPath := fmt.Sprintf("/api/v1/ui/servers/%d", int64(other["server"].(map[string]any)["id"].(float64)))
+	command = request(t, h, http.MethodPost, otherServerPath+"/enroll-token", token, map[string]any{}, http.StatusOK)["install_command"].(string)
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='cake'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='950'") {
+		t.Fatalf("a following server must take the panel choice on first issue: %s", command)
 	}
 	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "fq_pie"}, http.StatusOK)
-	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq_pie'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='0'") {
-		t.Fatalf("cake bandwidth leaked into a non-cake command: %s", command)
+	command = request(t, h, http.MethodPost, otherServerPath+"/enroll-token", token, map[string]any{}, http.StatusOK)["install_command"].(string)
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='cake'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='950'") {
+		t.Fatalf("panel BBR change reached a pinned server: %s", command)
+	}
+	if qdisc, mbit := storedBBR(otherServerPath); qdisc != "cake" || mbit != float64(950) {
+		t.Fatalf("pinned cake choice not stored: %v / %v", qdisc, mbit)
 	}
 	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_qdisc": "bbr2"}, http.StatusBadRequest)
 	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_bbr_cake_bandwidth_mbit": 100001}, http.StatusBadRequest)
 
-	// A per-server override replaces the panel qdisc for that server only.
-	serverPath := fmt.Sprintf("/api/v1/ui/servers/%d", int64(created["server"].(map[string]any)["id"].(float64)))
+	// An explicit per-server override replaces the pinned choice.
 	patched := request(t, h, http.MethodPatch, serverPath, token, map[string]any{"bbr_qdisc": "cake", "bbr_cake_bandwidth_mbit": 450}, http.StatusOK)["server"].(map[string]any)
 	if patched["bbr_qdisc"] != "cake" || patched["bbr_cake_bandwidth_mbit"] != float64(450) {
 		t.Fatalf("override not saved: %v / %v", patched["bbr_qdisc"], patched["bbr_cake_bandwidth_mbit"])
@@ -1408,21 +1428,23 @@ func TestAgentInstallCommandUsesPanelWideTuningSettings(t *testing.T) {
 	if !strings.Contains(command, "OBOARD_INSTALL_BBR='cake'") || !strings.Contains(command, "OBOARD_INSTALL_BBR_CAKE_BANDWIDTH='450'") {
 		t.Fatalf("server override not applied: %s", command)
 	}
-	other := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "follow-server", "renewal_cycle": "monthly"}, http.StatusCreated)
-	otherPath := fmt.Sprintf("/api/v1/ui/servers/%d/enroll-token", int64(other["server"].(map[string]any)["id"].(float64)))
-	command = request(t, h, http.MethodPost, otherPath, token, map[string]any{}, http.StatusOK)["install_command"].(string)
-	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq_pie'") {
-		t.Fatalf("a server without an override must follow the panel: %s", command)
+	if qdisc, mbit := storedBBR(serverPath); qdisc != "cake" || mbit != float64(450) {
+		t.Fatalf("issuing a command replaced an explicit override: %v / %v", qdisc, mbit)
 	}
 	patched = request(t, h, http.MethodPatch, serverPath, token, map[string]any{"bbr_qdisc": "off", "bbr_cake_bandwidth_mbit": 450}, http.StatusOK)["server"].(map[string]any)
 	if patched["bbr_qdisc"] != "off" || patched["bbr_cake_bandwidth_mbit"] != float64(0) {
 		t.Fatalf("non-cake override kept a bandwidth: %v / %v", patched["bbr_qdisc"], patched["bbr_cake_bandwidth_mbit"])
 	}
 	request(t, h, http.MethodPatch, serverPath, token, map[string]any{"bbr_qdisc": "bbr2"}, http.StatusBadRequest)
+
+	// Choosing "follow" again takes the current panel choice at the next issue.
 	request(t, h, http.MethodPatch, serverPath, token, map[string]any{"bbr_qdisc": ""}, http.StatusOK)
 	command = request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)["install_command"].(string)
 	if !strings.Contains(command, "OBOARD_INSTALL_BBR='fq_pie'") {
 		t.Fatalf("clearing the override must follow the panel again: %s", command)
+	}
+	if qdisc, _ := storedBBR(serverPath); qdisc != "fq_pie" {
+		t.Fatalf("re-issue after clearing the override did not re-pin: %v", qdisc)
 	}
 }
 
