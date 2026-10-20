@@ -1468,9 +1468,9 @@ func (s *Server) completeTaskWithNotification(ctx context.Context, taskID int64,
 
 func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 	switch task.Type {
-	case model.AgentTaskTypeNetworkPing, model.AgentTaskTypeNetworkTrace, model.AgentTaskTypeNetworkTCP, model.AgentTaskTypeNetworkDNS, model.AgentTaskTypeNetworkHTTP:
-		// A failed plugin diagnostic is a result for the plugin run, not an
-		// operator incident; plugins notify through their own capability.
+	case model.AgentTaskTypeNetworkPing, model.AgentTaskTypeNetworkTrace, model.AgentTaskTypeNetworkTCP, model.AgentTaskTypeNetworkDNS, model.AgentTaskTypeNetworkHTTP, model.AgentTaskTypeGoogleRegion:
+		// A failed diagnostic is a result for the plugin run or monitor that
+		// asked for it, not an operator incident.
 		return
 	}
 	switch task.Type {

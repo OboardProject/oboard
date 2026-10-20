@@ -9,6 +9,7 @@ import (
 	"github.com/OboardProject/oboard/internal/security"
 	"log"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -70,7 +71,8 @@ func (s *Server) runProbeMonitor(ctx context.Context, client *ipdata.Service, ta
 			return "failed", "请填写公网 IP 或先配置服务器公网 IPv4", nil, nil
 		}
 		report := client.Lookup(ctx, ip, ipdata.Scope{Attribution: true, Quality: true})
-		result := map[string]any{"ip": ip, "attribution": report.Attribution, "quality": report.Quality}
+		google := s.monitorGoogleRegion(ctx, *server, task)
+		result := map[string]any{"ip": ip, "attribution": report.Attribution, "quality": report.Quality, "google": google}
 		attribution, quality := report.Attribution.Status, report.Quality.Status
 		switch {
 		case attribution == "unknown" && quality == "unknown":
@@ -111,14 +113,75 @@ func (s *Server) monitorTrace(ctx context.Context, server model.Server, monitor 
 	}
 	now := time.Now().UTC()
 	payload := model.NetworkTraceTaskPayload{NetworkDiagnosticEnvelope: model.NetworkDiagnosticEnvelope{ProtocolVersion: model.NetworkDiagnosticProtocolVersion, OperationID: operationID, Origin: model.NetworkDiagnosticOriginMonitor, IssuedAt: now, ExpiresAt: now.Add(15 * time.Second)}, Target: monitor.Target, IPFamily: model.NetworkFamilyAuto, Mode: monitor.Mode, Port: monitor.Port, MaxHops: 30, QueriesPerHop: 1, PerHopTimeoutMS: 1000}
-	raw, _ := json.Marshal(payload)
-	nonce, err := security.RandomToken(12)
+	raw, err := s.runMonitorAgentTask(ctx, server, monitor, model.AgentTaskTypeNetworkTrace, payload, "服务器路由探测")
 	if err != nil {
 		return trace, err
 	}
-	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeNetworkTrace, PayloadJSON: string(raw), Status: "pending", ResultJSON: "{}", Nonce: nonce}
+	if len(raw) > 128*1024 || json.Unmarshal([]byte(raw), &trace) != nil || trace.OperationID != operationID || trace.Target != monitor.Target || trace.Mode != monitor.Mode || trace.Port != monitor.Port {
+		return trace, errors.New("拨测结果与请求不匹配")
+	}
+	return trace, nil
+}
+
+// monitorGoogleRegion asks the server which country Google serves its own
+// public IPv4 as. It is only meaningful when the monitored IP is the server's
+// own address, because the Agent can only speak from its own egress.
+func (s *Server) monitorGoogleRegion(ctx context.Context, server model.Server, monitor model.ProbeMonitor) googleRegionReport {
+	switch {
+	case monitor.Target != "" && monitor.Target != server.PublicIPv4:
+		return googleRegionReport{Status: "not_applicable", Error: "仅能检测服务器自身的公网 IP"}
+	case server.Status != model.ServerOnline || server.AgentID == "":
+		return googleRegionReport{Status: "offline", Error: "服务器离线"}
+	case !serverSupportsCapability(server, model.AgentCapabilityGoogleRegionProbe):
+		return googleRegionReport{Status: "unsupported", Error: "请更新 Agent 后检测"}
+	}
+	operationID, err := security.RandomToken(18)
+	if err != nil {
+		return googleRegionReport{Status: "failed", Error: "无法创建检测任务"}
+	}
+	now := time.Now().UTC()
+	payload := model.GoogleRegionTaskPayload{NetworkDiagnosticEnvelope: model.NetworkDiagnosticEnvelope{ProtocolVersion: model.NetworkDiagnosticProtocolVersion, OperationID: operationID, Origin: model.NetworkDiagnosticOriginMonitor, IssuedAt: now, ExpiresAt: now.Add(15 * time.Second)}, IPFamily: model.NetworkFamilyIPv4}
+	raw, err := s.runMonitorAgentTask(ctx, server, monitor, model.AgentTaskTypeGoogleRegion, payload, "Google 送中检测")
+	if err != nil {
+		return googleRegionReport{Status: "failed", Error: err.Error()}
+	}
+	var result model.GoogleRegionResult
+	if len(raw) > 4*1024 || json.Unmarshal([]byte(raw), &result) != nil || result.OperationID != operationID {
+		return googleRegionReport{Status: "failed", Error: "检测结果与请求不匹配"}
+	}
+	return googleRegionFromResult(result)
+}
+
+type googleRegionReport struct {
+	Status      string `json:"status"`
+	CountryCode string `json:"country_code,omitempty"`
+	SentToChina bool   `json:"sent_to_china"`
+	Error       string `json:"error,omitempty"`
+}
+
+func googleRegionFromResult(result model.GoogleRegionResult) googleRegionReport {
+	code := strings.ToUpper(result.CountryCode)
+	if len(code) != 2 || code[0] < 'A' || code[0] > 'Z' || code[1] < 'A' || code[1] > 'Z' {
+		message := "Google 未返回地区"
+		if result.ErrorClass != "" && result.ErrorClass != "region_unknown" {
+			message = "无法连接 Google（" + result.ErrorClass + "）"
+		}
+		return googleRegionReport{Status: "unknown", Error: message}
+	}
+	return googleRegionReport{Status: "ok", CountryCode: code, SentToChina: code == "CN"}
+}
+
+// runMonitorAgentTask queues one signed monitor-origin task and waits for its
+// result JSON. A task that could not finish is superseded on return.
+func (s *Server) runMonitorAgentTask(ctx context.Context, server model.Server, monitor model.ProbeMonitor, taskType string, payload any, label string) (string, error) {
+	raw, _ := json.Marshal(payload)
+	nonce, err := security.RandomToken(12)
+	if err != nil {
+		return "", err
+	}
+	task := model.AgentTask{ServerID: server.ID, Type: taskType, PayloadJSON: string(raw), Status: "pending", ResultJSON: "{}", Nonce: nonce}
 	if err = s.store.CreateProbeMonitorTask(ctx, server, monitor, &task); err != nil {
-		return trace, err
+		return "", err
 	}
 	s.tasks.wake(server.ID)
 	waitCtx, cancel := context.WithTimeout(ctx, 75*time.Second)
@@ -133,20 +196,17 @@ func (s *Server) monitorTrace(ctx context.Context, server model.Server, monitor 
 	for {
 		current, err := s.store.GetTask(waitCtx, task.ID)
 		if err != nil {
-			return trace, errors.New("读取拨测结果失败")
+			return "", errors.New("读取拨测结果失败")
 		}
 		if current.Status == "succeeded" {
-			if len(current.ResultJSON) > 128*1024 || json.Unmarshal([]byte(current.ResultJSON), &trace) != nil || trace.OperationID != operationID || trace.Target != monitor.Target || trace.Mode != monitor.Mode || trace.Port != monitor.Port {
-				return trace, errors.New("拨测结果与请求不匹配")
-			}
-			return trace, nil
+			return current.ResultJSON, nil
 		}
 		if current.Status == "failed" || current.Status == "superseded" || current.Status == "rollback_failed" {
-			return trace, errors.New("服务器路由探测失败，请查看任务结果")
+			return "", errors.New(label + "失败，请查看任务结果")
 		}
 		select {
 		case <-waitCtx.Done():
-			return trace, errors.New("服务器路由探测超时")
+			return "", errors.New(label + "超时")
 		case <-ticker.C:
 		}
 	}

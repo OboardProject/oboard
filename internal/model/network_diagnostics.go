@@ -11,6 +11,10 @@ const (
 	AgentTaskTypeNetworkTCP   = "probe_network_tcp"
 	AgentTaskTypeNetworkDNS   = "probe_network_dns"
 	AgentTaskTypeNetworkHTTP  = "probe_network_http"
+	// AgentTaskTypeGoogleRegion is a native IP-quality monitor operation, never
+	// a plugin diagnostic: the Agent fetches one fixed Google page from this
+	// server's own address and reports only the country Google assigns to it.
+	AgentTaskTypeGoogleRegion = "probe_google_region"
 
 	// AgentCapabilityNetworkDiagnostics is advertised by Agents that accept the
 	// probe_network_* tasks. Per-operation capabilities say which ones this
@@ -28,6 +32,7 @@ const (
 	NetworkDiagnosticOriginPlugin    = "plugin"
 	NetworkDiagnosticOriginMonitor   = "monitor"
 	AgentCapabilityRouteMonitor      = "route_monitor_v1"
+	AgentCapabilityGoogleRegionProbe = "google_region_probe_v1"
 
 	NetworkFamilyAuto = "auto"
 	NetworkFamilyIPv4 = "ipv4"
@@ -237,6 +242,25 @@ type NetworkHTTPProbeResult struct {
 	Timings     NetworkHTTPTimings `json:"timings"`
 	TLS         *NetworkHTTPTLS    `json:"tls,omitempty"`
 	ErrorClass  string             `json:"error_class,omitempty"`
+}
+
+// GoogleRegionTaskPayload carries no URL, host or header: the probed page is
+// fixed in the Agent. Only the monitor origin may issue it.
+type GoogleRegionTaskPayload struct {
+	NetworkDiagnosticEnvelope
+	IPFamily string `json:"ip_family"`
+}
+
+// GoogleRegionResult reports the two-letter country Google serves this
+// address as. SentToChina is true when that country is CN, the condition
+// operators call "送中".
+type GoogleRegionResult struct {
+	OperationID string `json:"operation_id"`
+	CountryCode string `json:"country_code,omitempty"`
+	SentToChina bool   `json:"sent_to_china"`
+	ResolvedIP  string `json:"resolved_ip,omitempty"`
+	StatusCode  int    `json:"status_code,omitempty"`
+	ErrorClass  string `json:"error_class,omitempty"`
 }
 
 // Diagnostic failure codes reported by the Agent in {"code": ...}.

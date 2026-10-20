@@ -220,7 +220,7 @@ func ValidateProbeMonitor(v *model.ProbeMonitor) error {
 }
 
 func (s *Store) CreateProbeMonitorTask(ctx context.Context, server model.Server, v model.ProbeMonitor, task *model.AgentTask) error {
-	if task.Type != model.AgentTaskTypeNetworkTrace || task.ServerID != server.ID {
+	if (task.Type != model.AgentTaskTypeNetworkTrace && task.Type != model.AgentTaskTypeGoogleRegion) || task.ServerID != server.ID {
 		return errors.New("invalid monitor task")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -238,7 +238,7 @@ func (s *Store) CreateProbeMonitorTask(ctx context.Context, server model.Server,
 	if count != 1 {
 		return errors.New("监控任务已改变")
 	}
-	if err = tx.QueryRowContext(ctx, "select count(*) from agent_tasks where server_id=? and type in ('probe_network_trace','probe_network_ping','probe_network_tcp','probe_network_dns','probe_network_http') and status in ('pending','running')", server.ID).Scan(&count); err != nil {
+	if err = tx.QueryRowContext(ctx, "select count(*) from agent_tasks where server_id=? and type in ('probe_network_trace','probe_network_ping','probe_network_tcp','probe_network_dns','probe_network_http','probe_google_region') and status in ('pending','running')", server.ID).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {

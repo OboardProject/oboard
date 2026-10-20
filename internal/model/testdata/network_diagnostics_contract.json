@@ -15,6 +15,17 @@
     "queries_per_hop": 1,
     "per_hop_timeout_ms": 1000
   },
+  "probe_google_region": {
+    "protocol_version": 1,
+    "operation_id": "monitor-2",
+    "origin": "monitor",
+    "run_id": "",
+    "plugin_id": "",
+    "instance_id": 0,
+    "issued_at": "2026-09-30T12:00:00Z",
+    "expires_at": "2026-09-30T12:01:00Z",
+    "ip_family": "ipv4"
+  },
   "probe_network_dns": {
     "protocol_version": 1,
     "operation_id": "op-1",
@@ -103,6 +114,13 @@
       }
     ],
     "duration_ms": 4.5
+  },
+  "result.google_region": {
+    "operation_id": "monitor-2",
+    "country_code": "CN",
+    "sent_to_china": true,
+    "resolved_ip": "142.250.4.93",
+    "status_code": 200
   },
   "result.http": {
     "operation_id": "op-1",

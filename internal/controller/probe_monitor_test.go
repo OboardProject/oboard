@@ -210,3 +210,33 @@ func TestIPDataKeysAreEncryptedAndNeverReturned(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestGoogleRegionReportOnlyProbesTheServersOwnOnlineAddress(t *testing.T) {
+	s := &Server{}
+	server := model.Server{ID: 1, PublicIPv4: "203.0.113.9", Status: model.ServerOnline, AgentID: "agent-1"}
+	if got := s.monitorGoogleRegion(context.Background(), server, model.ProbeMonitor{Kind: "ip_quality", Target: "198.51.100.7"}); got.Status != "not_applicable" {
+		t.Fatalf("a foreign target must not be probed from the server: %+v", got)
+	}
+	offline := server
+	offline.Status = model.ServerOffline
+	if got := s.monitorGoogleRegion(context.Background(), offline, model.ProbeMonitor{Kind: "ip_quality"}); got.Status != "offline" {
+		t.Fatalf("offline server: %+v", got)
+	}
+	if got := s.monitorGoogleRegion(context.Background(), server, model.ProbeMonitor{Kind: "ip_quality", Target: "203.0.113.9"}); got.Status != "unsupported" {
+		t.Fatalf("an Agent without the capability must not receive the task: %+v", got)
+	}
+	for _, tc := range []struct {
+		result model.GoogleRegionResult
+		want   googleRegionReport
+	}{
+		{model.GoogleRegionResult{CountryCode: "CN", SentToChina: true}, googleRegionReport{Status: "ok", CountryCode: "CN", SentToChina: true}},
+		{model.GoogleRegionResult{CountryCode: "sg"}, googleRegionReport{Status: "ok", CountryCode: "SG"}},
+		{model.GoogleRegionResult{ErrorClass: "region_unknown"}, googleRegionReport{Status: "unknown", Error: "Google 未返回地区"}},
+		{model.GoogleRegionResult{ErrorClass: "timeout"}, googleRegionReport{Status: "unknown", Error: "无法连接 Google（timeout）"}},
+		{model.GoogleRegionResult{CountryCode: "C1"}, googleRegionReport{Status: "unknown", Error: "Google 未返回地区"}},
+	} {
+		if got := googleRegionFromResult(tc.result); got != tc.want {
+			t.Fatalf("%+v: got %+v, want %+v", tc.result, got, tc.want)
+		}
+	}
+}

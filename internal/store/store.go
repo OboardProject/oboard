@@ -6445,6 +6445,7 @@ func (s *Store) SupersedePendingOperationalTasks(ctx context.Context, serverID i
 		model.AgentTaskTypeNetworkTCP,
 		model.AgentTaskTypeNetworkDNS,
 		model.AgentTaskTypeNetworkHTTP,
+		model.AgentTaskTypeGoogleRegion,
 	} {
 		if err := s.SupersedePendingTasksByServerType(ctx, serverID, taskType, reason); err != nil {
 			return err

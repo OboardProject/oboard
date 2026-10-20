@@ -8,7 +8,7 @@ import { Select } from "../ui/select"
 import { Switch } from "../ui/switch"
 import type { Server } from "../proxy-path/types"
 import { ipDataProviderName, ipDataStatusText, ipDataStatusTone } from "../ip-data/labels"
-import { RegionFlag, serverRegionCode } from "../ui/RegionFlag"
+import { RegionFlag, regionLabel, serverRegionCode } from "../ui/RegionFlag"
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any>; requestV2?: (path: string, init?: RequestInit) => Promise<any> }
 type Monitor = { id: number; server_id: number; revision: number; name: string; kind: "route" | "ip_quality"; target: string; mode: string; port: number; interval_seconds: number; enabled: boolean; checked_at?: string; status?: string; error?: string; result?: any }
@@ -19,6 +19,7 @@ type Source = { provider: string; status: string; error?: string; keyed?: boolea
 type Agreement = { agree: number; total: number }
 type Attribution = { status: string; primary?: string; asn?: string; as_name?: string; country_code?: string; country?: string; region?: string; city?: string; field_sources?: Record<string, string>; asn_agreement?: Agreement; country_agreement?: Agreement; conflicts?: { provider: string; field: string; value: string }[]; sources?: Source[] }
 type Verdict = { state: string; positive: number; negative: number; flagged_by?: string[] }
+type GoogleRegion = { status: string; country_code?: string; sent_to_china?: boolean; error?: string }
 type Quality = { status: string; proxy?: Verdict; vpn?: Verdict; tor?: Verdict; hosting?: Verdict; abuser?: Verdict; risk?: number; risk_source?: string; abuse_score?: number; abuse_source?: string; reports?: number; sources?: Source[] }
 
 const statusText: Record<string, string> = { pending: "等待执行", running: "执行中", ok: "已获取", partial: "部分可用", unknown: "结果不完整", offline: "服务器离线", unsupported: "需要更新 Agent", not_configured: "未配置", failed: "执行失败", unavailable: "查询失败", quota_exhausted: "额度用完" }
@@ -173,7 +174,7 @@ function QualityScore({ task }: { task: Monitor }) {
   const items = ([["风险", q.risk, q.risk_source], ["滥用", q.abuse_score, q.abuse_source]] as const).filter(([, value]) => typeof value === "number")
   return <div className="probe-quality-score">
     {items.length ? items.map(([label, value, source]) => <span key={label} className={`probe-task-badge ${scoreTone(value as number)}`} title={source ? `${providerName[source] || source} 评分，越低越好` : "越低越好"}>{label} {value}</span>) : <span className="probe-task-badge">评分未知</span>}
-    {task.result.ip && <small className="muted">{task.result.ip}</small>}
+    {(task.result.google as GoogleRegion | undefined)?.sent_to_china && <span className="probe-task-badge offline" title="Google 将该 IP 判定为中国大陆">Google 送中</span>}
   </div>
 }
 
@@ -223,7 +224,7 @@ function MonitorForm({ task, servers, busy, onChange, onCancel, onSubmit }: { ta
         <span><strong>启用该任务</strong><small className="muted">停用后保留配置与历史，但不再执行检测。</small></span>
         <Switch checked={task.enabled} ariaLabel="启用该任务" onChange={enabled => onChange({ ...task, enabled })} />
       </label>}
-      <p className="muted">{route ? "以 NextTrace 归属数据为主，缺失的跳由主控 NextTrace 与 IP 归属数据源补全。首次结果作为基线，之后仅在 ASN 路径变化时新增记录；有未回应跳或归属仍无法补全时不判定变化。" : "归属信息以 IPinfo 为准并与其他来源交叉校验；质量信息由多个来源投票。任一来源不可用时自动降级。"}</p>
+      <p className="muted">{route ? "以 NextTrace 归属数据为主，缺失的跳由主控 NextTrace 与 IP 归属数据源补全。首次结果作为基线，之后仅在 ASN 路径变化时新增记录；有未回应跳或归属仍无法补全时不判定变化。" : "归属信息以 IPinfo 为准并与其他来源交叉校验；质量信息由多个来源投票。任一来源不可用时自动降级。检测服务器自身公网 IP 时，还会由该服务器访问 Google 判断是否送中。"}</p>
       <div className="return-latency-form-actions">
         <button type="button" className="ghost" onClick={onCancel}>取消</button>
         <button type="submit" className="primary" disabled={!canSubmit}>{busy && <Loader2 size={15} className="spin" aria-hidden="true" />}{busy ? "保存中…" : locked ? "保存任务" : "创建任务"}</button>
@@ -269,8 +270,22 @@ function SourceList({ sources, quality }: { sources?: Source[]; quality?: boolea
   </details>
 }
 
-function QualityResult({ result }: { result?: { ip?: string; attribution?: Attribution; quality?: Quality } }) {
-  const a = result?.attribution, q = result?.quality
+const googleStatusText: Record<string, string> = { offline: "服务器离线", unsupported: "需要更新 Agent", not_applicable: "不适用", failed: "检测失败", unknown: "结果未知" }
+
+function GoogleRegionCard({ google }: { google: GoogleRegion }) {
+  const known = google.status === "ok" && google.country_code
+  return <section className="probe-quality-card" aria-label="Google 送中检测">
+    <header><h4>Google 送中检测</h4>{known ? <span className={`probe-task-badge ${google.sent_to_china ? "offline" : "online"}`}>{google.sent_to_china ? "已送中" : "未送中"}</span> : <span className="probe-task-badge">{googleStatusText[google.status] || google.status}</span>}</header>
+    <dl className="probe-quality-metrics">
+      <div><dt>Google 判定地区</dt><dd>{known ? <span className="probe-monitor-server"><RegionFlag code={google.country_code} size={16} />{regionLabel(google.country_code)} {google.country_code}</span> : "未知"}</dd></div>
+    </dl>
+    {!known && google.error && <p className="muted">{google.error}</p>}
+    {google.sent_to_china && <p className="muted">Google 将该 IP 视为中国大陆，Google 搜索、YouTube 等服务可能跳转到 google.cn 或不可用。</p>}
+  </section>
+}
+
+function QualityResult({ result }: { result?: { ip?: string; attribution?: Attribution; quality?: Quality; google?: GoogleRegion } }) {
+  const a = result?.attribution, q = result?.quality, google = result?.google
   if (!a && !q) return <p className="muted">尚无检测结果。</p>
   const sourceOf = (field: string) => a?.field_sources?.[field] ? `（${providerName[a.field_sources[field]] || a.field_sources[field]}）` : ""
   return <div className="probe-quality-results">
@@ -304,6 +319,7 @@ function QualityResult({ result }: { result?: { ip?: string; attribution?: Attri
         <SourceList sources={q.sources} quality />
       </section>}
     </div>
+      {google && <GoogleRegionCard google={google} />}
     <p className="muted">每项按各来源投票；机房不等于滥用，未查询到的数据显示为未知，不合成纯净度总分。</p>
   </div>
 }

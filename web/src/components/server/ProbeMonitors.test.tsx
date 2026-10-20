@@ -48,17 +48,32 @@ it("shows attribution and quality separately, with votes and degraded sources", 
 })
 it("scores the latest IP quality result and flags the server without describing sources", async () => {
   const quality = { status: "partial", risk: 72, risk_source: "proxycheck", abuse_score: 0, abuse_source: "abuseipdb" }
-  const monitor = { ...task, kind: "ip_quality", target: "", status: "partial", error: "部分数据源未配置或查询失败，已自动使用备用来源", result: { ip: "1.1.1.1", attribution: { status: "degraded" }, quality } }
+  const monitor = { ...task, kind: "ip_quality", target: "", status: "partial", error: "部分数据源未配置或查询失败，已自动使用备用来源", result: { ip: "1.1.1.1", attribution: { status: "degraded" }, quality, google: { status: "ok", country_code: "CN", sent_to_china: true } } }
   const requestV2 = vi.fn(async () => ({ monitors: [monitor], providers: {} }))
   await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={[{ id: 1, name: "A", region_mode: "auto", region_code: "", detected_region_code: "JP" }] as Server[]} kind="ip_quality" canManage />))
   const row = document.body.querySelector("tbody tr")!
   expect(row.querySelector('[data-label="服务器"] img')?.getAttribute("alt")).toBe("日本")
   const cell = row.querySelector('[data-label="最近结果"]')!
-  expect([...cell.querySelectorAll(".probe-task-badge")].map(item => [item.textContent, item.className])).toEqual([["风险 72", "probe-task-badge offline"], ["滥用 0", "probe-task-badge online"]])
+  expect([...cell.querySelectorAll(".probe-task-badge")].map(item => [item.textContent, item.className])).toEqual([["风险 72", "probe-task-badge offline"], ["滥用 0", "probe-task-badge online"], ["Google 送中", "probe-task-badge offline"]])
   expect(cell.textContent).not.toContain("数据源")
   expect(cell.textContent).not.toContain("部分可用")
+  expect(cell.textContent).not.toContain("1.1.1.1")
   await act(async () => button("结果").click())
   expect(document.body.textContent).not.toContain("部分数据源未配置")
+  const google = document.body.querySelector('[aria-label="Google 送中检测"]')!
+  expect(google.querySelector("header .probe-task-badge")?.textContent).toBe("已送中")
+  expect(google.textContent).toContain("中国 CN")
+})
+
+it("lists no Google pill when the IP is not sent to China and explains a skipped check", async () => {
+  const monitor = { ...task, kind: "ip_quality", target: "198.51.100.7", status: "ok", error: "", result: { ip: "198.51.100.7", attribution: { status: "ok" }, quality: { status: "ok", risk: 0 }, google: { status: "not_applicable", sent_to_china: false, error: "仅能检测服务器自身的公网 IP" } } }
+  const requestV2 = vi.fn(async () => ({ monitors: [monitor], providers: {} }))
+  await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={servers} kind="ip_quality" canManage />))
+  expect(document.body.querySelector('[data-label="最近结果"]')?.textContent).toBe("风险 0")
+  await act(async () => button("结果").click())
+  const google = document.body.querySelector('[aria-label="Google 送中检测"]')!
+  expect(google.querySelector("header .probe-task-badge")?.textContent).toBe("不适用")
+  expect(google.textContent).toContain("仅能检测服务器自身的公网 IP")
 })
 
 it.each(["route", "ip_quality"] as const)("toasts a failed %s edit while preserving its draft", async kind => {

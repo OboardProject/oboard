@@ -16,6 +16,8 @@ func networkDiagnosticContractSamples() map[string]any {
 	return map[string]any{
 		"result.monitor_trace":    NetworkTraceResult{OperationID: "monitor-1", Target: "1.1.1.1", ResolvedIP: "1.1.1.1", IPFamily: NetworkFamilyIPv4, Mode: TraceModeICMP, StartedAt: issued, Reached: true, Provider: "NextTrace-API", Hops: []NetworkTraceHop{{Hop: 1, Addresses: []string{"1.1.1.1"}, Probes: []NetworkTraceProbe{{Address: "1.1.1.1", RTTMS: 3}}, Geography: []NetworkTraceGeography{{Address: "1.1.1.1", ASN: "AS13335", Owner: "Cloudflare", Country: "United States", Province: "California", City: "Los Angeles", ISP: "Cloudflare", Prefix: "1.1.1.0/24", Router: map[string][]string{"backbone": {"calibrated"}}}}}}},
 		"monitor.trace":           NetworkTraceTaskPayload{NetworkDiagnosticEnvelope: NetworkDiagnosticEnvelope{ProtocolVersion: NetworkDiagnosticProtocolVersion, OperationID: "monitor-1", Origin: NetworkDiagnosticOriginMonitor, IssuedAt: issued, ExpiresAt: issued.Add(time.Minute)}, Target: "example.com", IPFamily: NetworkFamilyAuto, Mode: TraceModeICMP, MaxHops: 30, QueriesPerHop: 1, PerHopTimeoutMS: 1000},
+		AgentTaskTypeGoogleRegion: GoogleRegionTaskPayload{NetworkDiagnosticEnvelope: NetworkDiagnosticEnvelope{ProtocolVersion: NetworkDiagnosticProtocolVersion, OperationID: "monitor-2", Origin: NetworkDiagnosticOriginMonitor, IssuedAt: issued, ExpiresAt: issued.Add(time.Minute)}, IPFamily: NetworkFamilyIPv4},
+		"result.google_region":    GoogleRegionResult{OperationID: "monitor-2", CountryCode: "CN", SentToChina: true, ResolvedIP: "142.250.4.93", StatusCode: 200},
 		AgentTaskTypeNetworkPing:  NetworkPingTaskPayload{NetworkDiagnosticEnvelope: envelope, Target: "example.com", IPFamily: NetworkFamilyAuto, Count: 4, IntervalMS: 1000, TimeoutMS: 1000, PacketSize: 56},
 		AgentTaskTypeNetworkTrace: NetworkTraceTaskPayload{NetworkDiagnosticEnvelope: envelope, Target: "example.com", IPFamily: NetworkFamilyIPv4, Mode: TraceModeTCP, Port: 443, MaxHops: 20, QueriesPerHop: 3, PerHopTimeoutMS: 1000},
 		AgentTaskTypeNetworkTCP:   NetworkTCPProbeTaskPayload{NetworkDiagnosticEnvelope: envelope, Host: "example.com", Port: 443, IPFamily: NetworkFamilyAuto, TimeoutMS: 3000},
@@ -73,6 +75,10 @@ func newContractValue(sample any) any {
 		return &NetworkDNSLookupTaskPayload{}
 	case NetworkHTTPProbeTaskPayload:
 		return &NetworkHTTPProbeTaskPayload{}
+	case GoogleRegionTaskPayload:
+		return &GoogleRegionTaskPayload{}
+	case GoogleRegionResult:
+		return &GoogleRegionResult{}
 	case NetworkPingResult:
 		return &NetworkPingResult{}
 	case NetworkTraceResult:

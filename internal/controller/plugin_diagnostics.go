@@ -33,7 +33,7 @@ func (h *pluginHost) RunNetworkDiagnostic(ctx context.Context, request plugin.Di
 	if !ok {
 		return nil, plugin.Fail(plugin.CodeUnsupportedCapability, "unsupported diagnostic")
 	}
-	active, err := s.store.CountActiveAgentTasks(ctx, request.ServerID, NetworkDiagnosticTaskTypes())
+	active, err := s.store.CountActiveAgentTasks(ctx, request.ServerID, append(NetworkDiagnosticTaskTypes(), model.AgentTaskTypeGoogleRegion))
 	if err != nil {
 		return nil, plugin.Fail(plugin.CodeInternal, "internal error")
 	}
