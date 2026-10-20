@@ -786,7 +786,11 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "servers.delete":
 		return schemaObject(map[string]any{"server_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "server_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "server_id": positiveID}), "server_ids"
 	case "servers.extend_expiry":
-		return schemaObject(map[string]any{"server_id": positiveID, "days": map[string]any{"type": "integer", "minimum": 1, "maximum": 3650}}, "server_id", "days"), simpleOutput(map[string]any{"server_id": positiveID, "expires_at": stringValue, "days": map[string]any{"type": "integer"}}), "server_ids"
+		return schemaObject(map[string]any{
+			"server_id": positiveID,
+			"months":    map[string]any{"type": "integer", "minimum": 1, "maximum": 120, "description": "按自然月顺延到同一日期（月底取当月最后一天）；1 年传 12。与 days 二选一"},
+			"days":      map[string]any{"type": "integer", "minimum": 1, "maximum": 3650, "description": "按自然日顺延。与 months 二选一"},
+		}, "server_id"), simpleOutput(map[string]any{"server_id": positiveID, "expires_at": stringValue, "months": map[string]any{"type": "integer"}, "days": map[string]any{"type": "integer"}}), "server_ids"
 	case "servers.reset_traffic":
 		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
 			"server_id":              positiveID,

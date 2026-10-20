@@ -63,6 +63,7 @@ type telegramActionPayload struct {
 	InboundID       int64   `json:"inbound_id,omitempty"`
 	UserID          int64   `json:"user_id,omitempty"`
 	Days            int     `json:"days,omitempty"`
+	Months          int     `json:"months,omitempty"`
 	IncidentID      int64   `json:"incident_id,omitempty"`
 	EventVersion    int64   `json:"event_version,omitempty"`
 	InboundIDs      []int64 `json:"inbound_ids,omitempty"`
@@ -139,13 +140,15 @@ func telegramNotificationActionSpecs(in telegramActionInput) []telegramActionSpe
 	case notificationServerExpiry:
 		if in.Context.ServerID > 0 {
 			for _, choice := range []struct {
-				days  int
-				label string
-				row   int
-			}{{7, "+7 天", 1}, {30, "+30 天", 1}, {90, "+90 天", 2}, {365, "+1 年", 2}} {
-				days := choice.days
+				days   int
+				months int
+				label  string
+				row    int
+			}{{7, 0, "+7 天", 1}, {0, 1, "+1 个月", 1}, {0, 3, "+3 个月", 2}, {0, 12, "+1 年", 2}} {
+				days, months := choice.days, choice.months
 				add(choice.row, "extend_expiry", choice.label, func(payload *telegramActionPayload) {
 					payload.Days = days
+					payload.Months = months
 				})
 			}
 		}
@@ -232,10 +235,12 @@ func telegramActionNeedsConfirm(action string) bool {
 	}
 }
 
-func telegramExtendDaysAllowed(days int) bool {
-	switch days {
-	case 7, 30, 90, 365:
-		return true
+func telegramExtendAllowed(payload telegramActionPayload) bool {
+	switch {
+	case payload.Months == 0:
+		return payload.Days == 7
+	case payload.Days == 0:
+		return payload.Months == 1 || payload.Months == 3 || payload.Months == 12
 	default:
 		return false
 	}
@@ -611,8 +616,8 @@ func (s *Server) authorizeTelegramAction(principal application.Principal, role m
 	case "create_backup":
 		return requireCapability("backups.create")
 	case "extend_expiry":
-		if !telegramExtendDaysAllowed(payload.Days) {
-			return errors.New("延期天数无效")
+		if !telegramExtendAllowed(payload) {
+			return errors.New("延期时长无效")
 		}
 		if err := requireCapability("servers.extend_expiry"); err != nil {
 			return err
@@ -661,14 +666,17 @@ func (s *Server) telegramActionPreview(ctx context.Context, user model.User, rol
 	case "create_backup":
 		return "确认后将立即创建一次主控备份。", nil
 	case "extend_expiry":
-		if !telegramExtendDaysAllowed(payload.Days) {
-			return "", errors.New("延期天数无效")
+		if !telegramExtendAllowed(payload) {
+			return "", errors.New("延期时长无效")
 		}
 		label := fmt.Sprintf("%d 天", payload.Days)
-		if payload.Days == 365 {
+		switch {
+		case payload.Months == 12:
 			label = "1 年"
+		case payload.Months > 0:
+			label = fmt.Sprintf("%d 个月", payload.Months)
 		}
-		return "确认后将把服务器到期日延长 " + label + "。已有到期日从当前到期日顺延。", nil
+		return "确认后将把服务器到期日延长 " + label + "。已有到期日从当前到期日顺延，按月延长时顺延到同一日期。", nil
 	case "incident_isolate", "incident_remove":
 		return s.telegramIncidentPreviewText(ctx, payload)
 	case "incident_restore":
@@ -740,10 +748,14 @@ func (s *Server) executeTelegramAction(ctx context.Context, user model.User, rol
 	case "create_backup":
 		return s.applyTelegramChangeset(ctx, principal, "backups.create", map[string]any{}, confirmToken, "Telegram 通知立即备份")
 	case "extend_expiry":
-		if !telegramExtendDaysAllowed(payload.Days) {
-			return "", errors.New("延期天数无效")
+		if !telegramExtendAllowed(payload) {
+			return "", errors.New("延期时长无效")
 		}
-		return s.applyTelegramChangeset(ctx, principal, "servers.extend_expiry", map[string]any{"server_id": payload.ServerID, "days": payload.Days}, confirmToken, "Telegram 通知延长服务器到期")
+		input := map[string]any{"server_id": payload.ServerID, "days": payload.Days}
+		if payload.Months > 0 {
+			input = map[string]any{"server_id": payload.ServerID, "months": payload.Months}
+		}
+		return s.applyTelegramChangeset(ctx, principal, "servers.extend_expiry", input, confirmToken, "Telegram 通知延长服务器到期")
 	case "incident_isolate", "incident_remove":
 		action := "isolate"
 		if payload.Action == "incident_remove" {

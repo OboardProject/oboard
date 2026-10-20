@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { MotionDialogPanel } from '../ui/motion'
 import { Select } from '../ui/select'
+import { applyServerExpiryExtension, serverExpiryExtensionLabel, serverExpiryQuickExtensions } from '../../server-expiry'
 import { FormField } from '../ui/form-field'
 import type { Server, RegionMode } from '../proxy-path/types'
 
@@ -61,13 +62,6 @@ function serverExpiryOutputValue(value: string) {
   if (Number.isNaN(d.getTime())) return value
   return d.toISOString()
 }
-function addDaysToExpiryDate(current: string | undefined, days: number) {
-  const base = current ? new Date(current) : new Date()
-  if (Number.isNaN(base.getTime())) return serverExpiryInputValue(new Date().toISOString())
-  base.setDate(base.getDate() + days)
-  return serverExpiryInputValue(base.toISOString())
-}
-
 function ServerRegionField({ draft, update, servers }: { draft:any; update:(p:any)=>void; servers?: Server[] }) {
   // simplify: use Select
   return (
@@ -142,11 +136,10 @@ export function ServerBasicSettingsDialog({ server, onCancel, onSubmit }: { serv
             <input type="date" value={draft.expires_at||''} onChange={e=>update({expires_at: e.target.value})} />
             <div className="server-expiry-quick-row">
               <span>快速延长</span>
-              {[7,30,90,365].map(d=>{
-                const label = d===365? '1 年' : `${d} 天`
-                return <button key={d} type="button" className="ghost" onClick={()=>update({expires_at: addDaysToExpiryDate(draft.expires_at, d)})}>+{label}</button>
+              {serverExpiryQuickExtensions.map(extension=>{
+                const label = serverExpiryExtensionLabel(extension)
+                return <button key={label} type="button" className="ghost" onClick={()=>update({expires_at: applyServerExpiryExtension(draft.expires_at || '', extension)})}>+{label}</button>
               })}
-              {[1,3].map(d=> <button key={d} type="button" className="ghost" onClick={()=>update({expires_at: addDaysToExpiryDate(draft.expires_at, d)})}>+{d} 天</button>)}
             </div>
           </FormField>
           <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动顺延">

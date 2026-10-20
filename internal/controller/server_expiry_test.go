@@ -142,6 +142,38 @@ func TestServerExtendExpiryRESTEndpoint(t *testing.T) {
 	if expiresAt.In(time.FixedZone("Asia/Shanghai", 8*3600)).Format("2006-01-02") != "2026-09-04" {
 		t.Fatalf("extended expiry = %v, want 2026-09-04", expiresAt)
 	}
+
+	path := "/api/v1/ui/servers/" + fmt.Sprint(int64(created["id"].(float64))) + "/extend-expiry"
+	monthly := request(t, h, http.MethodPost, path, token, map[string]any{"months": 1}, http.StatusOK)
+	expiresAt, _ = time.Parse(time.RFC3339Nano, fmt.Sprintf("%v", monthly["server"].(map[string]any)["expires_at"]))
+	if expiresAt.In(time.FixedZone("Asia/Shanghai", 8*3600)).Format("2006-01-02") != "2026-10-04" || monthly["months"] != float64(1) {
+		t.Fatalf("monthly extension = %#v, want 2026-10-04", monthly)
+	}
+	request(t, h, http.MethodPost, path, token, map[string]any{"months": 1, "days": 3}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, path, token, map[string]any{"months": 121}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusBadRequest)
+}
+
+func TestServerExpiryExtensionUsesCalendarMonths(t *testing.T) {
+	loc := time.FixedZone("Asia/Shanghai", 8*3600)
+	for _, tc := range []struct {
+		from      string
+		extension serverExpiryExtension
+		want      string
+	}{
+		{"2026-10-21", serverExpiryExtension{Months: 1}, "2026-11-21"},
+		{"2026-01-31", serverExpiryExtension{Months: 1}, "2026-02-28"},
+		{"2028-01-31", serverExpiryExtension{Months: 1}, "2028-02-29"},
+		{"2026-08-31", serverExpiryExtension{Months: 3}, "2026-11-30"},
+		{"2026-10-21", serverExpiryExtension{Months: 12}, "2027-10-21"},
+		{"2028-02-29", serverExpiryExtension{Months: 12}, "2029-02-28"},
+		{"2026-10-21", serverExpiryExtension{Days: 30}, "2026-11-20"},
+	} {
+		from, _ := time.ParseInLocation("2006-01-02", tc.from, loc)
+		if got := tc.extension.apply(from).Format("2006-01-02"); got != tc.want {
+			t.Fatalf("%s + %+v = %s, want %s", tc.from, tc.extension, got, tc.want)
+		}
+	}
 }
 
 func TestServerExpiryNotificationEventIsAdminScoped(t *testing.T) {

@@ -21,7 +21,46 @@ const (
 	defaultServerExpiryNotifyTime     = "00:00"
 	serverExpiryAutoRenewGraceDays    = 3
 	serverExpiryMaxExtendDays         = 3650
+	serverExpiryMaxExtendMonths       = 120
 )
+
+// serverExpiryExtension is either a calendar-month extension (same day of
+// month, clamped to the month end) or a natural-day extension, never both.
+type serverExpiryExtension struct {
+	Days   int `json:"days,omitempty"`
+	Months int `json:"months,omitempty"`
+}
+
+func (e serverExpiryExtension) validate() error {
+	switch {
+	case e.Days != 0 && e.Months != 0:
+		return errors.New("days and months are mutually exclusive")
+	case e.Months != 0:
+		if e.Months < 1 || e.Months > serverExpiryMaxExtendMonths {
+			return errors.New("months must be between 1 and 120")
+		}
+	case e.Days < 1 || e.Days > serverExpiryMaxExtendDays:
+		return errors.New("months must be between 1 and 120, or days between 1 and 3650")
+	}
+	return nil
+}
+
+func (e serverExpiryExtension) apply(base time.Time) time.Time {
+	if e.Months > 0 {
+		return addMonthsClamped(base, e.Months)
+	}
+	return base.AddDate(0, 0, e.Days)
+}
+
+func (e serverExpiryExtension) result(serverID int64, next time.Time) map[string]any {
+	out := map[string]any{"server_id": serverID, "expires_at": next.Format(time.RFC3339Nano)}
+	if e.Months > 0 {
+		out["months"] = e.Months
+	} else {
+		out["days"] = e.Days
+	}
+	return out
+}
 
 var defaultServerExpiryNotifyLeadDays = []int{7, 3}
 
@@ -234,9 +273,9 @@ func (s *Server) scheduleServerExpiryNotifications(ctx context.Context, settings
 	}
 }
 
-func (s *Server) extendServerExpiry(ctx context.Context, serverID int64, days int) (*model.Server, time.Time, error) {
-	if days < 1 || days > serverExpiryMaxExtendDays {
-		return nil, time.Time{}, errors.New("days must be between 1 and 3650")
+func (s *Server) extendServerExpiry(ctx context.Context, serverID int64, extension serverExpiryExtension) (*model.Server, time.Time, error) {
+	if err := extension.validate(); err != nil {
+		return nil, time.Time{}, err
 	}
 	current, err := s.store.GetServer(ctx, serverID)
 	if err != nil {
@@ -251,7 +290,7 @@ func (s *Server) extendServerExpiry(ctx context.Context, serverID int64, days in
 	if current.ExpiresAt != nil {
 		base = startOfDay(current.ExpiresAt.In(loc))
 	}
-	next := base.AddDate(0, 0, days)
+	next := extension.apply(base)
 	if err := s.store.ExtendServerExpiry(ctx, serverID, next); err != nil {
 		return nil, time.Time{}, err
 	}
@@ -267,29 +306,24 @@ func (s *Server) extendServerExpiryHandler(w http.ResponseWriter, r *http.Reques
 		method(w)
 		return
 	}
-	var request struct {
-		Days int `json:"days"`
-	}
+	var request serverExpiryExtension
 	if !decode(w, r, &request) {
 		return
 	}
-	updated, next, err := s.extendServerExpiry(r.Context(), serverID, request.Days)
+	updated, next, err := s.extendServerExpiry(r.Context(), serverID, request)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
 	auditReq(s, r, "extend_expiry", "server", fmt.Sprint(serverID))
-	write(w, http.StatusOK, map[string]any{
-		"server":     updated,
-		"server_id":  serverID,
-		"days":       request.Days,
-		"expires_at": next.Format(time.RFC3339Nano),
-	})
+	response := request.result(serverID, next)
+	response["server"] = updated
+	write(w, http.StatusOK, response)
 }
 
 type serverExtendExpiryOperation struct {
 	ServerID int64 `json:"server_id"`
-	Days     int   `json:"days"`
+	serverExpiryExtension
 }
 
 func decodeServerExtendExpiryOperation(input json.RawMessage) (serverExtendExpiryOperation, error) {
@@ -300,8 +334,8 @@ func decodeServerExtendExpiryOperation(input json.RawMessage) (serverExtendExpir
 	if request.ServerID <= 0 {
 		return request, errors.New("positive server_id is required")
 	}
-	if request.Days < 1 || request.Days > serverExpiryMaxExtendDays {
-		return request, errors.New("days must be between 1 and 3650")
+	if err := request.validate(); err != nil {
+		return request, err
 	}
 	return request, nil
 }
@@ -318,7 +352,9 @@ func (s *Server) registerServerExpiryOperation() {
 		if _, err := s.store.GetServer(ctx, request.ServerID); err != nil {
 			return nil, err
 		}
-		return map[string]any{"server_id": request.ServerID, "days": request.Days}, nil
+		preview := request.result(request.ServerID, time.Time{})
+		delete(preview, "expires_at")
+		return preview, nil
 	})
 	s.automation.RegisterRevisionResolver("servers.extend_expiry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
 		request, err := decodeServerExtendExpiryOperation(input)
@@ -339,14 +375,10 @@ func (s *Server) registerServerExpiryOperation() {
 		if !principal.AllowsInt64("server_ids", request.ServerID) {
 			return nil, errors.New("authorized server_id is required")
 		}
-		_, next, err := s.extendServerExpiry(ctx, request.ServerID, request.Days)
+		_, next, err := s.extendServerExpiry(ctx, request.ServerID, request.serverExpiryExtension)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"server_id":  request.ServerID,
-			"days":       request.Days,
-			"expires_at": next.Format(time.RFC3339Nano),
-		}, nil
+		return request.result(request.ServerID, next), nil
 	})
 }

@@ -268,7 +268,7 @@ func hasServerManageParams(params map[string]any) bool {
 		"auto_renew_enabled", "server.auto_renew_enabled", "renewal_cycle", "server.renewal_cycle", "expiry_notify_enabled", "server.expiry_notify_enabled",
 		"latency_probe_enabled", "latency_probe_mode", "latency_probe_public_target", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_max_targets",
 		"monitoring_target_task_id", "authorization_fast_lane", "runtime_users_enabled", "stealth_enabled", "bbr_qdisc", "bbr_cake_bandwidth_mbit", "display_tags", "service_start_at", "traffic_reset_mode", "traffic_reset_day",
-		"delete", "confirm", "reset_traffic", "retry_delivery", "days", "extend_days",
+		"delete", "confirm", "reset_traffic", "retry_delivery", "days", "extend_days", "months", "extend_months", "years",
 	} {
 		if _, ok := params[key]; ok {
 			return true
@@ -534,12 +534,20 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "retry_server_delivery", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 	}
 	if serverExtendExpiryRequested(input) {
-		days := inferredExtendExpiryDays(input)
-		if days < 1 {
-			return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "days", "type": "integer", "reason": "延长到期需要 1–3650 的自然日天数，例如 days=30"}}}, nil
+		extension := inferredExtendExpiry(input)
+		if extension.validate() != nil {
+			return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "months", "type": "integer", "reason": "延长到期需要时长：months=1 顺延到下个月同一日期，1 年传 months=12；按天延长传 days（1–3650）"}}}, nil
 		}
-		operation := mcpOperationRef{Capability: "servers.extend_expiry", Input: map[string]any{"server_id": resolved.Value.ID, "days": days}}
-		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "extend_server_expiry", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID, "days": days}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+		operationInput := map[string]any{"server_id": resolved.Value.ID, "days": extension.Days}
+		if extension.Months > 0 {
+			operationInput = map[string]any{"server_id": resolved.Value.ID, "months": extension.Months}
+		}
+		summary := map[string]any{"action": "extend_server_expiry", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}
+		for key, value := range operationInput {
+			summary[key] = value
+		}
+		operation := mcpOperationRef{Capability: "servers.extend_expiry", Input: operationInput}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: summary, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 	}
 	changes := map[string]any{}
 	if nested, ok := input.Params["changes"].(map[string]any); ok {
@@ -1140,7 +1148,7 @@ func serverDeliveryRetryRequested(input mcpTaskInput) bool {
 }
 
 func serverExtendExpiryRequested(input mcpTaskInput) bool {
-	if taskIntParam(input.Params, "days", "extend_days") > 0 {
+	if taskIntParam(input.Params, "days", "extend_days", "months", "extend_months", "years") > 0 {
 		return true
 	}
 	return containsAnyFold(input.Goal,
@@ -1149,21 +1157,65 @@ func serverExtendExpiryRequested(input mcpTaskInput) bool {
 	)
 }
 
-var extendExpiryDaysPattern = regexp.MustCompile(`(?i)(\d+)\s*(?:天|日|days?)`)
+var (
+	extendExpiryDaysPattern   = regexp.MustCompile(`(?i)(\d+)\s*(?:天|日|days?)`)
+	extendExpiryMonthsPattern = regexp.MustCompile(`(?i)(\d+|[一两二三四五六七八九十]+)\s*(?:个月|months?)`)
+	extendExpiryYearsPattern  = regexp.MustCompile(`(?i)(\d+|[一两二三四五六七八九十]+)\s*(?:年|years?)`)
+)
 
-func inferredExtendExpiryDays(input mcpTaskInput) int {
-	if days := taskIntParam(input.Params, "days", "extend_days"); days >= 1 && days <= 3650 {
-		return days
+// inferredExtendExpiry prefers calendar months: "续费一个月" lands on the same
+// date next month, and a year is twelve calendar months, never 30 or 365 days.
+func inferredExtendExpiry(input mcpTaskInput) serverExpiryExtension {
+	if months := taskIntParam(input.Params, "months", "extend_months"); months > 0 {
+		return serverExpiryExtension{Months: months}
 	}
-	match := extendExpiryDaysPattern.FindStringSubmatch(input.Goal)
-	if len(match) < 2 {
-		return 0
+	if years := taskIntParam(input.Params, "years"); years > 0 {
+		return serverExpiryExtension{Months: years * 12}
 	}
-	days, _ := strconv.Atoi(match[1])
-	if days < 1 || days > 3650 {
-		return 0
+	if days := taskIntParam(input.Params, "days", "extend_days"); days > 0 {
+		return serverExpiryExtension{Days: days}
 	}
-	return days
+	if containsAnyFold(input.Goal, "半年", "half a year", "half year") {
+		return serverExpiryExtension{Months: 6}
+	}
+	if match := extendExpiryYearsPattern.FindStringSubmatch(input.Goal); len(match) == 2 {
+		if years := smallCountValue(match[1]); years > 0 && years <= serverExpiryMaxExtendMonths/12 {
+			return serverExpiryExtension{Months: years * 12}
+		}
+	}
+	if match := extendExpiryMonthsPattern.FindStringSubmatch(input.Goal); len(match) == 2 {
+		if months := smallCountValue(match[1]); months > 0 {
+			return serverExpiryExtension{Months: months}
+		}
+	}
+	if match := extendExpiryDaysPattern.FindStringSubmatch(input.Goal); len(match) == 2 {
+		if days, _ := strconv.Atoi(match[1]); days > 0 {
+			return serverExpiryExtension{Days: days}
+		}
+	}
+	return serverExpiryExtension{}
+}
+
+// smallCountValue parses an Arabic number or a Chinese numeral up to 99.
+func smallCountValue(raw string) int {
+	if value, err := strconv.Atoi(raw); err == nil {
+		return value
+	}
+	digits := map[rune]int{'一': 1, '两': 2, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+	runes := []rune(raw)
+	switch {
+	case len(runes) == 1 && runes[0] == '十':
+		return 10
+	case len(runes) == 1:
+		return digits[runes[0]]
+	case len(runes) == 2 && runes[0] == '十':
+		return 10 + digits[runes[1]]
+	case len(runes) == 2 && runes[1] == '十':
+		return digits[runes[0]] * 10
+	case len(runes) == 3 && runes[1] == '十':
+		return digits[runes[0]]*10 + digits[runes[2]]
+	}
+	return 0
 }
 func inferredIPStack(goal string) string {
 	switch {

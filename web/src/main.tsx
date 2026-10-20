@@ -227,7 +227,7 @@ import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { createServerRecord, deleteServerRecord, ServerMutationUncertainError } from './server-mutations'
 import { getServerTimeIssue, hasServerTimeMeasurement } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
-import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue, type ServerExpiryTone } from './server-expiry'
+import { applyServerExpiryExtension, serverExpiryDateLabel, serverExpiryExtensionLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryQuickExtensions, serverExpiryStatusValue, type ServerExpiryExtension, type ServerExpiryTone } from './server-expiry'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import {
   CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
@@ -6705,13 +6705,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       return false
     }
   }
-  const extendServerExpiry = async (server: Server, days: number) => {
+  const extendServerExpiry = async (server: Server, extension: ServerExpiryExtension) => {
     try {
-      const result = await client.request(`/servers/${server.id}/extend-expiry`, { method: 'POST', body: JSON.stringify({ days }) }) as { server?: Server }
+      const result = await client.request(`/servers/${server.id}/extend-expiry`, { method: 'POST', body: JSON.stringify(extension) }) as { server?: Server }
       if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
       setExtendServer(null)
       revalidateServers()
-      notify?.(`${server.name || '服务器'} 到期日已延长 ${days} 天`, 'success')
+      notify?.(`${server.name || '服务器'} 到期日已延长 ${serverExpiryExtensionLabel(extension)}`, 'success')
     } catch (error: any) {
       await dialogs.alert({ title: '延长到期失败', message: localizeErrorMessage(error?.message || error) })
     }
@@ -7772,9 +7772,10 @@ export function ServerSettingsDialog({ mode, server, draft, update, onCancel, on
                 <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
                 {!creating && <div className="server-expiry-quick-row">
                   <span>快速延长</span>
-                  {[1, 3, 7, 30].map(days => (
-                    <button key={days} type="button" className="ghost" onClick={() => update({ expires_at: addDaysToExpiryDate(draft.expires_at, days) })}>+{days} 天</button>
-                  ))}
+                  {serverExpiryQuickExtensions.map(extension => {
+                    const label = serverExpiryExtensionLabel(extension)
+                    return <button key={label} type="button" className="ghost" onClick={() => update({ expires_at: applyServerExpiryExtension(draft.expires_at, extension) })}>+{label}</button>
+                  })}
                 </div>}
               </SettingRow>
               <BillingAnchorResetNote draft={draft} />
@@ -7963,14 +7964,32 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
   return <ServerSettingsDialog mode="edit" server={server} draft={draft} update={update} onCancel={onCancel} onSubmit={() => onSubmit(draft)} servers={servers} connectionAuditGated={connectionAuditGated} client={client} notify={notify} role={role} panelBBR={panelBBR} />
 }
 
-function ServerExtendExpiryDialog({ server, onCancel, onSubmit }: { server: Server; onCancel: () => void; onSubmit: (server: Server, days: number) => Promise<void> }) {
-  const [days, setDays] = useState(3)
+type ServerExtendUnit = 'days' | 'months' | 'years'
+
+const serverExtendUnitLimits: Record<ServerExtendUnit, number> = { days: 3650, months: 120, years: 10 }
+
+function ServerExtendExpiryDialog({ server, onCancel, onSubmit }: { server: Server; onCancel: () => void; onSubmit: (server: Server, extension: ServerExpiryExtension) => Promise<void> }) {
+  const [amount, setAmount] = useState(1)
+  const [unit, setUnit] = useState<ServerExtendUnit>('months')
   const [busy, setBusy] = useState(false)
+  const valid = Number.isInteger(amount) && amount >= 1 && amount <= serverExtendUnitLimits[unit]
+  const extension: ServerExpiryExtension = unit === 'days' ? { days: amount } : { months: unit === 'years' ? amount * 12 : amount }
+  const nextExpiry = valid ? applyServerExpiryExtension(serverExpiryInputValue(server.expires_at), extension) : ''
+  const choose = (next: ServerExpiryExtension) => {
+    if (next.months) {
+      const years = next.months % 12 === 0
+      setUnit(years ? 'years' : 'months')
+      setAmount(years ? next.months / 12 : next.months)
+    } else {
+      setUnit('days')
+      setAmount(next.days || 1)
+    }
+  }
   const submit = async () => {
-    if (busy || !Number.isInteger(days) || days < 1 || days > 3650) return
+    if (busy || !valid) return
     setBusy(true)
     try {
-      await onSubmit(server, days)
+      await onSubmit(server, extension)
     } finally {
       setBusy(false)
     }
@@ -7982,20 +8001,28 @@ function ServerExtendExpiryDialog({ server, onCancel, onSubmit }: { server: Serv
     </header>
     <div className="dialog-body">
       <div className="form server-dialog-form labeled-form">
-        <FormField label="延长天数" hint="已有到期日时从当前到期日顺延；未设置到期日时从今天起算。" placement="bottom">
-          <input type="number" min={1} max={3650} value={days} onChange={e => setDays(Number(e.target.value))} aria-label="延长天数" />
+        <FormField label="延长时长" hint={`按月或按年延长时顺延到同一日期，月底日期取当月最后一天。已有到期日从当前到期日顺延；未设置到期日时从今天起算。${nextExpiry ? `延长后到期 ${nextExpiry}。` : ''}`} placement="bottom">
+          <div className="server-extend-amount">
+            <input type="number" min={1} max={serverExtendUnitLimits[unit]} value={amount} onChange={e => setAmount(Number(e.target.value))} aria-label="延长时长" />
+            <Select value={unit} onChange={e => setUnit(e.target.value as ServerExtendUnit)} aria-label="时长单位">
+              <option value="days">天</option>
+              <option value="months">个月</option>
+              <option value="years">年</option>
+            </Select>
+          </div>
         </FormField>
         <div className="server-expiry-quick-row">
           <span>快捷选择</span>
-          {[1, 3, 7, 30].map(value => (
-            <button key={value} type="button" className={days === value ? 'ghost active' : 'ghost'} onClick={() => setDays(value)}>+{value} 天</button>
-          ))}
+          {serverExpiryQuickExtensions.map(choice => {
+            const label = serverExpiryExtensionLabel(choice)
+            return <button key={label} type="button" className={valid && label === serverExpiryExtensionLabel(extension) ? 'ghost active' : 'ghost'} onClick={() => choose(choice)}>+{label}</button>
+          })}
         </div>
       </div>
     </div>
     <footer className="dialog-actions">
       <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
-      <button disabled={busy || !Number.isInteger(days) || days < 1 || days > 3650} onClick={() => void submit()}><CalendarDays size={15} />{busy ? '延长中...' : `延长 ${days} 天`}</button>
+      <button disabled={busy || !valid} onClick={() => void submit()}><CalendarDays size={15} />{busy ? '延长中...' : valid ? `延长 ${serverExpiryExtensionLabel(extension)}` : '延长'}</button>
     </footer>
   </MotionDialogPanel>
 }

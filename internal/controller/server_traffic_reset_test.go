@@ -210,6 +210,20 @@ func TestServerManageDeliveryRetryAndExtendExpiryRecipes(t *testing.T) {
 		t.Fatalf("days = %d, want 30", got)
 	}
 
+	for _, tc := range []struct {
+		goal   string
+		months int
+	}{{"续费一个月", 1}, {"延长到期 3 个月", 3}, {"续费一年", 12}, {"续费半年", 6}, {"extend expiry 2 years", 24}} {
+		monthly, err := srv.prepareServerManageRecipe(ctx, principal, mcpTaskInput{Goal: tc.goal, TargetRefs: []string{ref}})
+		if err != nil || monthly.Status != "ready" || len(monthly.Operations) != 1 {
+			t.Fatalf("%s: extend=%#v err=%v", tc.goal, monthly, err)
+		}
+		input := monthly.Operations[0].Input
+		if got := taskIntParam(input, "months"); got != tc.months || input["days"] != nil {
+			t.Fatalf("%s: input = %#v, want months=%d", tc.goal, input, tc.months)
+		}
+	}
+
 	missingDays, err := srv.prepareServerManageRecipe(ctx, principal, mcpTaskInput{Goal: "延长到期", TargetRefs: []string{ref}})
 	if err != nil || missingDays.Status != "needs_input" {
 		t.Fatalf("missing days=%#v err=%v", missingDays, err)

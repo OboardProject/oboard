@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue } from './server-expiry'
+import { addDaysToExpiryDate, addMonthsToExpiryDate, applyServerExpiryExtension, serverExpiryExtensionLabel, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue } from './server-expiry'
 
 describe('server expiry helpers', () => {
   it('converts RFC3339 to a local date input and back', () => {
@@ -31,5 +31,17 @@ describe('server expiry helpers', () => {
     expect(addDaysToExpiryDate('2026-08-01', 3)).toBe('2026-08-04')
     expect(addDaysToExpiryDate('2026-08-31', 1)).toBe('2026-09-01')
     expect(addDaysToExpiryDate('', 3)).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('adds calendar months to the same date, clamped to the month end', () => {
+    expect(addMonthsToExpiryDate('2026-10-21', 1)).toBe('2026-11-21')
+    expect(addMonthsToExpiryDate('2026-01-31', 1)).toBe('2026-02-28')
+    expect(addMonthsToExpiryDate('2028-01-31', 1)).toBe('2028-02-29')
+    expect(addMonthsToExpiryDate('2026-12-15', 1)).toBe('2027-01-15')
+    expect(applyServerExpiryExtension('2028-02-29', { months: 12 })).toBe('2029-02-28')
+    expect(applyServerExpiryExtension('2026-10-21', { days: 7 })).toBe('2026-10-28')
+    expect(serverExpiryExtensionLabel({ months: 12 })).toBe('1 年')
+    expect(serverExpiryExtensionLabel({ months: 3 })).toBe('3 个月')
+    expect(serverExpiryExtensionLabel({ days: 7 })).toBe('7 天')
   })
 })

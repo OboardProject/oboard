@@ -2067,6 +2067,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   margin-right: 2px;
 }
 
+.server-extend-amount {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px;
+}
+
 .server-expiry-quick-row button {
   min-height: 26px;
   padding: 3px 8px;

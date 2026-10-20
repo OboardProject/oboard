@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,14 +58,14 @@ func TestTelegramNotificationActionSpecs(t *testing.T) {
 	if certificateTelegramReissueAllowed(imported, now) {
 		t.Fatal("imported certificate should not offer reissue")
 	}
-	days := []int{}
+	choices := []string{}
 	for _, spec := range telegramNotificationActionSpecs(telegramActionInput{Event: notificationServerExpiry, Context: notificationContext{ServerID: 1}}) {
 		if spec.Action == "extend_expiry" {
-			days = append(days, spec.Payload.Days)
+			choices = append(choices, fmt.Sprintf("%dd%dm", spec.Payload.Days, spec.Payload.Months))
 		}
 	}
-	if len(days) != 4 || days[0] != 7 || days[1] != 30 || days[2] != 90 || days[3] != 365 {
-		t.Fatalf("extend days = %v", days)
+	if strings.Join(choices, ",") != "7d0m,0d1m,0d3m,0d12m" {
+		t.Fatalf("extend choices = %v", choices)
 	}
 }
 
@@ -92,17 +93,23 @@ func labels(specs []telegramActionSpec) []string {
 
 func telegramTimePtr(value time.Time) *time.Time { return &value }
 
+var telegramShanghai = time.FixedZone("Asia/Shanghai", 8*3600)
+
 func TestTelegramExtendExpiryChangeset(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		days       int
+		months     int
+		expiry     time.Time
+		want       string
 		restricted bool
 	}{
-		{name: "7 days", days: 7},
-		{name: "30 days", days: 30},
-		{name: "90 days", days: 90},
-		{name: "1 year", days: 365},
-		{name: "outside server scope", days: 30, restricted: true},
+		{name: "7 days", days: 7, expiry: time.Date(2026, 10, 14, 0, 0, 0, 0, telegramShanghai), want: "2026-10-21"},
+		{name: "1 month same date", months: 1, expiry: time.Date(2026, 10, 14, 0, 0, 0, 0, telegramShanghai), want: "2026-11-14"},
+		{name: "1 month clamps to month end", months: 1, expiry: time.Date(2027, 1, 31, 0, 0, 0, 0, telegramShanghai), want: "2027-02-28"},
+		{name: "3 months", months: 3, expiry: time.Date(2026, 10, 14, 0, 0, 0, 0, telegramShanghai), want: "2027-01-14"},
+		{name: "1 year", months: 12, expiry: time.Date(2028, 2, 29, 0, 0, 0, 0, telegramShanghai), want: "2029-02-28"},
+		{name: "outside server scope", months: 1, expiry: time.Date(2026, 10, 14, 0, 0, 0, 0, telegramShanghai), want: "2026-10-14", restricted: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -116,7 +123,7 @@ func TestTelegramExtendExpiryChangeset(t *testing.T) {
 			if tc.restricted {
 				principal.ResourceFilter = json.RawMessage(`{"servers":{"mode":"selected","ids":[]}}`)
 			}
-			expiry := time.Date(2026, 10, 14, 0, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*3600))
+			expiry := tc.expiry
 			server := &model.Server{Name: "telegram-renewal", Status: model.ServerOffline, ExpiresAt: &expiry}
 			if err := db.CreateServer(ctx, server); err != nil {
 				t.Fatal(err)
@@ -125,7 +132,7 @@ func TestTelegramExtendExpiryChangeset(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, execErr := srv.executeTelegramAction(ctx, *admin, model.RoleAdmin, principal, telegramActionPayload{Action: "extend_expiry", ServerID: server.ID, Days: tc.days}, "renewal-confirmation")
+			_, execErr := srv.executeTelegramAction(ctx, *admin, model.RoleAdmin, principal, telegramActionPayload{Action: "extend_expiry", ServerID: server.ID, Days: tc.days, Months: tc.months}, "renewal-confirmation")
 			if (execErr != nil) != tc.restricted {
 				t.Fatalf("execute renewal: %v", execErr)
 			}
@@ -133,12 +140,8 @@ func TestTelegramExtendExpiryChangeset(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := expiry.AddDate(0, 0, tc.days)
-			if tc.restricted {
-				want = expiry
-			}
-			if stored.ExpiresAt == nil || !stored.ExpiresAt.Equal(want) {
-				t.Fatalf("expiry = %v, want %v", stored.ExpiresAt, want)
+			if stored.ExpiresAt == nil || stored.ExpiresAt.In(telegramShanghai).Format("2006-01-02") != tc.want {
+				t.Fatalf("expiry = %v, want %s", stored.ExpiresAt, tc.want)
 			}
 			tasks, err := db.ListTasksByServer(ctx, server.ID, 10)
 			if err != nil || len(tasks) != 0 {

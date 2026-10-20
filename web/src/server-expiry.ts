@@ -53,3 +53,25 @@ export function addDaysToExpiryDate(value: string, days: number) {
   date.setDate(date.getDate() + days)
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
+
+// Calendar-month extension: same day of the target month, clamped to its last day.
+export function addMonthsToExpiryDate(value: string, months: number) {
+  const base = value ? new Date(`${value}T00:00:00`) : new Date()
+  const target = new Date(base.getFullYear(), base.getMonth() + months, 1)
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()
+  target.setDate(Math.min(base.getDate(), lastDay))
+  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`
+}
+
+export type ServerExpiryExtension = { days: number; months?: never } | { months: number; days?: never }
+
+export const serverExpiryQuickExtensions: ServerExpiryExtension[] = [{ days: 3 }, { days: 7 }, { months: 1 }, { months: 3 }, { months: 12 }]
+
+export function applyServerExpiryExtension(value: string, extension: ServerExpiryExtension) {
+  return extension.months ? addMonthsToExpiryDate(value, extension.months) : addDaysToExpiryDate(value, extension.days || 0)
+}
+
+export function serverExpiryExtensionLabel(extension: ServerExpiryExtension) {
+  if (!extension.months) return `${extension.days} 天`
+  return extension.months % 12 === 0 ? `${extension.months / 12} 年` : `${extension.months} 个月`
+}
