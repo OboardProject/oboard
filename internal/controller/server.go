@@ -16588,6 +16588,9 @@ CAKE_SHAPER_OPENRC_DIR=${OBOARD_CAKE_SHAPER_OPENRC_DIR:-/etc/init.d}
 INSTALL_TCP_TUNING=${OBOARD_INSTALL_TCP_TUNING:-0}
 STEALTH_MODE=${OBOARD_INSTALL_STEALTH:-0}
 TCP_TUNING_PROC_DIR=${OBOARD_TCP_TUNING_PROC_DIR:-/proc/sys}
+INSTALL_TIME_SYNC=${OBOARD_INSTALL_TIME_SYNC:-1}
+TIME_SYNC_STATUS_PATH=${OBOARD_TIME_SYNC_STATUS_PATH:-/proc/self/status}
+TIME_SYNC_OPENRC_DIR=${OBOARD_TIME_SYNC_OPENRC_DIR:-/etc/init.d}
 TCP_TUNING_CONFIG_PATH=${OBOARD_TCP_TUNING_CONFIG_PATH:-/etc/sysctl.d/99-oboard-tcp.conf}
 BBR_AVAILABLE_PATH=${OBOARD_BBR_AVAILABLE_PATH:-/proc/sys/net/ipv4/tcp_available_congestion_control}
 BBR_CONGESTION_PATH=${OBOARD_BBR_CONGESTION_PATH:-/proc/sys/net/ipv4/tcp_congestion_control}
@@ -17634,6 +17637,201 @@ try_enable_tcp_tuning() {
   return 0
 }
 
+time_sync_requested() {
+  case "$INSTALL_TIME_SYNC" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF) return 1 ;;
+    *)
+      echo "时间同步安装选项无效，OBOARD_INSTALL_TIME_SYNC 只接受 0 或 1。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# A container shares the host kernel clock and cannot discipline it; the host
+# owns time synchronization there.
+time_sync_in_container() {
+  case "$VIRT_HINT" in
+    container|lxc*|incus|openvz|docker|podman|oci|rkt|systemd-nspawn|proot|pouch|wsl) return 0 ;;
+  esac
+  return 1
+}
+
+# CAP_SYS_TIME (capability 25) is what any daemon needs to adjust the clock.
+# An unreadable or unparsable status file is not evidence of a restriction.
+time_sync_has_clock_permission() {
+  [ -r "$TIME_SYNC_STATUS_PATH" ] || return 0
+  time_sync_cap=$(sed -n 's/^CapEff:[[:space:]]*//p' "$TIME_SYNC_STATUS_PATH" 2>/dev/null | head -n1)
+  case "$time_sync_cap" in
+    ''|*[!0-9a-fA-F]*) return 0 ;;
+  esac
+  time_sync_cap=$(printf '%s' "$time_sync_cap" | sed 's/^.*\(........\)$/\1/')
+  [ $(( (0x$time_sync_cap >> 25) & 1 )) -eq 1 ]
+}
+
+# Package installs need a writable root filesystem; access(2) reports EROFS for
+# a read-only or image-based root even when running as root.
+time_sync_can_install_packages() {
+  [ -w /usr/sbin ] && [ -w /var/lib ] || return 1
+  command -v apk >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1 ||
+    command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 ||
+    command -v microdnf >/dev/null 2>&1 || command -v zypper >/dev/null 2>&1 ||
+    command -v pacman >/dev/null 2>&1
+}
+
+time_sync_kind_label() {
+  case "$1" in
+    chrony) echo "chrony" ;;
+    timesyncd) echo "systemd-timesyncd" ;;
+    ntpd) echo "ntpd" ;;
+    openntpd) echo "OpenNTPD" ;;
+  esac
+}
+
+# Prints the first installed, unmasked service of one daemon kind. Distribution
+# aliases (chrony/chronyd, ntpsec/ntp) belong to one kind so an alias is never
+# mistaken for a second running daemon.
+time_sync_service_name() {
+  case "$1:$SERVICE_MANAGER" in
+    chrony:systemd) time_sync_names="chrony chronyd" ;;
+    chrony:openrc) time_sync_names="chronyd" ;;
+    timesyncd:systemd) time_sync_names="systemd-timesyncd" ;;
+    ntpd:systemd) time_sync_names="ntpsec ntpd ntp" ;;
+    ntpd:openrc) time_sync_names="ntpd" ;;
+    openntpd:*) time_sync_names="openntpd" ;;
+    *) return 1 ;;
+  esac
+  for time_sync_name in $time_sync_names; do
+    if [ "$SERVICE_MANAGER" = systemd ]; then
+      [ "$(systemctl show -p LoadState --value "$time_sync_name.service" 2>/dev/null || true)" = loaded ] || continue
+    else
+      [ -x "$TIME_SYNC_OPENRC_DIR/$time_sync_name" ] || continue
+    fi
+    echo "$time_sync_name"
+    return 0
+  done
+  return 1
+}
+
+time_sync_service_active() {
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl is-active --quiet "$1.service" 2>/dev/null
+  else
+    rc-service "$1" status >/dev/null 2>&1
+  fi
+}
+
+time_sync_service_enable() {
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl enable "$1.service" >> "${INSTALL_LOG:-/dev/null}" 2>&1 9>&-
+  else
+    rc-update add "$1" default >> "${INSTALL_LOG:-/dev/null}" 2>&1 9>&-
+  fi
+}
+
+time_sync_service_start() {
+  time_sync_service_enable "$1" || return 1
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl start "$1.service" >> "${INSTALL_LOG:-/dev/null}" 2>&1 9>&- || return 1
+  else
+    rc-service "$1" start >> "${INSTALL_LOG:-/dev/null}" 2>&1 9>&- || return 1
+  fi
+  time_sync_wait=0
+  until time_sync_service_active "$1"; do
+    [ "$time_sync_wait" -lt 5 ] || return 1
+    sleep 1
+    time_sync_wait=$((time_sync_wait + 1))
+  done
+}
+
+# Turns on continuous synchronization and asks for an immediate correction
+# where the daemon supports one. Both are best-effort: the daemon keeps
+# correcting the clock on its own once it reaches a source.
+time_sync_calibrate() {
+  case "$1" in
+    chrony)
+      if command -v chronyc >/dev/null 2>&1; then
+        chronyc -a makestep >> "${INSTALL_LOG:-/dev/null}" 2>&1 || true
+      fi
+      ;;
+    timesyncd)
+      if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl set-ntp true >> "${INSTALL_LOG:-/dev/null}" 2>&1 9>&- || true
+      fi
+      ;;
+  esac
+}
+
+time_sync_start_installed() {
+  for time_sync_kind in chrony ntpd openntpd timesyncd; do
+    time_sync_service=$(time_sync_service_name "$time_sync_kind") || continue
+    if time_sync_service_start "$time_sync_service"; then
+      time_sync_calibrate "$time_sync_kind"
+      echo "时间同步：已启动 $(time_sync_kind_label "$time_sync_kind") 并设置开机自启，将自动持续校准系统时间。"
+      return 0
+    fi
+    echo "未能启动已安装的 $(time_sync_kind_label "$time_sync_kind")，尝试其他时间同步服务。" >&2
+  done
+  return 1
+}
+
+enable_time_sync() {
+  time_sync_requested || return 0
+  if time_sync_in_container; then
+    echo "时间同步：检测到容器环境（$VIRT_HINT），系统时间由宿主机管理，已跳过。"
+    return 0
+  fi
+  if [ "$SERVICE_MANAGER" != systemd ] && [ "$SERVICE_MANAGER" != openrc ]; then
+    echo "未识别服务管理器，无法配置时间同步服务。" >&2
+    return 1
+  fi
+  if ! time_sync_has_clock_permission; then
+    echo "当前环境没有调整系统时间的权限（缺少 CAP_SYS_TIME），无法配置时间同步服务。" >&2
+    return 1
+  fi
+  echo "正在检查时间同步服务..."
+  time_sync_active_kinds=
+  time_sync_active_labels=
+  for time_sync_kind in chrony timesyncd ntpd openntpd; do
+    time_sync_service=$(time_sync_service_name "$time_sync_kind") || continue
+    time_sync_service_active "$time_sync_service" || continue
+    time_sync_service_enable "$time_sync_service" ||
+      echo "$(time_sync_kind_label "$time_sync_kind") 正在运行，但未能设置开机自启。" >&2
+    time_sync_active_kinds="$time_sync_active_kinds $time_sync_kind"
+    time_sync_active_labels="$time_sync_active_labels $(time_sync_kind_label "$time_sync_kind")"
+  done
+  if [ -n "$time_sync_active_kinds" ]; then
+    set -- $time_sync_active_kinds
+    if [ "$#" -gt 1 ]; then
+      echo "检测到多个时间同步服务同时运行：${time_sync_active_labels# }。它们可能互相干扰，安装程序不会替你停用，建议只保留一个。" >&2
+    fi
+    time_sync_calibrate "$1"
+    echo "时间同步：$(time_sync_kind_label "$1") 已在运行，已确认开机自启和自动校准。"
+    return 0
+  fi
+  time_sync_start_installed && return 0
+  if ! time_sync_can_install_packages; then
+    echo "系统没有可用的时间同步服务，且当前环境不允许安装软件包（只读系统或缺少包管理器）。" >&2
+    return 1
+  fi
+  echo "系统没有可用的时间同步服务，正在安装 chrony..."
+  if ! pkg_install chrony; then
+    echo "chrony 安装失败。" >&2
+    return 1
+  fi
+  time_sync_start_installed && return 0
+  echo "chrony 已安装，但未能启动。" >&2
+  return 1
+}
+
+try_enable_time_sync() {
+  if enable_time_sync; then
+    return 0
+  fi
+  echo "提示：时间同步服务未能启用，Agent 安装将继续；面板中的时间校正设置仍然有效。详细信息见 ${INSTALL_LOG:-安装日志}。" >&2
+  return 0
+}
+
 json_value() {
   key=$1
   if command -v python3 >/dev/null 2>&1; then
@@ -18344,6 +18542,7 @@ case "$ACTION" in
       if [ ! -d "$STEALTH_INSTALL_DIR" ]; then
         try_enable_bbr_qdisc
         try_enable_tcp_tuning
+        try_enable_time_sync
       fi
       # Security-process install: the binaries prefer the GitHub release
       # (github.com is a neutral target with no panel association) and
@@ -18499,6 +18698,7 @@ case "$ACTION" in
       resolve_update_policy
       try_enable_bbr_qdisc
       try_enable_tcp_tuning
+      try_enable_time_sync
       if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
         -config "$CONFIG_PATH" \
         -controller "$BASE_URL" \

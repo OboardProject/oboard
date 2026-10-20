@@ -1388,3 +1388,193 @@ func TestAgentInstallScriptTCPTuningIsInstallOnly(t *testing.T) {
 		t.Fatal("Agent update branch repeats TCP tuning")
 	}
 }
+
+type timeSyncHarness struct {
+	root, bin, state, openrc, status string
+}
+
+func newTimeSyncHarness(t *testing.T, capEff string) timeSyncHarness {
+	t.Helper()
+	root := t.TempDir()
+	h := timeSyncHarness{
+		root:   root,
+		bin:    filepath.Join(root, "bin"),
+		state:  filepath.Join(root, "state"),
+		openrc: filepath.Join(root, "init.d"),
+		status: filepath.Join(root, "status"),
+	}
+	for _, dir := range []string{h.bin, h.state, h.openrc} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, h.status, "Name:\tsh\nCapEff:\t"+capEff+"\n")
+	state := shellQuote(h.state)
+	writeExecutable(t, filepath.Join(h.bin, "systemctl"), `#!/bin/sh
+echo "systemctl $*" >> `+state+`/calls
+case "$1" in
+  show) grep -qx "$5" `+state+`/loaded 2>/dev/null && echo loaded || echo not-found ;;
+  is-active) grep -qx "$3" `+state+`/active 2>/dev/null ;;
+  start) echo "$2" >> `+state+`/active ;;
+esac
+`)
+	writeExecutable(t, filepath.Join(h.bin, "rc-service"), `#!/bin/sh
+echo "rc-service $*" >> `+state+`/calls
+case "$2" in
+  status) grep -qx "$1" `+state+`/active 2>/dev/null ;;
+  start) echo "$1" >> `+state+`/active ;;
+esac
+`)
+	for _, name := range []string{"rc-update", "chronyc", "timedatectl"} {
+		writeExecutable(t, filepath.Join(h.bin, name), "#!/bin/sh\necho \""+name+" $*\" >> "+state+"/calls\n")
+	}
+	return h
+}
+
+func (h timeSyncHarness) run(t *testing.T, script, manager, virt string, extra ...string) (string, string) {
+	t.Helper()
+	lines := []string{
+		"set -eu",
+		"PATH=" + shellQuote(h.bin) + ":$PATH",
+		"INSTALL_TIME_SYNC=1",
+		"SERVICE_MANAGER=" + manager,
+		"VIRT_HINT=" + virt,
+		"TIME_SYNC_STATUS_PATH=" + shellQuote(h.status),
+		"TIME_SYNC_OPENRC_DIR=" + shellQuote(h.openrc),
+	}
+	for _, name := range []string{
+		"time_sync_requested", "time_sync_in_container", "time_sync_has_clock_permission",
+		"time_sync_can_install_packages", "time_sync_kind_label", "time_sync_service_name",
+		"time_sync_service_active", "time_sync_service_enable", "time_sync_service_start",
+		"time_sync_calibrate", "time_sync_start_installed", "enable_time_sync", "try_enable_time_sync",
+	} {
+		lines = append(lines, extractShellFunction(t, script, name))
+	}
+	lines = append(lines,
+		"time_sync_can_install_packages() { return 0; }",
+		"pkg_install() { echo \"pkg_install $*\" >> "+shellQuote(filepath.Join(h.state, "calls"))+"; }",
+	)
+	lines = append(lines, extra...)
+	lines = append(lines, "try_enable_time_sync", "echo install-continued")
+	output, err := exec.Command(testPOSIXShell(t), "-c", strings.Join(lines, "\n")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("time sync stopped installation: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "install-continued") {
+		t.Fatalf("installation did not continue:\n%s", output)
+	}
+	calls, _ := os.ReadFile(filepath.Join(h.state, "calls"))
+	return string(output), string(calls)
+}
+
+const fullCapEff = "000001ffffffffff"
+
+func TestAgentInstallScriptTimeSyncSkipsContainers(t *testing.T) {
+	script := testAgentInstallScript(t)
+	for _, virt := range []string{"lxc", "lxc-libvirt", "openvz", "docker", "container"} {
+		h := newTimeSyncHarness(t, fullCapEff)
+		output, calls := h.run(t, script, "systemd", virt)
+		if !strings.Contains(output, "容器环境") || calls != "" {
+			t.Fatalf("%s: container was not skipped:\n%s\ncalls:\n%s", virt, output, calls)
+		}
+	}
+}
+
+func TestAgentInstallScriptTimeSyncRequiresClockPermission(t *testing.T) {
+	script := testAgentInstallScript(t)
+	// Every capability except CAP_SYS_TIME (bit 25).
+	h := newTimeSyncHarness(t, "000001fffdffffff")
+	output, calls := h.run(t, script, "systemd", "kvm")
+	if !strings.Contains(output, "CAP_SYS_TIME") || !strings.Contains(output, "Agent 安装将继续") {
+		t.Fatalf("missing permission was not reported:\n%s", output)
+	}
+	if calls != "" {
+		t.Fatalf("time sync touched services without clock permission:\n%s", calls)
+	}
+}
+
+func TestAgentInstallScriptTimeSyncKeepsRunningDaemon(t *testing.T) {
+	script := testAgentInstallScript(t)
+	h := newTimeSyncHarness(t, fullCapEff)
+	writeTestFile(t, filepath.Join(h.state, "loaded"), "systemd-timesyncd.service\nchrony.service\n")
+	writeTestFile(t, filepath.Join(h.state, "active"), "systemd-timesyncd.service\n")
+	output, calls := h.run(t, script, "systemd", "kvm")
+	if !strings.Contains(output, "systemd-timesyncd 已在运行") {
+		t.Fatalf("running daemon was not recognized:\n%s", output)
+	}
+	for _, want := range []string{"systemctl enable systemd-timesyncd.service", "timedatectl set-ntp true"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("missing %q:\n%s", want, calls)
+		}
+	}
+	if strings.Contains(calls, "pkg_install") || strings.Contains(calls, "systemctl start") {
+		t.Fatalf("a running daemon must not be replaced or restarted:\n%s", calls)
+	}
+}
+
+func TestAgentInstallScriptTimeSyncWarnsAboutCompetingDaemons(t *testing.T) {
+	script := testAgentInstallScript(t)
+	h := newTimeSyncHarness(t, fullCapEff)
+	writeTestFile(t, filepath.Join(h.state, "loaded"), "chrony.service\nchronyd.service\nntpsec.service\nntp.service\n")
+	writeTestFile(t, filepath.Join(h.state, "active"), "chrony.service\nchronyd.service\nntpsec.service\nntp.service\n")
+	output, calls := h.run(t, script, "systemd", "none")
+	if !strings.Contains(output, "多个时间同步服务同时运行：chrony ntpd") {
+		t.Fatalf("competing daemons were not reported once per kind:\n%s", output)
+	}
+	if strings.Contains(calls, "systemctl stop") || !strings.Contains(calls, "chronyc -a makestep") {
+		t.Fatalf("unexpected service changes:\n%s", calls)
+	}
+}
+
+func TestAgentInstallScriptTimeSyncStartsInstalledDaemon(t *testing.T) {
+	script := testAgentInstallScript(t)
+	h := newTimeSyncHarness(t, fullCapEff)
+	writeTestFile(t, filepath.Join(h.state, "loaded"), "chronyd.service\n")
+	output, calls := h.run(t, script, "systemd", "kvm")
+	for _, want := range []string{"systemctl enable chronyd.service", "systemctl start chronyd.service", "chronyc -a makestep"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("missing %q:\n%s", want, calls)
+		}
+	}
+	if strings.Contains(calls, "pkg_install") || !strings.Contains(output, "已启动 chrony") {
+		t.Fatalf("installed daemon was not started:\n%s\n%s", output, calls)
+	}
+}
+
+func TestAgentInstallScriptTimeSyncInstallsChronyWhenMissing(t *testing.T) {
+	script := testAgentInstallScript(t)
+	h := newTimeSyncHarness(t, fullCapEff)
+	installed := filepath.Join(h.openrc, "chronyd")
+	output, calls := h.run(t, script, "openrc", "kvm",
+		"pkg_install() { echo \"pkg_install $*\" >> "+shellQuote(filepath.Join(h.state, "calls"))+"; printf '#!/bin/sh\\n' > "+shellQuote(installed)+"; chmod 700 "+shellQuote(installed)+"; }")
+	want := "pkg_install chrony\nrc-update add chronyd default\nrc-service chronyd start\nrc-service chronyd status\nchronyc -a makestep\n"
+	if !strings.HasSuffix(calls, want) || !strings.Contains(output, "已启动 chrony") {
+		t.Fatalf("chrony was not installed and started:\n%s\ncalls:\n%s", output, calls)
+	}
+}
+
+func TestAgentInstallScriptTimeSyncRespectsReadOnlyHost(t *testing.T) {
+	script := testAgentInstallScript(t)
+	h := newTimeSyncHarness(t, fullCapEff)
+	output, calls := h.run(t, script, "openrc", "kvm", "time_sync_can_install_packages() { return 1; }")
+	if strings.Contains(calls, "pkg_install") || !strings.Contains(output, "不允许安装软件包") {
+		t.Fatalf("packages were installed without permission:\n%s\n%s", output, calls)
+	}
+}
+
+func TestAgentInstallScriptTimeSyncIsInstallOnly(t *testing.T) {
+	script := testAgentInstallScript(t)
+	if !strings.Contains(script, "INSTALL_TIME_SYNC=${OBOARD_INSTALL_TIME_SYNC:-1}") {
+		t.Fatal("time sync must be on by default with an OBOARD_INSTALL_TIME_SYNC opt-out")
+	}
+	installCase := shellCaseBranch(t, script, "install)", "update)")
+	if strings.Count(installCase, "try_enable_time_sync") != 2 {
+		t.Fatal("both install branches must attempt time sync")
+	}
+	if strings.Index(installCase, "try_enable_time_sync") > strings.Index(installCase, "-enroll-only") {
+		t.Fatal("Agent installer consumes the enrollment token before configuring time sync")
+	}
+	if strings.Contains(shellCaseBranch(t, script, "update)", "uninstall)"), "try_enable_time_sync") {
+		t.Fatal("Agent update branch repeats time sync setup")
+	}
+}
