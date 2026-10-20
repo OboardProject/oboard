@@ -25850,6 +25850,11 @@ button.ghost.icon-button.dns-list-more:active { background: var(--surface-3) !im
 .probe-monitors { display: grid; gap: 12px; }
 .probe-monitors > p { margin: 0; }
 .probe-monitors .return-latency-filters { margin-bottom: 0; }
+.probe-monitor-server { display: inline-flex; align-items: center; gap: 6px; }
+.probe-monitor-server .region-flag { border-radius: 3px; }
+.probe-quality-score { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.network-probe-table .probe-quality-score small { flex-basis: 100%; margin-top: 0; }
+.probe-task-badge.warning { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 24%, transparent); }
 .probe-monitor-note code { font-size: 12px; }
 .probe-monitor-form .return-latency-fields { display: grid; gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .probe-monitor-form .return-latency-fields > p { margin: 0; font-size: 13px; }

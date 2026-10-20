@@ -46,6 +46,20 @@ it("shows attribution and quality separately, with votes and degraded sources", 
   expect(document.body.textContent).toContain("IPWhois 国家 AU")
   expect(document.body.textContent).toContain("未配置 API Key")
 })
+it("scores the latest IP quality result and flags the server without describing sources", async () => {
+  const quality = { status: "partial", risk: 72, risk_source: "proxycheck", abuse_score: 0, abuse_source: "abuseipdb" }
+  const monitor = { ...task, kind: "ip_quality", target: "", status: "partial", error: "部分数据源未配置或查询失败，已自动使用备用来源", result: { ip: "1.1.1.1", attribution: { status: "degraded" }, quality } }
+  const requestV2 = vi.fn(async () => ({ monitors: [monitor], providers: {} }))
+  await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={[{ id: 1, name: "A", region_mode: "auto", region_code: "", detected_region_code: "JP" }] as Server[]} kind="ip_quality" canManage />))
+  const row = document.body.querySelector("tbody tr")!
+  expect(row.querySelector('[data-label="服务器"] img')?.getAttribute("alt")).toBe("日本")
+  const cell = row.querySelector('[data-label="最近结果"]')!
+  expect([...cell.querySelectorAll(".probe-task-badge")].map(item => [item.textContent, item.className])).toEqual([["风险 72", "probe-task-badge offline"], ["滥用 0", "probe-task-badge online"]])
+  expect(cell.textContent).not.toContain("数据源")
+  expect(cell.textContent).not.toContain("部分可用")
+  await act(async () => button("结果").click())
+  expect(document.body.textContent).not.toContain("部分数据源未配置")
+})
 
 it.each(["route", "ip_quality"] as const)("toasts a failed %s edit while preserving its draft", async kind => {
   const notify = vi.fn()

@@ -8,6 +8,7 @@ import { Select } from "../ui/select"
 import { Switch } from "../ui/switch"
 import type { Server } from "../proxy-path/types"
 import { ipDataProviderName, ipDataStatusText, ipDataStatusTone } from "../ip-data/labels"
+import { RegionFlag, serverRegionCode } from "../ui/RegionFlag"
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any>; requestV2?: (path: string, init?: RequestInit) => Promise<any> }
 type Monitor = { id: number; server_id: number; revision: number; name: string; kind: "route" | "ip_quality"; target: string; mode: string; port: number; interval_seconds: number; enabled: boolean; checked_at?: string; status?: string; error?: string; result?: any }
@@ -119,9 +120,9 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
       <thead><tr><th scope="col">名称 / 目标</th><th scope="col">服务器</th><th scope="col">间隔</th><th scope="col">最近结果</th><th scope="col">检测时间</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
       <tbody>{visible.map(task => <tr key={task.id} className="probe-task-card">
         <td><strong>{task.name}</strong><span className="probe-task-target">{targetText(task)}</span></td>
-        <td data-label="服务器">{serverName(task.server_id)}</td>
+        <td data-label="服务器"><span className="probe-monitor-server"><RegionFlag code={serverRegionCode(servers.find(server => server.id === task.server_id))} size={16} />{serverName(task.server_id)}</span></td>
         <td data-label="间隔">{formatInterval(task.interval_seconds)}</td>
-        <td data-label="最近结果"><StatusBadge task={task} />{task.enabled && <ResultSummary task={task} />}</td>
+        <td data-label="最近结果">{task.enabled && hasQualityScore(task) ? <QualityScore task={task} /> : <><StatusBadge task={task} />{task.enabled && <ResultSummary task={task} />}</>}</td>
         <td data-label="检测时间">{date(task.checked_at)}</td>
         <td><div className="probe-task-card-actions">
           <button type="button" className="ghost" aria-label={`查看 ${task.name} 的结果`} onClick={() => { setError(""); setDetailID(task.id) }}><ListTree size={14} aria-hidden="true" />结果</button>
@@ -150,7 +151,7 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
           <div><dt>最近结果</dt><dd><StatusBadge task={detail} /></dd></div>
           <div><dt>检测时间</dt><dd>{date(detail.checked_at)}</dd></div>
         </dl>
-        {detail.error && <p className="muted" role="status">{detail.error}</p>}
+        {detail.error && !hasQualityScore(detail) && <p className="muted" role="status">{detail.error}</p>}
         {detail.kind === "route" ? <RouteHistory detail={detail} versions={versions} loading={historyLoading} more={more} onMore={() => void loadMore()} /> : <QualityResult result={detail.result} />}
       </div>}
     </Dialog>
@@ -162,6 +163,18 @@ function ResultSummary({ task }: { task: Monitor }) {
   if (task.kind === "route" && Array.isArray(task.result?.asn_path)) return <small className="muted">{task.result.asn_path.join(" → ")}</small>
   if (task.kind === "ip_quality" && task.result?.ip) return <small className="muted">{task.result.ip}</small>
   return null
+}
+
+const hasQualityScore = (task: Monitor) => task.kind === "ip_quality" && (task.status === "ok" || task.status === "partial") && Boolean(task.result?.quality)
+const scoreTone = (value: number) => value >= 67 ? "offline" : value >= 34 ? "warning" : "online"
+
+function QualityScore({ task }: { task: Monitor }) {
+  const q = task.result.quality as Quality
+  const items = ([["风险", q.risk, q.risk_source], ["滥用", q.abuse_score, q.abuse_source]] as const).filter(([, value]) => typeof value === "number")
+  return <div className="probe-quality-score">
+    {items.length ? items.map(([label, value, source]) => <span key={label} className={`probe-task-badge ${scoreTone(value as number)}`} title={source ? `${providerName[source] || source} 评分，越低越好` : "越低越好"}>{label} {value}</span>) : <span className="probe-task-badge">评分未知</span>}
+    {task.result.ip && <small className="muted">{task.result.ip}</small>}
+  </div>
 }
 
 function MonitorForm({ task, servers, busy, onChange, onCancel, onSubmit }: { task: Monitor; servers: Server[]; busy: boolean; onChange: (task: Monitor) => void; onCancel: () => void; onSubmit: () => void }) {
