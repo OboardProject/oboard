@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,14 @@ import (
 	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+)
+
+const (
+	remoteExecMaxArgv      = 64
+	remoteExecMaxArgBytes  = 4096
+	remoteExecMaxArgvTotal = 32 << 10
+	remoteExecMaxShell     = 32 << 10
+	remoteExecMaxCwd       = 4096
 )
 
 func (s *Server) captureRemoteExecResult(task model.AgentTask, status, resultJSON string) string {
@@ -66,19 +75,25 @@ func (s *Server) waitRemoteExec(ctx context.Context, principal mcpauth.GrantPrin
 		"stdout_sha256": result.Meta.StdoutSHA256, "stderr_sha256": result.Meta.StderrSHA256,
 	}
 	if result.Meta.Error != "" {
+		code := result.Meta.Code
+		if code == "" {
+			code = result.Meta.Error
+		}
 		out["error"] = result.Meta.Error
-		out["code"] = result.Meta.Error
-		if result.Meta.Error == "remote_exec_cancelled" {
-			return out, codedError("remote_exec_cancelled", "remote execution was cancelled")
-		}
-		if result.Meta.Error == "remote_exec_timeout" {
-			return out, codedError("remote_exec_timeout", "remote execution timed out")
-		}
-		if result.Meta.Error == "request_id_conflict" {
-			return out, codedError("request_id_conflict", "request_id was reused with a different payload")
-		}
-		if result.Meta.Error == "agent_local_gate_denied" {
-			return out, codedError("agent_local_gate_denied", "agent local security policy denied this operation")
+		out["code"] = code
+		switch code {
+		case "remote_exec_cancelled":
+			return out, codedError(code, "remote execution was cancelled")
+		case "remote_exec_timeout":
+			return out, codedError(code, "remote execution timed out")
+		case "request_id_conflict":
+			return out, codedError(code, "request_id was reused with a different payload")
+		case "agent_local_gate_denied":
+			return out, codedError(code, "agent local security policy denied this operation")
+		case "invalid_input":
+			return out, codedError(code, result.Meta.Error)
+		default:
+			return out, codedError("remote_exec_failed", result.Meta.Error)
 		}
 	}
 	if result.Meta.StdoutTruncated || result.Meta.StderrTruncated {
@@ -122,13 +137,64 @@ func newRemoteExecPayload(serverID, grantID int64, privilege, mode string, argv 
 		Command: model.RemoteExecCommand{Mode: mode, Argv: argv, Shell: shell, Cwd: cwd},
 		Limits:  model.RemoteExecLimits{TimeoutSeconds: timeout, StdoutBytes: 1 << 20, StderrBytes: 1 << 20},
 	}
-	if mode != model.RemoteExecModeArgv && mode != model.RemoteExecModeShell {
-		return model.RemoteExecTaskPayload{}, errors.New("unsupported exec mode")
-	}
-	if mode == model.RemoteExecModeArgv && remoteExecArgvInvokesShell(argv) {
-		return model.RemoteExecTaskPayload{}, errors.New("structured exec cannot invoke a shell; use remote_shell")
+	if err := validateRemoteExecCommand(payload.Command); err != nil {
+		return model.RemoteExecTaskPayload{}, err
 	}
 	return payload, nil
+}
+
+// validateRemoteExecCommand mirrors the Agent's remote_exec input limits so a
+// request the Agent would refuse is answered to the caller directly instead of
+// being queued as a task that can only fail.
+func validateRemoteExecCommand(command model.RemoteExecCommand) error {
+	if len(command.Cwd) > remoteExecMaxCwd {
+		return fmt.Errorf("cwd exceeds %d bytes", remoteExecMaxCwd)
+	}
+	if !filepath.IsAbs(command.Cwd) || strings.Contains(command.Cwd, "..") || filepath.Clean(command.Cwd) != command.Cwd {
+		return errors.New("cwd must be a cleaned absolute path")
+	}
+	switch command.Mode {
+	case model.RemoteExecModeArgv:
+		if len(command.Argv) == 0 {
+			return errors.New("argv is required")
+		}
+		if len(command.Argv) > remoteExecMaxArgv {
+			return fmt.Errorf("argv has more than %d items", remoteExecMaxArgv)
+		}
+		total := 0
+		for _, arg := range command.Argv {
+			if arg == "" {
+				return errors.New("argv item is empty")
+			}
+			if len(arg) > remoteExecMaxArgBytes {
+				return fmt.Errorf("argv item exceeds %d bytes", remoteExecMaxArgBytes)
+			}
+			if strings.Contains(arg, "\x00") {
+				return errors.New("argv item contains null byte")
+			}
+			total += len(arg)
+		}
+		if total > remoteExecMaxArgvTotal {
+			return fmt.Errorf("argv total exceeds %d bytes", remoteExecMaxArgvTotal)
+		}
+		if remoteExecArgvInvokesShell(command.Argv) {
+			return errors.New("structured exec cannot invoke a shell; use remote_shell")
+		}
+	case model.RemoteExecModeShell:
+		shell := strings.TrimSpace(command.Shell)
+		if shell == "" {
+			return errors.New("command is required")
+		}
+		if len(shell) > remoteExecMaxShell {
+			return fmt.Errorf("command exceeds %d bytes", remoteExecMaxShell)
+		}
+		if strings.Contains(command.Shell, "\x00") {
+			return errors.New("command contains null byte")
+		}
+	default:
+		return errors.New("unsupported exec mode")
+	}
+	return nil
 }
 
 func remoteExecArgvInvokesShell(argv []string) bool {

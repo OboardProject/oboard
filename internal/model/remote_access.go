@@ -192,6 +192,7 @@ type RemoteExecResultMeta struct {
 	StderrTruncated bool   `json:"stderr_truncated"`
 	Cancelled       bool   `json:"cancelled,omitempty"`
 	Error           string `json:"error,omitempty"`
+	Code            string `json:"code,omitempty"`
 }
 
 type RemoteExecWireResult struct {

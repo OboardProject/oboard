@@ -98,7 +98,7 @@ func (s *Server) callRemoteAccessMCPTool(ctx context.Context, request *mcp.CallT
 		cwd, _ := arguments["cwd"].(string)
 		body, err := newRemoteExecPayload(serverID, grantID, privilege, model.RemoteExecModeArgv, argv, "", cwd, intFromAny(arguments["timeout_seconds"]))
 		if err != nil {
-			return mcpPlainFailureResult("", err.Error()), nil
+			return mcpPlainFailureResult("invalid_input", err.Error()), nil
 		}
 		payload = body
 		timeout = time.Duration(body.Limits.TimeoutSeconds+10) * time.Second
@@ -107,7 +107,7 @@ func (s *Server) callRemoteAccessMCPTool(ctx context.Context, request *mcp.CallT
 		cwd, _ := arguments["cwd"].(string)
 		body, err := newRemoteExecPayload(serverID, grantID, privilege, model.RemoteExecModeShell, nil, command, cwd, intFromAny(arguments["timeout_seconds"]))
 		if err != nil {
-			return mcpPlainFailureResult("", err.Error()), nil
+			return mcpPlainFailureResult("invalid_input", err.Error()), nil
 		}
 		payload = body
 		timeout = time.Duration(body.Limits.TimeoutSeconds+10) * time.Second

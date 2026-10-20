@@ -1473,6 +1473,13 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 		// operator incident; plugins notify through their own capability.
 		return
 	}
+	switch task.Type {
+	case model.AgentTaskTypeRemoteExec, model.AgentTaskTypeRemoteOperation:
+		// Remote exec and remote operations answer a waiting MCP or panel caller
+		// synchronously; their failure is that caller's result, and an automated
+		// client retrying a bad command must not page the operator per attempt.
+		return
+	}
 	eventName := notificationTaskFailed
 	var result struct {
 		Timeout bool `json:"timeout"`
