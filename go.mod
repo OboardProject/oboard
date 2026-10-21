@@ -1,6 +1,6 @@
 module github.com/OboardProject/oboard
 
-go 1.26.9
+go 1.27.3
 
 require (
 	github.com/dop251/goja v0.0.0-20260906210903-70ad66ec7ce4
