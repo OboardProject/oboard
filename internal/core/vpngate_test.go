@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,36 @@ func TestParseVPNGateCatalogSkipsInvalidRows(t *testing.T) {
 	}
 	if _, _, err := ParseVPNGateCatalog([]byte("<html>blocked</html>")); err == nil {
 		t.Fatal("non-catalog response must be rejected")
+	}
+}
+
+func TestParseVPNGateCatalogIntegerBounds(t *testing.T) {
+	config := base64.StdEncoding.EncodeToString([]byte(vpngateTestConfig(t, "219.100.37.14 443", "tcp")))
+	maxInt := int(^uint(0) >> 1)
+	for _, tc := range []struct {
+		name, raw string
+		want      int
+	}{
+		{"normal", "192", 192},
+		{"whitespace", " 13 ", 13},
+		{"maximum", strconv.Itoa(maxInt), maxInt},
+		{"overflow", strconv.FormatUint(uint64(maxInt)+1, 10), 0},
+		{"huge", "18446744073709551616", 0},
+		{"negative", "-1", 0},
+		{"invalid", "unknown", 0},
+		{"empty", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := "#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort,NumVpnSessions,Uptime,Operator,OpenVPN_ConfigData_Base64\n" +
+				"vpn,219.100.37.14,1," + tc.raw + ",1,Japan,JP," + tc.raw + ",1,operator," + config + "\n"
+			entries, skipped, err := ParseVPNGateCatalog([]byte(data))
+			if err != nil || skipped != 0 || len(entries) != 1 {
+				t.Fatalf("entries=%d skipped=%d err=%v", len(entries), skipped, err)
+			}
+			if entries[0].PingMS != tc.want || entries[0].Sessions != tc.want {
+				t.Fatalf("ping=%d sessions=%d want=%d", entries[0].PingMS, entries[0].Sessions, tc.want)
+			}
+		})
 	}
 }
 

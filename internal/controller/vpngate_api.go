@@ -121,7 +121,7 @@ func (s *Server) vpngateCatalogList(ctx context.Context, input vpngateCatalogInp
 	if err != nil {
 		return nil, err
 	}
-	out := make([]model.VPNGateNode, 0, limit)
+	out := make([]model.VPNGateNode, 0, 500)
 	for _, node := range nodes {
 		if country != "" && node.CountryCode != country {
 			continue

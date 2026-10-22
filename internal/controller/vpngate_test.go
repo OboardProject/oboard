@@ -165,6 +165,43 @@ func TestVPNGateSelectionFlowFiltersOperatorAndFailsClosed(t *testing.T) {
 	}
 }
 
+func TestVPNGateCatalogListLimitBounds(t *testing.T) {
+	ctx := t.Context()
+	db := openControllerAutomationTestStore(t)
+	app := newTestServer(db, "test-secret", "")
+	entries := make([]core.VPNGateCatalogEntry, 501)
+	for i := range entries {
+		ip := fmt.Sprintf("11.0.%d.%d", i/256, i%256)
+		entries[i] = core.VPNGateCatalogEntry{IP: ip, Port: 443, Network: "tcp", CountryCode: "JP", Spec: model.OpenVPNSpec{Server: ip, ServerPort: 443, Network: "tcp"}}
+	}
+	if _, err := db.UpsertVPNGateCatalog(ctx, entries, 0, "test", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ limit, want int }{
+		{0, 500}, {-1, 500}, {-int(^uint(0)>>1) - 1, 500}, {1, 1}, {499, 499}, {500, 500}, {501, 500}, {int(^uint(0) >> 1), 500},
+	} {
+		t.Run(fmt.Sprint(tc.limit), func(t *testing.T) {
+			result, err := app.vpngateCatalogList(ctx, vpngateCatalogInput{Limit: tc.limit, Country: " jp "})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := result.(map[string]any)
+			nodes := response["nodes"].([]model.VPNGateNode)
+			if len(nodes) != tc.want || response["total"] != 501 {
+				t.Fatalf("nodes=%d total=%v want=%d", len(nodes), response["total"], tc.want)
+			}
+		})
+	}
+	result, err := app.vpngateCatalogList(ctx, vpngateCatalogInput{Limit: 1, Country: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := result.(map[string]any)["nodes"].([]model.VPNGateNode)
+	if nodes == nil || len(nodes) != 0 {
+		t.Fatalf("expected empty array, got %+v", nodes)
+	}
+}
+
 func TestVPNGateHealthWakesWorkerWhenMembersDrop(t *testing.T) {
 	ctx := t.Context()
 	db := openControllerAutomationTestStore(t)

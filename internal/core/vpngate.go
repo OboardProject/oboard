@@ -277,9 +277,9 @@ func ParseVPNGateCatalog(data []byte) ([]VPNGateCatalogEntry, int, error) {
 			CountryCode: country,
 			CountryName: boundedText(field(record, "CountryLong"), 64),
 			Score:       parseInt64(field(record, "Score")),
-			PingMS:      int(parseInt64(field(record, "Ping"))),
+			PingMS:      parseInt(field(record, "Ping")),
 			SpeedBPS:    parseInt64(field(record, "Speed")),
-			Sessions:    int(parseInt64(field(record, "NumVpnSessions"))),
+			Sessions:    parseInt(field(record, "NumVpnSessions")),
 			UptimeMS:    parseInt64(field(record, "Uptime")),
 			Operator:    boundedText(field(record, "Operator"), 128),
 			Spec:        spec,
@@ -292,6 +292,14 @@ func ParseVPNGateCatalog(data []byte) ([]VPNGateCatalogEntry, int, error) {
 		entries = append(entries, entry)
 	}
 	return entries, skipped, nil
+}
+
+func parseInt(raw string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
 }
 
 func parseInt64(raw string) int64 {
