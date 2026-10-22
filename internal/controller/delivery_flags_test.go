@@ -40,7 +40,7 @@ func TestRuntimeUsersLaneHonorsGraySwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	off := false
-	if err := srv.saveServerUpdate(ctx, server, nil, nil, &off); err != nil {
+	if _, err := srv.saveServerUpdate(ctx, server, nil, nil, &off); err != nil {
 		t.Fatal(err)
 	}
 	controlCh := make(chan any, 4)
@@ -90,7 +90,7 @@ func TestAuthorizationFastLaneHonorsGraySwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	off := false
-	if err := srv.saveServerUpdate(ctx, server, nil, &off, nil); err != nil {
+	if _, err := srv.saveServerUpdate(ctx, server, nil, &off, nil); err != nil {
 		t.Fatal(err)
 	}
 	controlCh := make(chan any, 4)
@@ -181,7 +181,7 @@ func TestDeliveryPolicyRefreshSurvivesSemanticNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	off := false
-	if err := srv.saveServerUpdate(ctx, server, nil, nil, &off); err != nil {
+	if _, err := srv.saveServerUpdate(ctx, server, nil, nil, &off); err != nil {
 		t.Fatal(err)
 	}
 	saved, err := db.LatestTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)

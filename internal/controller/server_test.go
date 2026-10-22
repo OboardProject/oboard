@@ -4220,7 +4220,7 @@ func TestDNSListSetDefault(t *testing.T) {
 	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-lists/%d/set-default", int64(disabled["id"].(float64))), token, nil, http.StatusBadRequest)
 }
 
-func TestServerPortRangePatchRejectsManagedPortExclusion(t *testing.T) {
+func TestServerPortRangePatchMigratesManagedPortsIntoNewRange(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -4231,47 +4231,85 @@ func TestServerPortRangePatchRejectsManagedPortExclusion(t *testing.T) {
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 	ctx := context.Background()
-	server := &model.Server{Name: "port-edge", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline}
-	if err := db.CreateServer(ctx, server); err != nil {
+	entry := &model.Server{Name: "port-entry", PublicIPv4: "203.0.113.1", IPStack: model.IPStackIPv4Only, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline}
+	edge := &model.Server{Name: "port-edge", PublicIPv4: "203.0.113.2", IPStack: model.IPStackIPv4Only, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline}
+	for _, server := range []*model.Server{entry, edge} {
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inbound := &model.Inbound{ServerID: entry.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
 		t.Fatal(err)
 	}
-	allocation := []model.ProxyPathPortAllocation{{Kind: model.ProxyPathPortKindChainService, ScopeKey: "2022-blake3-aes-128-gcm", ServerID: server.ID, Pool: model.PortPoolPublic, ListenIP: "0.0.0.0", Network: "tcp_udp", Port: 10050}}
-	if err := db.SaveProxyPathPortAllocations(ctx, allocation, nil); err != nil {
+	path := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindChain, Name: "entry-edge", Secret: "port-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
 		t.Fatal(err)
 	}
-
-	// Narrowing the public range below a managed chain-service port must be
-	// rejected with the preview instead of silently saving.
-	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100}, http.StatusConflict)
-	if blocked["error"] != "port_migration_required" {
-		t.Fatalf("conflict body = %#v", blocked)
+	step := &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &edge.ID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{"chain_protocol":"shadowsocks"}`}
+	if err := db.CreateProxyPathStep(ctx, step); err != nil {
+		t.Fatal(err)
 	}
-	preview, ok := blocked["preview"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing preview: %#v", blocked)
-	}
-	if !preview["public_range_changed"].(bool) {
-		t.Fatalf("preview = %#v", preview)
-	}
-	affected := preview["affected_managed"].([]any)
-	if len(affected) != 1 {
-		t.Fatalf("affected managed = %#v", affected)
-	}
-	if item := affected[0].(map[string]any); int(item["port"].(float64)) != 10050 {
-		t.Fatalf("affected item = %#v", item)
-	}
-	stored, err := db.GetServer(ctx, server.ID)
+	// Persist the ports a deployment would have chosen.
+	data, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.PortRangeStart != 10000 {
-		t.Fatalf("server range was modified despite conflict: %#v", stored)
+	ledger := core.NewProxyPathPortLedger(nil)
+	if _, err := core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveProxyPathPortAllocations(ctx, ledger.Pending(), nil); err != nil {
+		t.Fatal(err)
+	}
+	edgePort := func() int {
+		allocations, err := db.ListProxyPathPortAllocations(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range allocations {
+			if item.ServerID == edge.ID && item.Kind == model.ProxyPathPortKindChainService {
+				return item.Port
+			}
+		}
+		t.Fatalf("chain service allocation missing: %#v", allocations)
+		return 0
+	}
+	before := edgePort()
+
+	// Narrowing the range below the managed port moves it into the new range.
+	moved := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", edge.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100}, http.StatusOK)
+	migration, ok := moved["port_migration"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing port_migration: %#v", moved)
+	}
+	moves := migration["moves"].([]any)
+	if len(moves) != 1 || int(moves[0].(map[string]any)["from_port"].(float64)) != before {
+		t.Fatalf("moves = %#v", moves)
+	}
+	after := edgePort()
+	if after < 20000 || after > 20100 || int(moves[0].(map[string]any)["to_port"].(float64)) != after {
+		t.Fatalf("migrated port = %d, moves = %#v", after, moves)
 	}
 
-	// Widening the range touches nothing and saves normally.
-	widened := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 9000, "port_range_end": 20000}, http.StatusOK)
-	if updated := widened["server"].(map[string]any); int(updated["port_range_start"].(float64)) != 9000 {
-		t.Fatalf("widened server = %#v", updated)
+	// A range with no free port cannot hold the listener: nothing is saved.
+	forward := &model.PortForward{Name: "holder", SourceServerID: edge.ID, TargetServerID: entry.ID, ListenPort: 30000, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, ProbeMode: "never", ProbeIntervalSeconds: 300, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreatePortForward(ctx, forward); err != nil {
+		t.Fatal(err)
+	}
+	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", edge.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30000}, http.StatusConflict)
+	if blocked["error"] != "port_migration_required" || !strings.Contains(blocked["message"].(string), "无法自动迁移") {
+		t.Fatalf("conflict body = %#v", blocked)
+	}
+	if affected := blocked["preview"].(map[string]any)["affected_managed"].([]any); len(affected) != 1 {
+		t.Fatalf("affected managed = %#v", affected)
+	}
+	stored, err := db.GetServer(ctx, edge.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PortRangeStart != 20000 || edgePort() != after {
+		t.Fatalf("conflict modified state: range %d port %d", stored.PortRangeStart, edgePort())
 	}
 }
 
@@ -4296,20 +4334,24 @@ func TestServerPortRangePatchSeparatesPublicAndInternalPools(t *testing.T) {
 	if err := db.SaveProxyPathPortAllocations(ctx, allocation, nil); err != nil {
 		t.Fatal(err)
 	}
+	count := func() int {
+		allocations, err := db.ListProxyPathPortAllocations(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(allocations)
+	}
 
-	// Moving the public range must not be blocked by loopback allocations.
+	// Moving the public range must not touch loopback allocations.
 	request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 30000, "internal_port_range_end": 59999}, http.StatusOK)
+	if count() != 1 {
+		t.Fatal("public range change touched the internal pool")
+	}
 
-	// Excluding the loopback allocation from the internal pool is a conflict.
-	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 60000, "internal_port_range_end": 61000}, http.StatusConflict)
-	if blocked["error"] != "port_migration_required" {
-		t.Fatalf("conflict body = %#v", blocked)
-	}
-	preview := blocked["preview"].(map[string]any)
-	if !preview["internal_range_changed"].(bool) {
-		t.Fatalf("preview = %#v", preview)
-	}
-	if affected := preview["affected_managed"].([]any); len(affected) != 1 {
-		t.Fatalf("affected managed = %#v", affected)
+	// Excluding a loopback allocation no path owns any more releases it.
+	moved := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 60000, "internal_port_range_end": 61000}, http.StatusOK)
+	migration := moved["port_migration"].(map[string]any)
+	if released := migration["released"].([]any); len(released) != 1 || count() != 0 {
+		t.Fatalf("migration = %#v", migration)
 	}
 }

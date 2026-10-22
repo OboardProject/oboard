@@ -4621,7 +4621,17 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		intent := &store.ServerConfigurationIntent{ActorPrincipal: "user:" + strconv.FormatInt(actor.ID, 10), ActorUserID: &actor.ID, Source: "web", Fields: serverIntentFields(input)}
-		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes, input.AuthorizationFastLane, input.RuntimeUsersEnabled, intent); err != nil {
+		migration, err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes, input.AuthorizationFastLane, input.RuntimeUsersEnabled, intent)
+		if err != nil {
+			var portMigration *serverPortMigrationRequiredError
+			if errors.As(err, &portMigration) {
+				write(w, http.StatusConflict, map[string]any{
+					"error":   "port_migration_required",
+					"message": portMigration.Error(),
+					"preview": portMigration.Preview,
+				})
+				return
+			}
 			status := http.StatusInternalServerError
 			if errors.Is(err, store.ErrServerRevisionConflict) || errors.Is(err, store.ErrServerDeleting) {
 				status = http.StatusConflict
@@ -4632,6 +4642,9 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		auditReq(s, r, "update", "server", fmt.Sprint(id))
 		updated := &v
 		response := map[string]any{"server": updated, "operation_id": intent.OperationID}
+		if migration != nil && !migration.Empty() {
+			response["port_migration"] = migration
+		}
 		items := []model.Server{v}
 		if err := s.store.AttachServerMonitoringDisplays(r.Context(), items); err != nil {
 			response["warning"] = "服务器已保存，展示信息暂未刷新"
@@ -5931,25 +5944,17 @@ func portPolicyChanged(current, next model.Server) bool {
 }
 
 // serverPortPolicyConflictMessage renders the 409 body for a server range PATCH
-// that would exclude managed listeners. Migration is not implemented yet, so the
-// message tells the operator exactly which listeners block the change instead of
-// silently moving or clearing ports.
-func serverPortPolicyConflictMessage(preview core.ServerPortPolicyChangePreview) string {
+// whose managed listeners could not be moved automatically, normally because
+// the new range has too few free ports. Nothing is saved or moved; the message
+// names the listeners so the operator can widen the range or move them by hand.
+func serverPortPolicyConflictMessage(preview core.ServerPortPolicyChangePreview, reason string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "新端口范围会排除 %d 个由系统托管的监听端口，禁止直接保存。", len(preview.AffectedManaged))
+	fmt.Fprintf(&b, "新端口范围会排除 %d 个由系统托管的监听端口，且无法自动迁移到新范围，未保存。", len(preview.AffectedManaged))
+	if reason = strings.TrimSpace(reason); reason != "" {
+		fmt.Fprintf(&b, "\n原因：%s", reason)
+	}
 	for _, item := range preview.AffectedManaged {
-		label := item.Kind
-		switch item.Kind {
-		case model.ProxyPathPortKindChainService:
-			label = "共享链路服务"
-		case model.ProxyPathPortKindInternal:
-			label = "链路内部入口"
-		case model.ProxyPathPortKindTunnelSSH:
-			label = "SSH 本地转发"
-		case model.ProxyPathPortKindTunnelWG:
-			label = "WireGuard 监听"
-		}
-		fmt.Fprintf(&b, "\n· %s %s: %d", label, item.ScopeKey, item.Port)
+		fmt.Fprintf(&b, "\n· %s %s: %d", serverPortKindLabel(item.Kind), item.ScopeKey, item.Port)
 	}
 	if len(preview.ManualOutsidePolicy) > 0 {
 		fmt.Fprintf(&b, "\n另有 %d 个手工入口位于新范围之外（保持不动，仅提示）：", len(preview.ManualOutsidePolicy))
@@ -5957,8 +5962,24 @@ func serverPortPolicyConflictMessage(preview core.ServerPortPolicyChangePreview)
 			fmt.Fprintf(&b, "\n· 入口端口 %d", item.Port)
 		}
 	}
-	fmt.Fprintf(&b, "\n请调整范围以包含以上端口，或先手动迁移这些服务。")
+	fmt.Fprintf(&b, "\n请扩大端口范围以留出足够的空闲端口，或先手动迁移这些服务。")
 	return b.String()
+}
+
+func serverPortKindLabel(kind string) string {
+	switch kind {
+	case model.ProxyPathPortKindChainService:
+		return "共享链路服务"
+	case model.ProxyPathPortKindInternal:
+		return "链路内部入口"
+	case model.ProxyPathPortKindTunnelSSH:
+		return "SSH 本地转发"
+	case model.ProxyPathPortKindTunnelWG:
+		return "WireGuard 监听"
+	case model.ProxyPathPortKindSnellUser:
+		return "Snell 独立用户监听"
+	}
+	return kind
 }
 
 func validateServerRegion(v *model.Server) error {

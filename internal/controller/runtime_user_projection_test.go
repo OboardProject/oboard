@@ -98,7 +98,7 @@ func TestDisabledRuntimeUsersKeepsFullConfigurationCredentials(t *testing.T) {
 		t.Fatal("fixture has no runtime users")
 	}
 	off := false
-	if err := srv.saveServerUpdate(ctx, server, nil, nil, &off); err != nil {
+	if _, err := srv.saveServerUpdate(ctx, server, nil, nil, &off); err != nil {
 		t.Fatal(err)
 	}
 	data, err := db.FullRoutingConfigData(ctx)

@@ -2912,6 +2912,16 @@ type ServerUpdateOptions struct {
 	TrafficWindow         model.ServerTrafficWindow
 	AuthorizationFastLane *bool
 	RuntimeUsersEnabled   *bool
+	// PortAllocationRewrite moves managed listeners into a new port range in the
+	// same transaction as the range itself. Every removed row must still hold
+	// the port the plan was computed from, otherwise the save is a revision
+	// conflict and nothing is written.
+	PortAllocationRewrite *PortAllocationRewrite
+}
+
+type PortAllocationRewrite struct {
+	Removed []model.ProxyPathPortAllocation
+	Added   []model.ProxyPathPortAllocation
 }
 
 func (s *Store) UpdateServerReportedAgent(ctx context.Context, server *model.Server) (bool, error) {
@@ -3023,6 +3033,11 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 			return err
 		}
 		v.AuthorizationFastLane, v.RuntimeUsersEnabled = flags.AuthorizationFastLane, flags.RuntimeUsersEnabled
+	}
+	if rewrite := options.PortAllocationRewrite; rewrite != nil {
+		if err := rewriteServerPortAllocationsTx(ctx, tx, v.ID, *rewrite); err != nil {
+			return err
+		}
 	}
 	operationID, err := recordServerConfigurationIntent(ctx, tx, v, previousConfiguration, options.ConfigurationIntent)
 	if err != nil {
@@ -5061,6 +5076,33 @@ func (s *Store) SaveProxyPathPortAllocations(ctx context.Context, added []model.
 		}
 	}
 	return tx.Commit()
+}
+
+func rewriteServerPortAllocationsTx(ctx context.Context, tx *sql.Tx, serverID int64, rewrite PortAllocationRewrite) error {
+	ts := now()
+	for _, item := range rewrite.Removed {
+		if item.ID <= 0 || item.ServerID != serverID {
+			return ErrServerRevisionConflict
+		}
+		res, err := tx.ExecContext(ctx, `delete from proxy_path_port_allocations where id=? and server_id=? and kind=? and scope_key=? and port=?`, item.ID, serverID, item.Kind, item.ScopeKey, item.Port)
+		if err != nil {
+			return err
+		}
+		if count, err := res.RowsAffected(); err != nil {
+			return err
+		} else if count != 1 {
+			return ErrServerRevisionConflict
+		}
+	}
+	for _, item := range rewrite.Added {
+		if item.ServerID != serverID {
+			return ErrServerRevisionConflict
+		}
+		if _, err := tx.ExecContext(ctx, `insert into proxy_path_port_allocations(kind,scope_key,server_id,pool,listen_ip,network,generation,ordinal,port,state,policy_revision,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, item.Kind, item.ScopeKey, item.ServerID, item.Pool, item.ListenIP, item.Network, item.Generation, item.Ordinal, item.Port, item.State, item.PolicyRevision, ts, ts); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // truncateProxyPathStepsTx cuts every path at its first step returned by the

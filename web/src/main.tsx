@@ -6690,7 +6690,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
         expires_at: next.expires_at ? serverExpiryOutputValue(next.expires_at) : null,
         clear_expires_at: !next.expires_at,
       }
-      const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(payload) }) as { server?: Server; time_check_error?: string }
+      const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(payload) }) as { server?: Server; time_check_error?: string; port_migration?: { moves?: Array<{ from_port: number; to_port: number }> } }
       if (!result.server?.id) throw new Error('服务器设置已保存，但接口未返回服务器数据')
       localServerSnapshotsRef.current.set(result.server.id, result.server)
       setServers(current => upsertServerSnapshot(current, result.server as Server))
@@ -6699,6 +6699,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus, patchPag
       void refreshServers()
       if (modeChanged) notify?.(result.time_check_error ? `时间校准设置已保存，但检测未能启动：${result.time_check_error}` : '时间校准设置已保存，已开始检测', result.time_check_error ? 'warning' : 'success')
       else notify?.('服务器设置已保存', 'success')
+      const moves = result.port_migration?.moves || []
+      if (moves.length > 0) notify?.(`${moves.length} 个托管端口已自动迁移到新范围（${moves.map(move => `${move.from_port} → ${move.to_port}`).join('，')}），下发配置后生效`, 'info')
       return true
     } catch (error: any) {
       await dialogs.alert({ title: '保存服务器失败', message: localizeErrorMessage(error?.message || error) })

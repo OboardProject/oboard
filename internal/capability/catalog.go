@@ -761,7 +761,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
 			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"},
 			"mtu_overhead_bytes": map[string]any{"type": "integer"},
-			"port_range_start":   map[string]any{"type": "integer", "description": "公网自动托管端口池起点"}, "port_range_end": map[string]any{"type": "integer", "description": "公网自动托管端口池终点"},
+			"port_range_start":   map[string]any{"type": "integer", "description": "公网自动托管端口池起点；缩小范围时落在范围外的托管监听会自动迁移到新范围"}, "port_range_end": map[string]any{"type": "integer", "description": "公网自动托管端口池终点"},
 			"internal_port_range_start": map[string]any{"type": "integer", "description": "回环内部端口池起点"}, "internal_port_range_end": map[string]any{"type": "integer", "description": "回环内部端口池终点"},
 			"connection_audit_enabled": boolValue, "resource_history_enabled": boolValue, "time_correction_mode": stringValue,
 			"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}},
@@ -777,7 +777,13 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"bbr_qdisc": map[string]any{"type": "string", "enum": []string{"", "off", "fq", "cake", "fq_pie"}, "description": "单台服务器的 BBR 安装覆盖：空字符串跟随系统设置 server_default_bbr_qdisc，签发接入令牌时把当时的系统设置固定到此服务器，之后修改系统设置不再影响它；只影响此服务器之后签发的安装命令，已安装服务器需重新运行安装命令"}, "bbr_cake_bandwidth_mbit": map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "description": "仅 bbr_qdisc=cake 时使用的出站整形带宽 Mbit/s，0 为不限速"},
 			"stealth_enabled": map[string]any{"type": "boolean", "description": "安全进程开关：开启后必须通过 servers.enrollment.issue 获取安装命令并在服务器重新安装 Agent；安装命令自动启动随机目录、进程名和服务名的新 Agent，成功后清理旧安装。关闭时已注册且在线的服务器会收到 apply_stealth 任务"},
 		})
-		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"operation_id": stringValue, "server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
+		portItem := closedObject(map[string]any{"kind": stringValue, "scope_key": stringValue, "server_id": positiveID, "pool": stringValue, "listen_ip": stringValue, "network": stringValue, "port": map[string]any{"type": "integer"}})
+		portMigration := closedObject(map[string]any{
+			"moves":    map[string]any{"type": "array", "items": closedObject(map[string]any{"kind": stringValue, "scope_key": stringValue, "server_id": positiveID, "pool": stringValue, "from_port": map[string]any{"type": "integer"}, "to_port": map[string]any{"type": "integer"}})},
+			"released": map[string]any{"type": "array", "items": portItem},
+		})
+		portMigration["description"] = "端口范围变更时自动迁移的托管监听：moves 为移到新范围内的端口，released 为已无路径使用而释放的记录；需下发部署后生效。新范围空闲端口不足时整次更新被拒绝，需扩大范围或手动迁移"
+		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"operation_id": stringValue, "server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32), "port_migration": portMigration}), "server_ids"
 	case "servers.enrollment.issue":
 		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
 			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "stealth_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),

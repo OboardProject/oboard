@@ -72,10 +72,11 @@ type serverUpdateOperation struct {
 
 type serverPortMigrationRequiredError struct {
 	Preview core.ServerPortPolicyChangePreview
+	Reason  string
 }
 
 func (e *serverPortMigrationRequiredError) Error() string {
-	return serverPortPolicyConflictMessage(e.Preview)
+	return serverPortPolicyConflictMessage(e.Preview, e.Reason)
 }
 
 func decodeServerUpdateOperation(input json.RawMessage) (serverUpdateOperation, error) {
@@ -178,21 +179,52 @@ func (s *Server) validateServerUpdateCandidate(ctx context.Context, current mode
 			return err
 		}
 	}
-	if portPolicyChanged(current, *next) {
-		allocations, err := s.store.ListProxyPathPortAllocations(ctx)
-		if err != nil {
-			return err
-		}
-		inbounds, err := s.store.ListInbounds(ctx)
-		if err != nil {
-			return err
-		}
-		preview := core.PreviewServerPortPolicyChange(current, *next, allocations, inbounds)
-		if preview.RequiresMigration() {
-			return &serverPortMigrationRequiredError{Preview: preview}
-		}
+	if _, err := s.planServerPortPolicyMigration(ctx, current, *next); err != nil {
+		return err
 	}
 	return nil
+}
+
+// planServerPortPolicyMigration moves every managed listener a range change
+// would exclude into the new range. It returns nil when nothing has to move and
+// a serverPortMigrationRequiredError when the new range cannot hold them, in
+// which case the operator has to widen the range or move the services by hand.
+func (s *Server) planServerPortPolicyMigration(ctx context.Context, current, next model.Server) (*core.ServerPortPolicyMigration, error) {
+	if !portPolicyChanged(current, next) {
+		return nil, nil
+	}
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	preview := core.PreviewServerPortPolicyChange(current, next, data.ProxyPathPortAllocations, data.Inbounds)
+	if !preview.RequiresMigration() {
+		return nil, nil
+	}
+	forwards, err := s.store.ListPortForwards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	servers := make([]model.Server, len(data.Servers))
+	for i, server := range data.Servers {
+		if server.ID == next.ID {
+			server = next
+		}
+		servers[i] = server
+	}
+	plan, err := core.PlanServerPortPolicyMigration(preview, core.PortPolicyMigrationInput{
+		Server:      next,
+		Servers:     servers,
+		Inbounds:    data.Inbounds,
+		Paths:       data.ProxyPaths,
+		Steps:       data.ProxyPathSteps,
+		Forwards:    forwards,
+		Allocations: data.ProxyPathPortAllocations,
+	})
+	if err != nil {
+		return nil, &serverPortMigrationRequiredError{Preview: preview, Reason: err.Error()}
+	}
+	return &plan, nil
 }
 
 func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) []string {
@@ -301,7 +333,8 @@ func (s *Server) registerServerUpdateOperation() {
 			return nil, err
 		}
 		intent := &store.ServerConfigurationIntent{ActorPrincipal: principal.ID, ActorUserID: principal.UserID, Source: "automation", Fields: serverIntentFields(request.Changes)}
-		if err := s.saveServerUpdate(ctx, next, request.Changes.TrafficUsedBytes, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled, intent); err != nil {
+		migration, err := s.saveServerUpdate(ctx, next, request.Changes.TrafficUsedBytes, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled, intent)
+		if err != nil {
 			return nil, err
 		}
 		if current.TimeCorrectionMode != next.TimeCorrectionMode {
@@ -316,6 +349,9 @@ func (s *Server) registerServerUpdateOperation() {
 		result := map[string]any{"operation_id": intent.OperationID, "server_id": next.ID, "revision": next.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}
 		if stealthQueued {
 			result["stealth_task_queued"] = true
+		}
+		if migration != nil && !migration.Empty() {
+			result["port_migration"] = migration
 		}
 		return result, nil
 	})
@@ -335,12 +371,12 @@ func serverIntentFields(changes any) []string {
 	return out
 }
 
-func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64, auth, users *bool, intents ...*store.ServerConfigurationIntent) error {
+func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64, auth, users *bool, intents ...*store.ServerConfigurationIntent) (*core.ServerPortPolicyMigration, error) {
 	expected := server.UpdatedAt
 	if revision, ok := automation.ApprovedResourceRevision(ctx, "server:"+strconv.FormatInt(server.ID, 10)); ok {
 		parsed, err := time.Parse(time.RFC3339Nano, revision)
 		if err != nil {
-			return store.ErrServerRevisionConflict
+			return nil, store.ErrServerRevisionConflict
 		}
 		expected = parsed
 	}
@@ -351,18 +387,29 @@ func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, tra
 	if trafficUsed != nil {
 		settings, err := s.store.ListSettings(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		key, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, trafficLocation(settings))
 		options.TrafficWindow = model.ServerTrafficWindow{Key: key, Start: start, End: end}
 	}
+	current, err := s.store.GetServer(ctx, server.ID)
+	if err != nil {
+		return nil, err
+	}
+	migration, err := s.planServerPortPolicyMigration(ctx, *current, *server)
+	if err != nil {
+		return nil, err
+	}
+	if migration != nil && !migration.Empty() {
+		options.PortAllocationRewrite = &store.PortAllocationRewrite{Removed: migration.Removed, Added: migration.Added}
+	}
 	if err := s.store.UpdateServerSettings(ctx, server, options); err != nil {
-		return err
+		return nil, err
 	}
 	if auth != nil || users != nil {
 		s.wakeAuthorizationSync()
 		s.wakeRuntimeUsersSync()
 		s.signalConfigurationReconcile()
 	}
-	return nil
+	return migration, nil
 }
