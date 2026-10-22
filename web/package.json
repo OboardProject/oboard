@@ -22,7 +22,7 @@
     "react-dom": "latest",
     "reactflow": "latest",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "^8.1.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
@@ -32,6 +32,6 @@
     "jsdom": "^30.0.1",
     "postcss": "^8.5.23",
     "tailwindcss": "^4.3.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
