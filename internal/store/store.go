@@ -109,6 +109,13 @@ func Open(path string) (*Store, error) {
 	return OpenWithOptions(path, DefaultSQLiteOptions())
 }
 
+func (s *Store) Path() string {
+	if s == nil {
+		return ""
+	}
+	return s.path
+}
+
 func OpenForRestore(path string) (*Store, error) {
 	opts := DefaultSQLiteOptions()
 	opts.MaxOpenConns = 1

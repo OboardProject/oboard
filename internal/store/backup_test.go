@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -380,4 +381,58 @@ func TestRewrapEncryptedSecretsIncludesIPDataKeys(t *testing.T) {
 	if err != nil || plain != `{"ipinfo":"token"}` {
 		t.Fatalf("plain=%q err=%v", plain, err)
 	}
+}
+
+func TestRequiredBackupFreeBytesCoversSnapshotAndArchive(t *testing.T) {
+	if got := RequiredBackupFreeBytes(2 << 30); got < 4<<30 {
+		t.Fatalf("required free bytes = %d, want at least two copies", got)
+	}
+	if got := RequiredBackupFreeBytes(1 << 20); got < 512<<20 {
+		t.Fatalf("small database free floor = %d", got)
+	}
+}
+
+func TestShrinkBackupSnapshotDropsFreePages(t *testing.T) {
+	root := t.TempDir()
+	db, err := Open(filepath.Join(root, "source.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `create table shrink_blob(id integer primary key, body blob)`); err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("abc"), 256<<10)
+	for i := 0; i < 8; i++ {
+		if _, err := db.db.ExecContext(ctx, `insert into shrink_blob(body) values(?)`, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.db.ExecContext(ctx, `delete from shrink_blob`); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "snapshot.sqlite")
+	if err := db.Backup(ctx, destination, BackupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ShrinkBackupSnapshot(ctx, destination); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() >= before.Size() {
+		t.Fatalf("snapshot size = %d, want less than %d", after.Size(), before.Size())
+	}
+	snapshot, err := Open(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
 }

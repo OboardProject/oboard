@@ -77,6 +77,14 @@ export function useBackups({ client, notify, dialogs, localizeErrorMessage }: Ba
   const refreshBackups = () => refreshSection('backups')
   const refreshUpdateBackups = () => refreshSection('updates')
   useEffect(() => { void refresh() }, [])
+  const backupPending = snapshot.backups?.some(item => item.local_status === 'pending') || Boolean(snapshot.progress?.id)
+  useEffect(() => {
+    if (!backupPending) return
+    const timer = window.setInterval(() => {
+      void api.list().then(result => setSnapshot(result)).catch(() => {})
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [backupPending])
   const saveSettings = async () => {
     if (working) return
     if (draft.destination?.enabled && !draft.destination.provider) {
@@ -262,7 +270,8 @@ export function useBackups({ client, notify, dialogs, localizeErrorMessage }: Ba
     const remoteDeleteMessage = item.remote_status === 'available' && !item.remote_retrievable
       ? '当前第三方目标与这条记录不一致。这里只会删除本地记录，远端文件需要到旧存储中手动删除。'
       : item.remote_status === 'available' ? '本地副本和第三方副本都会删除。' : '本地副本和备份记录都会删除。'
-    const deleteMessage = item.protected ? `这是恢复前创建的保护备份。${remoteDeleteMessage}` : remoteDeleteMessage
+    const protectedMessage = item.origin === 'pre_update' ? '这是更新前备份。' : item.origin === 'pre_restore' || item.protected ? '这是恢复前创建的保护备份。' : ''
+    const deleteMessage = protectedMessage ? `${protectedMessage}${remoteDeleteMessage}` : remoteDeleteMessage
     const confirmed = await dialogs.confirm({ title: '删除备份？', message: deleteMessage, confirmText: '删除', tone: 'danger' })
     if (!confirmed) return
     setWorking(`delete-${item.id}`)

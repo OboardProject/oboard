@@ -6,6 +6,7 @@ require (
 	github.com/dop251/goja v0.0.0-20260906210903-70ad66ec7ce4
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/gorilla/websocket v1.5.3
+	github.com/klauspost/pgzip v1.2.6
 	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260709160242-cd40e3a1d532
 	github.com/metacubex/age v0.0.0-20260603010618-28d156b4ea78
 	github.com/modelcontextprotocol/go-sdk v1.7.0
@@ -32,6 +33,7 @@ require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/metacubex/hkdf v0.1.0 // indirect
 	github.com/metacubex/hpke v0.1.0 // indirect

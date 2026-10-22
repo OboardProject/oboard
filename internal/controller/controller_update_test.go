@@ -17,9 +17,24 @@ import (
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
+
+func configureTestControllerBackup(t *testing.T, app *Server, db *store.Store, dbPath, secret string) {
+	t.Helper()
+	t.Setenv("OBOARD_BACKUP_DIR", filepath.Join(filepath.Dir(dbPath), "backups"))
+	plain := `{"recovery_password":"recovery-password-1","remote":{}}`
+	wrapped, err := security.EncryptSecret(secret, controllerBackupSecretsSetting, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSetting(context.Background(), controllerBackupSecretsSetting, wrapped); err != nil {
+		t.Fatal(err)
+	}
+	app.ConfigureControllerBackups(dbPath)
+}
 
 func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	root := t.TempDir()
@@ -141,6 +156,7 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	request(t, handler, http.MethodGet, "/api/v1/ui/controller-update", viewerLogin["token"].(string), nil, http.StatusForbidden)
 	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/force-finish", viewerLogin["token"].(string), map[string]any{"confirmation": controllerUpdateForceFinishPhrase}, http.StatusForbidden)
 
+	configureTestControllerBackup(t, app, db, dbPath, "test-secret")
 	firstBackup, err := app.createControllerBackup(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +185,7 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("unrelated backup was removed: %v", err)
 	}
-	backups, err := filepath.Glob(filepath.Join(app.controllerBackupDir, "oboard-before-update-*.sqlite"))
+	backups, err := filepath.Glob(filepath.Join(app.controllerBackupDir, "oboard-backup-*.obk"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +238,7 @@ func TestSuccessfulControllerUpdateRetainsBackup(t *testing.T) {
 	defer db.Close()
 	app := newTestServer(db, "test-secret", "")
 	app.controllerBackupDir = filepath.Join(root, "backups")
+	configureTestControllerBackup(t, app, db, filepath.Join(root, "oboard.sqlite"), "test-secret")
 	backupPath, err := app.createControllerBackup(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -401,6 +418,7 @@ func TestControllerUpdateInstallContinuesAfterRequestDisconnect(t *testing.T) {
 	app := newTestServer(db, "test-secret", "")
 	app.controllerUpdater = controllerupdate.NewClient(socketPath)
 	app.controllerBackupDir = filepath.Join(root, "backups")
+	configureTestControllerBackup(t, app, db, filepath.Join(root, "oboard.sqlite"), "test-secret")
 
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	recorder := httptest.NewRecorder()
@@ -423,7 +441,7 @@ func TestControllerUpdateInstallContinuesAfterRequestDisconnect(t *testing.T) {
 	cancelRequest()
 	select {
 	case <-installStarted:
-	case <-time.After(2 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("background install approval did not start")
 	}
 	unblockInstall()

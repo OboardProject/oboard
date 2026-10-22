@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
@@ -882,32 +883,55 @@ func (s *Server) writeControllerUpdateStatus(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) createControllerBackup(ctx context.Context) (string, error) {
-	dir := s.controllerBackupDir
-	if strings.TrimSpace(dir) == "" {
-		dir = filepath.Join("data", "backups")
-	}
-	s.cleanupZeroByteControllerUpdateBackupFiles()
-	name := "oboard-before-update-" + time.Now().UTC().Format("20060102T150405.000000000Z") + ".sqlite"
-	path := filepath.Join(dir, name)
-	lastPublish := time.Time{}
-	err := s.store.Backup(ctx, path, store.BackupOptions{
-		Progress: func(progress store.BackupProgress) {
-			s.controllerUpdateProgress.Store(progress)
-			now := time.Now()
-			if lastPublish.IsZero() || now.Sub(lastPublish) >= 250*time.Millisecond {
-				s.publishRealtime("controller_update")
-				lastPublish = now
-			}
-		},
-	})
-	if err != nil {
-		_ = os.Remove(path)
+	if err := s.ensureBackupManager(); err != nil {
 		return "", err
 	}
-	if retain := s.controllerUpdateRetention(); retain > 0 {
-		s.retainControllerUpdateBackupsWithLimit(retain)
+	settings, err := s.loadControllerBackupSettings(ctx)
+	if err != nil {
+		return "", err
 	}
-	return path, nil
+	if strings.TrimSpace(settings.Secrets.RecoveryPassword) == "" {
+		return "", errBackupRecoveryPasswordRequired
+	}
+	s.backupRunMu.Lock()
+	defer s.backupRunMu.Unlock()
+	ctx = backup.WithArchiveProgress(ctx, func(progress backup.ArchiveProgress) {
+		s.noteBackupProgress("pre_update", progress.Phase, progress.Percent)
+		if progress.Phase == "snapshot" {
+			s.controllerUpdateProgress.Store(store.BackupProgress{Percent: progress.Percent})
+			s.publishRealtime("controller_update")
+		}
+	})
+	item, err := s.createControllerDataBackup(ctx, settings, "pre_update", false, true)
+	s.clearBackupProgress()
+	if err != nil {
+		return "", err
+	}
+	protected := map[string]struct{}{}
+	if strings.TrimSpace(item.LocalPath) != "" {
+		protected[filepath.Clean(item.LocalPath)] = struct{}{}
+	}
+	s.retainControllerUpdateBackupsWithLimitAndProtected(settings.UpdateRetention, protected)
+	return item.LocalPath, nil
+}
+
+func (s *Server) ensureBackupManager() error {
+	if s.backupConfigured && s.backupManager != nil {
+		return nil
+	}
+	dbPath := strings.TrimSpace(s.controllerDBPath)
+	if dbPath == "" && s.store != nil {
+		dbPath = s.store.Path()
+	}
+	if dbPath == "" {
+		return errors.New("主控备份目录不可用")
+	}
+	s.ConfigureControllerBackups(dbPath)
+	if s.backupManager == nil {
+		return errors.New("主控备份目录不可用")
+	}
+	s.controllerBackupDir = s.backupManager.Root()
+	return nil
 }
 
 func (s *Server) cleanupZeroByteControllerUpdateBackupFiles() {
@@ -1012,6 +1036,39 @@ func (s *Server) retainControllerUpdateBackupsWithLimitAndProtected(retain int, 
 			removedAny = true
 		}
 	}
+	if s.store != nil {
+		if items, err := s.store.ListControllerBackups(context.Background()); err == nil {
+			ordinal := 0
+			for _, item := range items {
+				if item.Origin != "pre_update" {
+					continue
+				}
+				_, keep := protected[filepath.Clean(item.LocalPath)]
+				if ordinal < retain || keep {
+					ordinal++
+					continue
+				}
+				ordinal++
+				if item.LocalPath != "" {
+					var removeErr error
+					if s.backupManager != nil && s.backupManager.ContainsLocal(item.LocalPath) {
+						removeErr = s.backupManager.RemoveLocal(item.LocalPath)
+					} else {
+						removeErr = os.Remove(item.LocalPath)
+					}
+					if removeErr != nil && !os.IsNotExist(removeErr) {
+						log.Printf("remove excess pre-update backup %s: %v", item.LocalPath, removeErr)
+						continue
+					}
+				}
+				if err := s.store.DeleteControllerBackup(context.Background(), item.ID); err != nil {
+					log.Printf("delete excess pre-update backup %s: %v", item.ID, err)
+				} else {
+					removedAny = true
+				}
+			}
+		}
+	}
 	if removedAny || len(toDelete) > 0 {
 		if settings, err := s.store.ListSettings(context.Background()); err == nil {
 			stored := strings.TrimSpace(settings[controllerBackupSetting])
@@ -1039,14 +1096,42 @@ func (s *Server) removeSuccessfulControllerUpdateBackup(ctx context.Context, set
 	}
 	retain := s.controllerUpdateRetention()
 	if retain == 0 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			log.Printf("remove successful Controller update backup %s: %v", path, err)
-		}
+		s.removeRecordedBackup(ctx, path)
 		_ = s.store.SetSettings(ctx, map[string]string{controllerBackupSetting: "", controllerBackupTargetBuildSetting: ""})
 		s.retainControllerUpdateBackupsWithLimit(0)
 		return
 	}
 	s.retainControllerUpdateBackupsWithLimit(retain)
+}
+
+func (s *Server) removeRecordedBackup(ctx context.Context, path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	if s.backupManager != nil && s.backupManager.ContainsLocal(path) {
+		if err := s.backupManager.RemoveLocal(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove Controller update backup %s: %v", path, err)
+		}
+	} else if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.Printf("remove Controller update backup %s: %v", path, err)
+	}
+	if s.store == nil {
+		return
+	}
+	items, err := s.store.ListControllerBackups(ctx)
+	if err != nil {
+		return
+	}
+	cleaned := filepath.Clean(path)
+	for _, item := range items {
+		if filepath.Clean(item.LocalPath) != cleaned {
+			continue
+		}
+		if err := s.store.DeleteControllerBackup(ctx, item.ID); err != nil {
+			log.Printf("delete Controller update backup record %s: %v", item.ID, err)
+		}
+	}
 }
 
 func (s *Server) isControllerUpdateBackupPath(path string) bool {

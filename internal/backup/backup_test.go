@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -518,5 +519,54 @@ func TestPendingRestoreRollsBackDatabaseWhenACMESwitchFails(t *testing.T) {
 	}
 	if settings["restore-value"] != "target" {
 		t.Fatalf("database was not rolled back: %#v", settings)
+	}
+}
+
+func TestS3MultipartUpload(t *testing.T) {
+	previous := s3MultipartMinBytes
+	s3MultipartMinBytes = 8
+	t.Cleanup(func() { s3MultipartMinBytes = previous })
+	var initiated, completed int
+	parts := map[string][]byte{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-amz-content-sha256") != unsignedPayload {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Has("uploads"):
+			initiated++
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = io.WriteString(w, `<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>`)
+		case r.Method == http.MethodPut && r.URL.Query().Get("uploadId") == "upload-1":
+			body, _ := io.ReadAll(r.Body)
+			parts[r.URL.Query().Get("partNumber")] = append([]byte(nil), body...)
+			w.Header().Set("ETag", `"etag-`+r.URL.Query().Get("partNumber")+`"`)
+		case r.Method == http.MethodPost && r.URL.Query().Get("uploadId") == "upload-1":
+			completed++
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "backup.obk")
+	payload := bytes.Repeat([]byte("abc"), 10)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	destination := Destination{Provider: "s3", Endpoint: server.URL, Bucket: "backups", Region: "us-east-1", ForcePathStyle: true, Enabled: true}
+	secrets := RemoteSecrets{AccessKey: "access", SecretKey: "secret"}
+	if err := Upload(context.Background(), nil, destination, secrets, "backup.obk", file); err != nil {
+		t.Fatal(err)
+	}
+	if initiated != 1 || completed != 1 || len(parts) != 1 || !bytes.Equal(parts["1"], payload) {
+		t.Fatalf("initiated=%d completed=%d parts=%v", initiated, completed, parts)
 	}
 }

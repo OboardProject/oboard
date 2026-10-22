@@ -62,6 +62,13 @@ type controllerBackupJob struct {
 	Origin       string
 	UploadRemote bool
 	Protected    bool
+	Period       string
+}
+
+type backupProgressView struct {
+	ID      string  `json:"id"`
+	Phase   string  `json:"phase"`
+	Percent float64 `json:"percent"`
 }
 
 type controllerBackupSettingsState struct {
@@ -130,10 +137,10 @@ func (s *Server) enqueueControllerBackup(ctx context.Context, origin string, upl
 	if strings.TrimSpace(settings.Secrets.RecoveryPassword) == "" {
 		return nil, errBackupRecoveryPasswordRequired
 	}
-	return s.enqueueControllerBackupSettings(ctx, settings, origin, uploadRemote, protected)
+	return s.enqueueControllerBackupSettings(ctx, settings, origin, uploadRemote, protected, "")
 }
 
-func (s *Server) enqueueControllerBackupSettings(ctx context.Context, settings controllerBackupSettingsState, origin string, uploadRemote, protected bool) (*model.ControllerBackup, error) {
+func (s *Server) enqueueControllerBackupSettings(ctx context.Context, settings controllerBackupSettingsState, origin string, uploadRemote, protected bool, period string) (*model.ControllerBackup, error) {
 	id, err := backup.NewID()
 	if err != nil {
 		return nil, err
@@ -146,7 +153,7 @@ func (s *Server) enqueueControllerBackupSettings(ctx context.Context, settings c
 		s.backupJobsStarted = true
 		go s.runControllerBackupJobs()
 	}
-	job := controllerBackupJob{ID: id, Settings: settings, Origin: origin, UploadRemote: uploadRemote, Protected: protected}
+	job := controllerBackupJob{ID: id, Settings: settings, Origin: origin, UploadRemote: uploadRemote, Protected: protected, Period: period}
 	select {
 	case s.backupJobs <- job:
 		return item, nil
@@ -163,10 +170,17 @@ func (s *Server) runControllerBackupJobs() {
 }
 
 func (s *Server) runControllerBackupJob(job controllerBackupJob) {
-	ctx := context.Background()
-	s.backupMu.Lock()
-	defer s.backupMu.Unlock()
+	s.backupRunMu.Lock()
+	defer s.backupRunMu.Unlock()
+	ctx := backup.WithArchiveProgress(context.Background(), func(progress backup.ArchiveProgress) {
+		s.noteBackupProgress(job.ID, progress.Phase, progress.Percent)
+	})
 	item, err := s.createControllerDataBackupWithPasswordAndID(ctx, job.Settings, job.Settings.Secrets.RecoveryPassword, job.Origin, job.UploadRemote, job.Protected, job.ID)
+	s.clearBackupProgress()
+	if job.Period != "" {
+		s.finishScheduledControllerBackup(ctx, job, item, err)
+		return
+	}
 	if err != nil {
 		if item == nil {
 			_ = s.store.UpdateControllerBackupLocal(ctx, job.ID, "", "failed", 0)
@@ -175,6 +189,55 @@ func (s *Server) runControllerBackupJob(job controllerBackupJob) {
 		return
 	}
 	_ = s.store.SetSetting(ctx, controllerBackupLastErrorSetting, "")
+}
+
+func (s *Server) finishScheduledControllerBackup(ctx context.Context, job controllerBackupJob, item *model.ControllerBackup, err error) {
+	if err != nil && item == nil {
+		s.backupMu.Lock()
+		if s.scheduledBackupPeriod == job.Period {
+			s.scheduledBackupPeriod = ""
+		}
+		s.backupMu.Unlock()
+		_ = s.store.UpdateControllerBackupLocal(ctx, job.ID, "", "failed", 0)
+		message := localizeBackupErrorMessage(err.Error())
+		_ = s.store.SetSetting(ctx, controllerBackupLastErrorSetting, "自动备份失败："+message)
+		s.notifyBackupFailure(ctx, job.Period, "自动备份", message)
+		return
+	}
+	lastError := ""
+	if item != nil && item.RemoteStatus == "failed" {
+		lastError = "本地自动备份已完成，但第三方上传失败：" + localizeBackupErrorMessage(item.RemoteError)
+		s.notifyBackupFailure(ctx, job.Period, "第三方上传", localizeBackupErrorMessage(item.RemoteError))
+	}
+	_ = s.store.SetSettings(ctx, map[string]string{
+		controllerBackupLastPeriodSetting:  job.Period,
+		controllerBackupLastSuccessSetting: time.Now().UTC().Format(time.RFC3339Nano),
+		controllerBackupLastErrorSetting:   lastError,
+	})
+}
+
+func (s *Server) noteBackupProgress(id, phase string, percent float64) {
+	previous, _ := s.backupProgress.Load().(backupProgressView)
+	next := backupProgressView{ID: id, Phase: phase, Percent: percent}
+	s.backupProgress.Store(next)
+	now := time.Now().UnixNano()
+	last := s.backupProgressPublish.Load()
+	if previous.Phase == phase && last != 0 && now-last < int64(250*time.Millisecond) && percent < 100 {
+		return
+	}
+	s.backupProgressPublish.Store(now)
+	s.publishRealtime("backups")
+}
+
+func (s *Server) clearBackupProgress() {
+	s.backupProgress.Store(backupProgressView{})
+	s.backupProgressPublish.Store(0)
+	s.publishRealtime("backups")
+}
+
+func (s *Server) currentBackupProgress() (backupProgressView, bool) {
+	view, ok := s.backupProgress.Load().(backupProgressView)
+	return view, ok && view.ID != "" && view.Phase != ""
 }
 
 func (s *Server) failPendingControllerBackupJobs(ctx context.Context) {
@@ -216,36 +279,33 @@ func (s *Server) StartControllerBackups(ctx context.Context) {
 
 func (s *Server) runScheduledControllerBackup(ctx context.Context) {
 	s.backupMu.Lock()
-	defer s.backupMu.Unlock()
 	settings, err := s.loadControllerBackupSettings(ctx)
 	if err != nil || !settings.Enabled || strings.TrimSpace(settings.Secrets.RecoveryPassword) == "" {
+		s.backupMu.Unlock()
 		return
 	}
 	period, due := scheduledBackupPeriod(settings, time.Now())
-	if !due {
+	if !due || s.scheduledBackupPeriod == period {
+		s.backupMu.Unlock()
 		return
 	}
 	items, err := s.store.ListSettings(ctx)
 	if err != nil || items[controllerBackupLastPeriodSetting] == period {
+		s.backupMu.Unlock()
 		return
 	}
-	item, err := s.createControllerDataBackup(ctx, settings, "automatic", true, false)
-	if err != nil {
-		values := map[string]string{controllerBackupLastErrorSetting: "自动备份失败：" + localizeBackupErrorMessage(err.Error())}
-		if item != nil {
-			values[controllerBackupLastPeriodSetting] = period
-			values[controllerBackupLastSuccessSetting] = time.Now().UTC().Format(time.RFC3339Nano)
+	s.scheduledBackupPeriod = period
+	s.backupMu.Unlock()
+	if _, err := s.enqueueControllerBackupSettings(ctx, settings, "automatic", true, false, period); err != nil {
+		s.backupMu.Lock()
+		if s.scheduledBackupPeriod == period {
+			s.scheduledBackupPeriod = ""
 		}
-		_ = s.store.SetSettings(ctx, values)
-		s.notifyBackupFailure(ctx, period, "自动备份", localizeBackupErrorMessage(err.Error()))
-		return
+		s.backupMu.Unlock()
+		message := localizeBackupErrorMessage(err.Error())
+		_ = s.store.SetSetting(ctx, controllerBackupLastErrorSetting, "自动备份失败："+message)
+		s.notifyBackupFailure(ctx, period, "自动备份", message)
 	}
-	lastError := ""
-	if item.RemoteStatus == "failed" {
-		lastError = "本地自动备份已完成，但第三方上传失败：" + localizeBackupErrorMessage(item.RemoteError)
-		s.notifyBackupFailure(ctx, period, "第三方上传", localizeBackupErrorMessage(item.RemoteError))
-	}
-	_ = s.store.SetSettings(ctx, map[string]string{controllerBackupLastPeriodSetting: period, controllerBackupLastSuccessSetting: time.Now().UTC().Format(time.RFC3339Nano), controllerBackupLastErrorSetting: lastError})
 }
 
 func scheduledBackupPeriod(settings controllerBackupSettingsState, current time.Time) (string, bool) {
@@ -374,7 +434,11 @@ func (s *Server) controllerBackups(w http.ResponseWriter, r *http.Request) {
 		}
 		updateBackups, _, _ := s.listControllerUpdateBackups()
 		updateRetention := s.controllerUpdateRetention()
-		write(w, 200, map[string]any{"settings": publicControllerBackupSettings(settings), "backups": items, "update_backups": updateBackups, "update_retention": updateRetention})
+		payload := map[string]any{"settings": publicControllerBackupSettings(settings), "backups": items, "update_backups": updateBackups, "update_retention": updateRetention}
+		if progress, ok := s.currentBackupProgress(); ok {
+			payload["progress"] = progress
+		}
+		write(w, 200, payload)
 	case http.MethodPost:
 		var req struct {
 			UploadRemote *bool `json:"upload_remote"`
@@ -605,8 +669,8 @@ func (s *Server) controllerBackupUpload(w http.ResponseWriter, r *http.Request) 
 		fail(w, errors.New("请输入该备份的恢复密码"), 400)
 		return
 	}
-	s.backupMu.Lock()
-	defer s.backupMu.Unlock()
+	s.backupRunMu.Lock()
+	defer s.backupRunMu.Unlock()
 	path, size, err := s.backupManager.SaveUpload(io.Reader(file))
 	if err != nil {
 		fail(w, localizeBackupError(err), 400)
@@ -670,24 +734,32 @@ func (s *Server) controllerBackupDownload(w http.ResponseWriter, r *http.Request
 		fail(w, errors.New("主控备份目录不可用"), http.StatusServiceUnavailable)
 		return
 	}
-	s.backupMu.Lock()
 	settings, err := s.loadControllerBackupSettings(r.Context())
-	if err == nil {
-		err = s.ensureControllerBackupLocal(r.Context(), settings, item)
-	}
 	if err != nil {
-		s.backupMu.Unlock()
 		fail(w, localizeBackupError(err), http.StatusBadGateway)
 		return
 	}
+	needsFetch := true
+	if item.LocalPath != "" && s.backupManager.ContainsLocal(item.LocalPath) {
+		if info, statErr := s.backupManager.StatLocal(item.LocalPath); statErr == nil && info.Mode().IsRegular() && info.Size() > 0 {
+			needsFetch = false
+		}
+	}
+	if needsFetch {
+		s.backupRunMu.Lock()
+		err = s.ensureControllerBackupLocal(r.Context(), settings, item)
+		s.backupRunMu.Unlock()
+		if err != nil {
+			fail(w, localizeBackupError(err), http.StatusBadGateway)
+			return
+		}
+	}
 	file, err := s.backupManager.OpenLocal(item.LocalPath)
 	if err != nil {
-		s.backupMu.Unlock()
 		fail(w, errors.New("本地备份文件不可用"), http.StatusNotFound)
 		return
 	}
 	info, err := file.Stat()
-	s.backupMu.Unlock()
 	if err != nil {
 		_ = file.Close()
 		fail(w, localizeBackupError(err), 500)
@@ -705,8 +777,8 @@ func (s *Server) controllerBackupDelete(w http.ResponseWriter, r *http.Request, 
 		fail(w, errors.New("主控备份目录不可用"), http.StatusServiceUnavailable)
 		return
 	}
-	s.backupMu.Lock()
-	defer s.backupMu.Unlock()
+	s.backupRunMu.Lock()
+	defer s.backupRunMu.Unlock()
 	state, err := s.loadControllerBackupSettings(r.Context())
 	if err != nil {
 		fail(w, localizeBackupError(err), 500)
@@ -759,8 +831,8 @@ func (s *Server) controllerBackupRestore(w http.ResponseWriter, r *http.Request,
 		fail(w, errors.New("请输入备份恢复密码"), 400)
 		return
 	}
-	s.backupMu.Lock()
-	defer s.backupMu.Unlock()
+	s.backupRunMu.Lock()
+	defer s.backupRunMu.Unlock()
 	state, err := s.loadControllerBackupSettings(r.Context())
 	if err != nil {
 		fail(w, localizeBackupError(err), 500)
@@ -809,7 +881,7 @@ func (s *Server) createControllerDataBackupWithPasswordAndID(ctx context.Context
 		return nil, errors.New("主控备份目录不可用")
 	}
 	s.cleanupZeroByteControllerBackupFiles(ctx)
-	created, err := s.backupManager.CreateWithID(ctx, password, id)
+	created, err := s.backupManager.CreateWithProgress(ctx, password, id, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -856,7 +928,7 @@ func (s *Server) enforceControllerBackupRetention(ctx context.Context, settings 
 	}
 	localKept := 0
 	for _, item := range items {
-		if item.LocalPath == "" || item.Protected || item.Origin == "pre_restore" {
+		if item.LocalPath == "" || item.Protected || item.Origin == "pre_restore" || item.Origin == "pre_update" {
 			continue
 		}
 		localKept++
@@ -875,7 +947,7 @@ func (s *Server) enforceControllerBackupRetention(ctx context.Context, settings 
 	remoteKept := 0
 	currentTarget := backup.DestinationID(settings.Destination)
 	for _, item := range items {
-		if item.RemoteStatus != "available" || item.RemoteKey == "" || item.RemoteTarget != currentTarget || item.Protected || item.Origin == "pre_restore" || !settings.Destination.Enabled {
+		if item.RemoteStatus != "available" || item.RemoteKey == "" || item.RemoteTarget != currentTarget || item.Protected || item.Origin == "pre_restore" || item.Origin == "pre_update" || !settings.Destination.Enabled {
 			continue
 		}
 		remoteKept++

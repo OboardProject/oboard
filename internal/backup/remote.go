@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -14,9 +15,19 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
+
+const (
+	unsignedPayload     = "UNSIGNED-PAYLOAD"
+	s3MultipartPartSize = 16 << 20
+)
+
+// s3MultipartMinBytes is the object size at which S3 uploads switch to
+// multipart. Tests lower it.
+var s3MultipartMinBytes int64 = 64 << 20
 
 type Destination struct {
 	Provider       string `json:"provider"`
@@ -119,7 +130,7 @@ func Upload(ctx context.Context, client *http.Client, destination Destination, s
 		return err
 	}
 	if client == nil {
-		client = newRemoteHTTPClient(2*time.Minute, destination)
+		client = newRemoteHTTPClient(0, destination)
 	}
 	if strings.TrimSpace(objectKey) == "" {
 		return errors.New("备份远端文件名不能为空")
@@ -131,26 +142,68 @@ func Upload(ctx context.Context, client *http.Client, destination Destination, s
 	if err != nil || !info.Mode().IsRegular() {
 		return errors.New("本地备份文件不可用")
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	hash := sha256.New()
-	size, err := io.Copy(hash, file)
-	if err != nil {
-		return err
-	}
-	if size != info.Size() {
-		return errors.New("本地备份文件读取不完整")
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
+	size := info.Size()
+	ctx, cancel := boundRemoteContext(ctx, uploadDeadline(size))
+	defer cancel()
 	if strings.ToLower(destination.Provider) == "webdav" {
 		if err := ensureWebDAVCollections(ctx, client, destination, secrets, objectKey); err != nil {
 			return err
 		}
 	}
-	return putObject(ctx, client, destination, secrets, objectKey, io.LimitReader(file, size), size, hex.EncodeToString(hash.Sum(nil)))
+	if strings.ToLower(destination.Provider) == "s3" && size >= s3MultipartMinBytes {
+		return uploadS3Multipart(ctx, client, destination, secrets, objectKey, file, size)
+	}
+	hash := ""
+	if strings.ToLower(destination.Provider) == "s3" {
+		hash = unsignedPayload
+	}
+	return retryRemote(ctx, func() error {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		return putObject(ctx, client, destination, secrets, objectKey, &uploadProgressReader{r: io.LimitReader(file, size), total: size, ctx: ctx}, size, hash)
+	})
+}
+
+func uploadDeadline(size int64) time.Duration {
+	if size < 0 {
+		size = 0
+	}
+	deadline := 2*time.Minute + time.Duration(size/(32<<20))*time.Minute
+	if deadline < 2*time.Minute {
+		return 2 * time.Minute
+	}
+	if deadline > 6*time.Hour {
+		return 6 * time.Hour
+	}
+	return deadline
+}
+
+func boundRemoteContext(ctx context.Context, fallback time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, fallback)
+}
+
+type uploadProgressReader struct {
+	r     io.Reader
+	total int64
+	read  int64
+	ctx   context.Context
+}
+
+func (r *uploadProgressReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.read += int64(n)
+		percent := 0.0
+		if r.total > 0 {
+			percent = float64(r.read) / float64(r.total) * 100
+		}
+		ReportProgress(r.ctx, "upload", percent)
+	}
+	return n, err
 }
 
 func putObject(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey string, body io.Reader, size int64, payloadHash string) error {
@@ -182,12 +235,226 @@ func putObject(ctx context.Context, client *http.Client, destination Destination
 	return nil
 }
 
+func retryRemote(ctx context.Context, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(time.Duration(attempt) * 500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		err = fn()
+		if err == nil || !remoteRetryable(err) {
+			return err
+		}
+	}
+	return err
+}
+
+func remoteRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	message := err.Error()
+	for _, code := range []string{"HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504"} {
+		if strings.Contains(message, code) {
+			return true
+		}
+	}
+	return false
+}
+
+type s3CompletedPart struct {
+	Number int
+	ETag   string
+}
+
+func uploadS3Multipart(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey string, file *os.File, size int64) error {
+	uploadID, err := s3InitiateMultipart(ctx, client, destination, secrets, objectKey)
+	if err != nil {
+		return err
+	}
+	var parts []s3CompletedPart
+	err = func() error {
+		buf := make([]byte, s3MultipartPartSize)
+		var sent int64
+		for number := 1; ; number++ {
+			n, readErr := io.ReadFull(file, buf)
+			if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+				return readErr
+			}
+			if n == 0 {
+				break
+			}
+			etag, partErr := s3UploadPart(ctx, client, destination, secrets, objectKey, uploadID, number, buf[:n])
+			if partErr != nil {
+				return partErr
+			}
+			parts = append(parts, s3CompletedPart{Number: number, ETag: etag})
+			sent += int64(n)
+			percent := 0.0
+			if size > 0 {
+				percent = float64(sent) / float64(size) * 100
+			}
+			ReportProgress(ctx, "upload", percent)
+			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				break
+			}
+		}
+		if len(parts) == 0 {
+			return errors.New("备份文件为空，无法分段上传")
+		}
+		return s3CompleteMultipart(ctx, client, destination, secrets, objectKey, uploadID, parts)
+	}()
+	if err != nil {
+		_ = s3AbortMultipart(ctx, client, destination, secrets, objectKey, uploadID)
+		return err
+	}
+	return nil
+}
+
+func s3InitiateMultipart(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey string) (string, error) {
+	var uploadID string
+	err := retryRemote(ctx, func() error {
+		req, err := s3Request(ctx, http.MethodPost, destination, secrets, objectKey, url.Values{"uploads": {""}}, nil, 0)
+		if err != nil {
+			return err
+		}
+		response, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		if err != nil {
+			return err
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return fmt.Errorf("第三方目标上传失败，返回 HTTP %d", response.StatusCode)
+		}
+		var result struct {
+			UploadID string `xml:"UploadId"`
+		}
+		if err := xml.Unmarshal(body, &result); err != nil || strings.TrimSpace(result.UploadID) == "" {
+			return errors.New("第三方目标没有返回分段上传编号")
+		}
+		uploadID = result.UploadID
+		return nil
+	})
+	return uploadID, err
+}
+
+func s3UploadPart(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey, uploadID string, number int, body []byte) (string, error) {
+	var etag string
+	err := retryRemote(ctx, func() error {
+		query := url.Values{"partNumber": {strconv.Itoa(number)}, "uploadId": {uploadID}}
+		req, err := s3Request(ctx, http.MethodPut, destination, secrets, objectKey, query, bytes.NewReader(body), int64(len(body)))
+		if err != nil {
+			return err
+		}
+		response, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return fmt.Errorf("第三方目标上传失败，返回 HTTP %d", response.StatusCode)
+		}
+		etag = response.Header.Get("ETag")
+		if etag == "" {
+			return errors.New("第三方目标没有返回分段校验值")
+		}
+		return nil
+	})
+	return etag, err
+}
+
+func s3CompleteMultipart(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey, uploadID string, parts []s3CompletedPart) error {
+	var body bytes.Buffer
+	body.WriteString("<CompleteMultipartUpload>")
+	for _, part := range parts {
+		fmt.Fprintf(&body, "<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>", part.Number, xmlEscape(part.ETag))
+	}
+	body.WriteString("</CompleteMultipartUpload>")
+	payload := body.Bytes()
+	return retryRemote(ctx, func() error {
+		req, err := s3Request(ctx, http.MethodPost, destination, secrets, objectKey, url.Values{"uploadId": {uploadID}}, bytes.NewReader(payload), int64(len(payload)))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/xml")
+		response, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			return fmt.Errorf("第三方目标上传失败，返回 HTTP %d", response.StatusCode)
+		}
+		return nil
+	})
+}
+
+func s3AbortMultipart(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey, uploadID string) error {
+	req, err := s3Request(ctx, http.MethodDelete, destination, secrets, objectKey, url.Values{"uploadId": {uploadID}}, nil, 0)
+	if err != nil {
+		return err
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("第三方目标上传失败，返回 HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+func s3Request(ctx context.Context, method string, destination Destination, secrets RemoteSecrets, objectKey string, query url.Values, body io.Reader, size int64) (*http.Request, error) {
+	requestURL, err := destinationURL(destination, objectKey)
+	if err != nil {
+		return nil, err
+	}
+	if len(query) > 0 {
+		requestURL.RawQuery = query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+	req.ContentLength = size
+	if err := signS3(req, unsignedPayload, destination, secrets); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+func xmlEscape(value string) string {
+	var buf bytes.Buffer
+	_ = xml.EscapeText(&buf, []byte(value))
+	return buf.String()
+}
+
 func Download(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey string, output *os.File) (int64, error) {
 	if err := ValidateDestination(destination); err != nil {
 		return 0, err
 	}
+	ctx, cancel := boundRemoteContext(ctx, 30*time.Minute)
+	defer cancel()
 	if client == nil {
-		client = newRemoteHTTPClient(2*time.Minute, destination)
+		client = newRemoteHTTPClient(0, destination)
 	}
 	requestURL, err := destinationURL(destination, objectKey)
 	if err != nil {
@@ -384,7 +651,7 @@ func signS3(req *http.Request, payloadHash string, destination Destination, secr
 	req.Header.Set("x-amz-date", amzDate)
 	canonicalHeaders := "host:" + req.URL.Host + "\n" + "x-amz-content-sha256:" + payloadHash + "\n" + "x-amz-date:" + amzDate + "\n"
 	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
-	canonicalRequest := strings.Join([]string{req.Method, canonicalPath(req.URL), "", canonicalHeaders, signedHeaders, payloadHash}, "\n")
+	canonicalRequest := strings.Join([]string{req.Method, canonicalPath(req.URL), canonicalQuery(req.URL), canonicalHeaders, signedHeaders, payloadHash}, "\n")
 	scope := date + "/" + region + "/s3/aws4_request"
 	stringToSign := strings.Join([]string{"AWS4-HMAC-SHA256", amzDate, scope, sha256Hex([]byte(canonicalRequest))}, "\n")
 	dateKey := hmacSHA256([]byte("AWS4"+secrets.SecretKey), date)
@@ -401,6 +668,17 @@ func canonicalPath(u *url.URL) string {
 		return "/"
 	}
 	return u.EscapedPath()
+}
+
+func canonicalQuery(u *url.URL) string {
+	if u == nil || u.RawQuery == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return u.RawQuery
+	}
+	return values.Encode()
 }
 
 func sha256Hex(value []byte) string {
@@ -426,8 +704,10 @@ func localHost(host string) bool {
 func newRemoteHTTPClient(timeout time.Duration, destination Destination) *http.Client {
 	resolver := net.DefaultResolver
 	allowLocalHTTP := strings.EqualFold(destination.EndpointScheme(), "http") && localHost(destination.EndpointHost())
+	transport := newRemoteTransport(resolver, &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}, allowLocalHTTP)
+	transport.ResponseHeaderTimeout = 2 * time.Minute
 	return &http.Client{
-		Transport:     newRemoteTransport(resolver, &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}, allowLocalHTTP),
+		Transport:     transport,
 		Timeout:       timeout,
 		CheckRedirect: remoteRedirectPolicy(resolver, allowLocalHTTP),
 	}
@@ -464,7 +744,7 @@ func remoteRedirectPolicy(resolver remoteResolver, allowLocalHTTP bool) func(*ht
 func newRemoteTransport(resolver remoteResolver, dialer remoteDialer, allowLocalHTTP bool) *http.Transport {
 	return &http.Transport{
 		Proxy:               nil,
-		DisableKeepAlives:   true,
+		DisableKeepAlives:   false,
 		ForceAttemptHTTP2:   true,
 		TLSHandshakeTimeout: 5 * time.Second,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {

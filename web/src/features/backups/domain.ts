@@ -6,6 +6,28 @@ export const emptySettings: ControllerBackupSettings = {
     password_configured: false, destination_configured: true,
   }
 
+export const backupOriginLabel = (origin: string) => {
+  switch (origin) {
+    case 'automatic': return '自动备份'
+    case 'uploaded': return '上传备份'
+    case 'pre_restore': return '恢复前保护备份'
+    case 'pre_update': return '更新前备份'
+    default: return '手动备份'
+  }
+}
+
+export const backupPhaseLabel = (phase: string, percent: number) => {
+  const names: Record<string, string> = {
+    snapshot: '正在复制数据库',
+    compact: '正在整理空闲页',
+    archive: '正在压缩并加密',
+    upload: '正在上传',
+  }
+  const name = names[phase] || '正在创建备份'
+  if (percent > 0 && percent < 100) return `${name} ${Math.floor(percent)}%`
+  return name
+}
+
 export const backupStatus = (item: ControllerBackup) => item.local_status === 'pending'
     ? '备份创建中'
     : item.remote_status === 'failed'

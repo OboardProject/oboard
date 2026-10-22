@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -179,17 +180,32 @@ func TestVerifyRestoreDatabaseFailuresAreRedacted(t *testing.T) {
 				t.Fatal(err)
 			}
 			manager, err := New(Config{Root: filepath.Join(root, "backups"), DatabasePath: dbPath, MasterSecret: "synthetic-secret", SourceVersion: "1.2.3", Snapshot: func(ctx context.Context, dest string) error {
-				if brokenDB {
-					return os.WriteFile(dest, []byte("SECRET-invalid-database"), 0600)
-				}
 				return db.Backup(ctx, dest, store.BackupOptions{})
 			}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			archive, err := manager.Create(ctx, "synthetic-password")
-			if err != nil {
-				t.Fatal(err)
+			var archive Created
+			if brokenDB {
+				database := filepath.Join(root, "broken.sqlite")
+				if err := os.WriteFile(database, []byte("SECRET-invalid-database"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				id, err := NewID()
+				if err != nil {
+					t.Fatal(err)
+				}
+				output := filepath.Join(root, "backups", "broken.obk")
+				manifest, err := manager.writeStreamingArchive(ctx, output, database, "synthetic-password", Manifest{FormatVersion: FormatVersion, ID: id, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), SourceVersion: "1.2.3"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				archive = Created{Manifest: manifest, Path: output}
+			} else {
+				archive, err = manager.Create(ctx, "synthetic-password")
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			parent := filepath.Join(root, "private")
 			if err := os.Mkdir(parent, 0700); err != nil {

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -15,11 +16,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/klauspost/pgzip"
 	"github.com/metacubex/age"
+
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 const (
@@ -27,6 +32,7 @@ const (
 	maxArchiveBytes  = int64(4 << 30)
 	maxPayloadBytes  = int64(3 << 30)
 	maxArchiveFiles  = 10000
+	tarBlockSize     = 512
 	pendingFileName  = "pending-restore.json"
 	manifestFileName = "manifest.json"
 	payloadFileName  = "payload.age"
@@ -60,6 +66,37 @@ type Created struct {
 	Manifest Manifest
 	Path     string
 	Size     int64
+}
+
+// ArchiveProgress is reported while a backup is copied, compacted, and sealed.
+type ArchiveProgress struct {
+	Phase   string
+	Percent float64
+}
+
+type archiveProgressKey struct{}
+
+// WithArchiveProgress returns a context that receives archive phase updates.
+func WithArchiveProgress(ctx context.Context, progress func(ArchiveProgress)) context.Context {
+	if progress == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, archiveProgressKey{}, progress)
+}
+
+// ReportProgress delivers a phase update when the context carries a reporter.
+func ReportProgress(ctx context.Context, phase string, percent float64) {
+	fn, _ := ctx.Value(archiveProgressKey{}).(func(ArchiveProgress))
+	if fn == nil {
+		return
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	fn(ArchiveProgress{Phase: phase, Percent: percent})
 }
 
 type Inspection struct {
@@ -207,15 +244,22 @@ func (m *Manager) CreateLocal(name string) (string, *os.File, error) {
 }
 
 func (m *Manager) Create(ctx context.Context, password string) (Created, error) {
-	return m.CreateWithID(ctx, password, "")
+	return m.CreateWithProgress(ctx, password, "", nil)
 }
 
 func (m *Manager) CreateWithID(ctx context.Context, password, requestedID string) (Created, error) {
+	return m.CreateWithProgress(ctx, password, requestedID, nil)
+}
+
+func (m *Manager) CreateWithProgress(ctx context.Context, password, requestedID string, progress func(ArchiveProgress)) (Created, error) {
 	if strings.TrimSpace(password) == "" {
 		return Created{}, errors.New("请设置备份恢复密码")
 	}
 	if requestedID != "" && !validBackupID(requestedID) {
 		return Created{}, errors.New("备份文件ID无效")
+	}
+	if err := m.ensureFreeSpace(); err != nil {
+		return Created{}, err
 	}
 	id, err := randomID()
 	if err != nil {
@@ -224,6 +268,8 @@ func (m *Manager) CreateWithID(ctx context.Context, password, requestedID string
 	if requestedID != "" {
 		id = requestedID
 	}
+	ctx = WithArchiveProgress(ctx, progress)
+	ReportProgress(ctx, "snapshot", 0)
 	work, err := os.MkdirTemp(m.config.Root, ".backup-")
 	if err != nil {
 		return Created{}, err
@@ -233,26 +279,72 @@ func (m *Manager) CreateWithID(ctx context.Context, password, requestedID string
 	if err := m.config.Snapshot(ctx, database); err != nil {
 		return Created{}, fmt.Errorf("创建数据库快照失败：%w", err)
 	}
-	payload := filepath.Join(work, payloadFileName)
-	if err := m.writePayload(payload, database, password); err != nil {
-		return Created{}, err
+	ReportProgress(ctx, "compact", 0)
+	if err := store.ShrinkBackupSnapshot(ctx, database); err != nil {
+		return Created{}, fmt.Errorf("整理数据库快照失败：%w", err)
 	}
-	payloadSHA, payloadSize, err := fileSHA256(payload)
-	if err != nil {
-		return Created{}, err
-	}
-	created := time.Now().UTC()
-	manifest := Manifest{FormatVersion: FormatVersion, ID: id, CreatedAt: created.Format(time.RFC3339Nano), SourceVersion: m.config.SourceVersion, PayloadSHA256: payloadSHA, PayloadSize: payloadSize}
-	name := "oboard-backup-" + created.Format("20060102T150405Z") + "-" + id + ".obk"
+	ReportProgress(ctx, "archive", 0)
+	createdAt := time.Now().UTC()
+	name := "oboard-backup-" + createdAt.Format("20060102T150405Z") + "-" + id + ".obk"
 	output := filepath.Join(m.config.Root, name)
-	if err := writeEnvelope(output, manifest, payload); err != nil {
+	manifest, err := m.writeStreamingArchive(ctx, output, database, password, Manifest{
+		FormatVersion: FormatVersion,
+		ID:            id,
+		CreatedAt:     createdAt.Format(time.RFC3339Nano),
+		SourceVersion: m.config.SourceVersion,
+	})
+	if err != nil {
 		return Created{}, err
 	}
 	info, err := os.Stat(output)
 	if err != nil {
 		return Created{}, err
 	}
+	if info.Size() > maxArchiveBytes {
+		_ = os.Remove(output)
+		return Created{}, fmt.Errorf("备份文件超过 %d GiB 限制", maxArchiveBytes>>30)
+	}
+	ReportProgress(ctx, "archive", 100)
 	return Created{Manifest: manifest, Path: output, Size: info.Size()}, nil
+}
+
+func (m *Manager) ensureFreeSpace() error {
+	var bytes int64
+	if info, err := os.Stat(m.config.DatabasePath); err == nil {
+		bytes += info.Size()
+	}
+	if info, err := os.Stat(m.config.DatabasePath + "-wal"); err == nil {
+		bytes += info.Size()
+	}
+	bytes += directorySize(m.config.ACMEHome)
+	free, err := store.DiskFreeBytes(m.config.Root)
+	if err != nil {
+		return fmt.Errorf("无法检查备份磁盘空间：%w", err)
+	}
+	need := store.RequiredBackupFreeBytes(bytes)
+	if free < need {
+		return fmt.Errorf("磁盘空间不足：创建备份至少需要 %d 字节，当前可用 %d 字节", need, free)
+	}
+	return nil
+}
+
+func directorySize(root string) int64 {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return 0
+	}
+	var total int64
+	_ = filepath.WalkDir(root, func(item string, entry fs.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr == nil && info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 func (m *Manager) SaveUpload(input io.Reader) (string, int64, error) {
@@ -325,12 +417,6 @@ func (m *Manager) StageRestore(ctx context.Context, archivePath, password, targe
 	}
 	database := filepath.Join(stage, "database.sqlite")
 	err = restored.SetSetting(ctx, "controller_backup_restore_reconcile", "true")
-	if err == nil {
-		err = restored.RevokePluginAuthorityAfterRestore(ctx)
-	}
-	if err == nil {
-		err = restored.CheckIntegrity(ctx)
-	}
 	closeErr := restored.Close()
 	if err == nil {
 		err = closeErr
@@ -387,24 +473,103 @@ func ApplyPendingRestore(config Config) error {
 	return os.RemoveAll(pending.StageRoot)
 }
 
-func (m *Manager) writePayload(destination, database, password string) error {
-	output, err := createPath(destination, 0o600)
+func (m *Manager) writeStreamingArchive(ctx context.Context, destination, database, password string, manifest Manifest) (Manifest, error) {
+	temp, err := os.CreateTemp(filepath.Dir(destination), ".backup-envelope-")
 	if err != nil {
-		return err
+		return Manifest{}, err
 	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return Manifest{}, err
+	}
+	modTime := time.Now().UTC().Truncate(time.Second)
+	header, err := tarHeaderBlock(payloadFileName, 0, modTime)
+	if err != nil {
+		_ = temp.Close()
+		return Manifest{}, err
+	}
+	if _, err := temp.Write(header); err != nil {
+		_ = temp.Close()
+		return Manifest{}, err
+	}
+	hash := sha256.New()
+	limited := &limitedWriter{w: io.MultiWriter(temp, hash), limit: maxPayloadBytes}
+	err = m.writePayload(ctx, limited, database, password)
+	payloadSize := limited.n
+	if err == nil && payloadSize > maxPayloadBytes {
+		err = fmt.Errorf("备份数据超过 %d GiB 限制", maxPayloadBytes>>30)
+	}
+	pad := (tarBlockSize - (payloadSize % tarBlockSize)) % tarBlockSize
+	if err == nil && pad > 0 {
+		_, err = temp.Write(make([]byte, pad))
+	}
+	if err == nil {
+		header, err = tarHeaderBlock(payloadFileName, payloadSize, modTime)
+	}
+	if err == nil {
+		_, err = temp.WriteAt(header, 0)
+	}
+	if err == nil {
+		manifest.PayloadSHA256 = hex.EncodeToString(hash.Sum(nil))
+		manifest.PayloadSize = payloadSize
+		tw := tar.NewWriter(temp)
+		var data []byte
+		data, err = json.Marshal(manifest)
+		if err == nil {
+			err = addPayloadBytes(tw, manifestFileName, data)
+		}
+		if closeErr := tw.Close(); err == nil {
+			err = closeErr
+		}
+	}
+	if err == nil {
+		err = temp.Sync()
+	}
+	closeErr := temp.Close()
+	if err != nil {
+		return Manifest{}, err
+	}
+	if closeErr != nil {
+		return Manifest{}, closeErr
+	}
+	if err := os.Rename(tempName, destination); err != nil {
+		return Manifest{}, err
+	}
+	if err := syncDir(filepath.Dir(destination)); err != nil {
+		_ = os.Remove(destination)
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
+func (m *Manager) writePayload(ctx context.Context, output io.Writer, database, password string) error {
 	recipient, err := age.NewScryptRecipient(password)
 	if err != nil {
-		_ = output.Close()
 		return err
 	}
 	ageWriter, err := age.Encrypt(output, recipient)
 	if err != nil {
-		_ = output.Close()
 		return err
 	}
-	gzipWriter := gzip.NewWriter(ageWriter)
+	gzipWriter, err := pgzip.NewWriterLevel(ageWriter, pgzip.BestSpeed)
+	if err != nil {
+		_ = ageWriter.Close()
+		return err
+	}
+	if err := gzipWriter.SetConcurrency(1<<20, backupGzipWorkers()); err != nil {
+		_ = gzipWriter.Close()
+		_ = ageWriter.Close()
+		return err
+	}
 	tarWriter := tar.NewWriter(gzipWriter)
-	err = addPayloadFile(tarWriter, database, "database.sqlite")
+	err = addPayloadFileProgress(ctx, tarWriter, database, "database.sqlite", func(written, total int64) {
+		if total <= 0 {
+			return
+		}
+		ReportProgress(ctx, "archive", float64(written)/float64(total)*100)
+	})
 	if err == nil {
 		secret, marshalErr := json.Marshal(map[string]string{"master_secret": m.config.MasterSecret})
 		if marshalErr != nil {
@@ -419,18 +584,61 @@ func (m *Manager) writePayload(destination, database, password string) error {
 	closeTar := tarWriter.Close()
 	closeGzip := gzipWriter.Close()
 	closeAge := ageWriter.Close()
-	closeFile := output.Close()
 	if err != nil {
-		_ = os.Remove(destination)
 		return err
 	}
-	for _, closeErr := range []error{closeTar, closeGzip, closeAge, closeFile} {
+	for _, closeErr := range []error{closeTar, closeGzip, closeAge} {
 		if closeErr != nil {
-			_ = os.Remove(destination)
 			return closeErr
 		}
 	}
 	return nil
+}
+
+func backupGzipWorkers() int {
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		return 1
+	}
+	if workers > 4 {
+		return 4
+	}
+	return workers
+}
+
+func tarHeaderBlock(name string, size int64, modTime time.Time) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := tar.NewWriter(&buf)
+	if err := writer.WriteHeader(&tar.Header{
+		Name:     name,
+		Mode:     0o600,
+		Size:     size,
+		Typeflag: tar.TypeReg,
+		ModTime:  modTime,
+		Format:   tar.FormatUSTAR,
+	}); err != nil {
+		return nil, err
+	}
+	// Flush and Close require the declared body. Only the 512-byte header is needed.
+	if buf.Len() != tarBlockSize {
+		return nil, errors.New("备份文件头无效")
+	}
+	return buf.Bytes(), nil
+}
+
+type limitedWriter struct {
+	w     io.Writer
+	n     int64
+	limit int64
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if w.n+int64(len(p)) > w.limit {
+		return 0, fmt.Errorf("备份数据超过 %d GiB 限制", w.limit>>30)
+	}
+	n, err := w.w.Write(p)
+	w.n += int64(n)
+	return n, err
 }
 
 func writeEnvelope(destination string, manifest Manifest, payload string) error {
@@ -444,15 +652,15 @@ func writeEnvelope(destination string, manifest Manifest, payload string) error 
 		_ = temp.Close()
 		return err
 	}
-	w := tar.NewWriter(temp)
+	writer := tar.NewWriter(temp)
 	data, err := json.Marshal(manifest)
 	if err == nil {
-		err = addPayloadBytes(w, manifestFileName, data)
+		err = addPayloadBytes(writer, manifestFileName, data)
 	}
 	if err == nil {
-		err = addPayloadFile(w, payload, payloadFileName)
+		err = addPayloadFile(writer, payload, payloadFileName)
 	}
-	closeTar := w.Close()
+	closeTar := writer.Close()
 	closeFile := temp.Close()
 	if err != nil {
 		return err
@@ -464,6 +672,15 @@ func writeEnvelope(destination string, manifest Manifest, payload string) error 
 		return closeFile
 	}
 	return os.Rename(tempName, destination)
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func readEnvelope(archivePath, payloadDestination string) (Manifest, int64, error) {
@@ -663,6 +880,13 @@ func addPayloadBytes(writer *tar.Writer, name string, value []byte) error {
 }
 
 func addPayloadFile(writer *tar.Writer, source, name string) error {
+	return addPayloadFileProgress(context.Background(), writer, source, name, nil)
+}
+
+func addPayloadFileProgress(ctx context.Context, writer *tar.Writer, source, name string, onBytes func(written, total int64)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	info, err := statPath(source)
 	if err != nil {
 		return err
@@ -675,10 +899,14 @@ func addPayloadFile(writer *tar.Writer, source, name string) error {
 		return err
 	}
 	defer input.Close()
-	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: info.Size(), Typeflag: tar.TypeReg, ModTime: time.Now().UTC()}); err != nil {
+	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: info.Size(), Typeflag: tar.TypeReg, ModTime: time.Now().UTC(), Format: tar.FormatUSTAR}); err != nil {
 		return err
 	}
-	written, err := io.Copy(writer, input)
+	var reader io.Reader = input
+	if onBytes != nil && info.Size() > 0 {
+		reader = &progressReader{r: input, total: info.Size(), onBytes: onBytes}
+	}
+	written, err := io.Copy(writer, reader)
 	if err != nil {
 		return err
 	}
@@ -686,6 +914,22 @@ func addPayloadFile(writer *tar.Writer, source, name string) error {
 		return errors.New("备份源文件读取不完整")
 	}
 	return nil
+}
+
+type progressReader struct {
+	r       io.Reader
+	total   int64
+	read    int64
+	onBytes func(written, total int64)
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.read += int64(n)
+		r.onBytes(r.read, r.total)
+	}
+	return n, err
 }
 
 func addPayloadTree(writer *tar.Writer, source, prefix string) error {

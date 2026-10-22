@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +66,10 @@ func (s *Store) Backup(ctx context.Context, destination string, options BackupOp
 	if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	_, _ = s.db.ExecContext(ctx, `pragma wal_checkpoint(truncate)`)
+	// Online Backup already copies a consistent snapshot, including frames that
+	// are still only in the WAL. A truncating checkpoint here would rewrite the
+	// live database and then copy it again, and it stalls writers while readers
+	// hold an older snapshot. Maintenance owns WAL truncation.
 	pagesPerStep := options.PagesPerStep
 	if pagesPerStep <= 0 {
 		pagesPerStep = defaultBackupPagesPerStep
@@ -222,6 +227,65 @@ func clampBackupPercent(previous float64, total, remaining int, done bool) float
 	return percent
 }
 
+// ShrinkBackupSnapshot returns free pages from a finished online-backup file
+// to the filesystem. The live database is not modified. Incremental auto-vacuum
+// copies move free pages to the end and truncate them. A snapshot that is not
+// incremental is rewritten with VACUUM only when the volume can hold another
+// copy; otherwise the free pages stay in the file and compression deals with them.
+func ShrinkBackupSnapshot(ctx context.Context, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("backup snapshot path is required")
+	}
+	dsn := "file:" + path + "?" + url.Values{
+		"mode":    {"rw"},
+		"_pragma": {"busy_timeout(5000)", "journal_mode(DELETE)"},
+	}.Encode()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, `pragma journal_mode=DELETE`); err != nil {
+		return fmt.Errorf("set backup snapshot journal mode: %w", err)
+	}
+	var mode, pageCount, freelist int64
+	if err := db.QueryRowContext(ctx, `pragma auto_vacuum`).Scan(&mode); err != nil {
+		return fmt.Errorf("read backup snapshot auto_vacuum: %w", err)
+	}
+	if err := db.QueryRowContext(ctx, `pragma page_count`).Scan(&pageCount); err != nil {
+		return fmt.Errorf("read backup snapshot page_count: %w", err)
+	}
+	if err := db.QueryRowContext(ctx, `pragma freelist_count`).Scan(&freelist); err != nil {
+		return fmt.Errorf("read backup snapshot freelist: %w", err)
+	}
+	if freelist <= 0 || pageCount <= 0 {
+		return nil
+	}
+	if mode == sqliteAutoVacuumIncremental {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(`pragma incremental_vacuum(%d)`, freelist)); err != nil {
+			return fmt.Errorf("shrink backup snapshot: %w", err)
+		}
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	free, err := DiskFreeBytes(path)
+	if err != nil {
+		return err
+	}
+	if free < info.Size()+64<<20 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `vacuum`); err != nil {
+		return fmt.Errorf("compact backup snapshot: %w", err)
+	}
+	return nil
+}
+
 func fsyncPath(path string) error {
 	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
@@ -269,15 +333,18 @@ func (s *Store) DatabaseFragmentation(ctx context.Context) (pageCount, freelistC
 	return pageCount, freelistCount, ratio, nil
 }
 
-// RequiredBackupFreeBytes is the disk floor that keeps an update backup from filling the volume.
+// RequiredBackupFreeBytes is the disk floor for one backup. The pipeline keeps
+// the online snapshot and the archive at the same time, so an incompressible
+// database needs about two copies plus a small fixed margin. The 512 MiB floor
+// still applies to small databases.
 func RequiredBackupFreeBytes(dbSize int64) int64 {
 	if dbSize < 0 {
 		dbSize = 0
 	}
-	padded := dbSize + dbSize/4
+	snapshotAndArchive := dbSize*2 + 64<<20
 	withHeadroom := dbSize + 512<<20
-	if padded > withHeadroom {
-		return padded
+	if snapshotAndArchive > withHeadroom {
+		return snapshotAndArchive
 	}
 	return withHeadroom
 }

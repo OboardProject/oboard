@@ -210,9 +210,13 @@ type Server struct {
 	backupManager                 *backup.Manager
 	backupConfigured              bool
 	backupMu                      sync.Mutex
+	backupRunMu                   sync.Mutex
 	backupJobs                    chan controllerBackupJob
 	backupJobsStarted             bool
 	backupRestart                 func()
+	backupProgress                atomic.Value
+	backupProgressPublish         atomic.Int64
+	scheduledBackupPeriod         string
 	// deploymentMu serializes deployment preparation. Preparing a deployment
 	// repairs stored topology, refreshes derived roles and allocates one
 	// monotonic config version, so two concurrent applies would interleave those
