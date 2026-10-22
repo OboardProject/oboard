@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const githubAPI = "https://api.github.com/repos/OboardProject/oboard/releases"
+const githubAPI = "https://api.github.com/repos/obrdx/oboard/releases"
 
 const (
 	releaseMetadataTimeout = 15 * time.Second
@@ -88,7 +88,7 @@ func fetchReleaseOnce(ctx context.Context, client *http.Client, channel string) 
 	}
 	assets := make(map[string]string, len(release.Assets))
 	for _, asset := range release.Assets {
-		if asset.Name != "" && strings.HasPrefix(asset.URL, "https://github.com/OboardProject/oboard/releases/download/") {
+		if asset.Name != "" && strings.HasPrefix(asset.URL, "https://github.com/obrdx/oboard/releases/download/") {
 			assets[asset.Name] = asset.URL
 		}
 	}

@@ -29,7 +29,7 @@ jobs:
         with:
           client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}
           private-key: ${{ secrets.OBOARD_RELEASE_APP_PRIVATE_KEY }}
-          owner: OboardProject
+          owner: obrdx
           repositories: oboard-agent
       - name: Validate stable version and compute metadata
         id: meta

@@ -22,7 +22,7 @@ The default install root is `/opt/oboard`, and the default port is `2787`.
 
 ## Related Repositories
 
-- [oboard-agent](https://github.com/OboardProject/oboard-agent): node-side Agent and the built-in proxy kernel `oboard-sb`
+- [oboard-agent](https://github.com/obrdx/oboard-agent): node-side Agent and the built-in proxy kernel `oboard-sb`
 
 ## License
 

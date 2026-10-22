@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	defaultProbeResourceURL     = "https://raw.githubusercontent.com/OboardProject/resource/main/probe/probe-targets-cn.json"
+	defaultProbeResourceURL     = "https://raw.githubusercontent.com/obrdx/resource/main/probe/probe-targets-cn.json"
 	latencyProbeCacheTTL        = 6 * time.Hour
 	latencyProbeRefreshCooldown = 30 * time.Second
 )

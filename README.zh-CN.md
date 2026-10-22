@@ -22,7 +22,7 @@ Oboard 面板基于二进制运行
 
 ## 相关仓库
 
-- [oboard-agent](https://github.com/OboardProject/oboard-agent)：节点侧 Agent 与内置代理内核 `oboard-sb`
+- [oboard-agent](https://github.com/obrdx/oboard-agent)：节点侧 Agent 与内置代理内核 `oboard-sb`
 
 ## 许可证
 

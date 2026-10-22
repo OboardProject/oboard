@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-REPO=${OBOARD_AGENT_REPO:-OboardProject/oboard-agent}
+REPO=${OBOARD_AGENT_REPO:-obrdx/oboard-agent}
 CHANNEL=${OBOARD_AGENT_CHANNEL:-}
 VERSION_VALUE=${VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION")}
 SOURCE=${OBOARD_AGENT_RELEASE_DIR:-}

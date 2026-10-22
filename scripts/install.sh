@@ -2,7 +2,7 @@
 set -eu
 (set -o pipefail) 2>/dev/null && set -o pipefail
 
-REPO=${OBOARD_REPO:-OboardProject/oboard}
+REPO=${OBOARD_REPO:-obrdx/oboard}
 # Refuse obviously malicious repo values used in download URLs.
 case "$REPO" in
   [A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;;

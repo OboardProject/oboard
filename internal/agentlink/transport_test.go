@@ -109,7 +109,7 @@ func TestTransportPinMismatchIsRejected(t *testing.T) {
 func TestTransportDownloadStream(t *testing.T) {
 	dir := t.TempDir()
 	artifact := filepath.Join(dir, "release-manifest.json")
-	payload := []byte(`{"repo":"OboardProject/oboard-agent","build":"abc123"}`)
+	payload := []byte(`{"repo":"obrdx/oboard-agent","build":"abc123"}`)
 	if err := os.WriteFile(artifact, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}

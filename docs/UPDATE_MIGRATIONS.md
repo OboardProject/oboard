@@ -97,7 +97,7 @@
 ### controller-db-20260930-plugin-capability-runtime
 
 - **引入日期：** 2026-09-30
-- **引入提交：** `OboardProject/oboard@ada0625d40d650d5c48826ee84a1acd8667ecca7`
+- **引入提交：** `obrdx/oboard@ada0625d40d650d5c48826ee84a1acd8667ecca7`
 - **引入版本：** `dev-ada0625d40d6`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/plugin`
@@ -117,7 +117,7 @@
 ### agent-kernel-20260902-runtime-config-digest
 
 - **引入日期：** 2026-09-02
-- **引入提交：** `OboardProject/oboard-agent@fa897b03f1f8`（待发布前以开发通道计）
+- **引入提交：** `obrdx/oboard-agent@fa897b03f1f8`（待发布前以开发通道计）
 - **引入版本：** `dev-fa897b03f1f8`
 - **首次稳定版：** 待发布
 - **所有者：** Agent `internal/agent`、kernel `cmd/oboard-sb`、`internal/minibox`
@@ -137,7 +137,7 @@
 ### controller-db-20260901-oauth-grant-dedupe
 
 - **引入日期：** 2026-09-01
-- **引入提交：** `OboardProject/oboard@8d86ca5fdbb4c77a6867805ff5faa04e3395ca25`
+- **引入提交：** `obrdx/oboard@8d86ca5fdbb4c77a6867805ff5faa04e3395ca25`
 - **引入版本：** `dev-8d86ca5fdbb4`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Web
@@ -157,7 +157,7 @@
 ### controller-db-20260830-snell-server-psk
 
 - **引入日期：** 2026-08-30
-- **引入提交：** `OboardProject/oboard@befb1492dc9f`（待发布前以开发通道计）
+- **引入提交：** `obrdx/oboard@befb1492dc9f`（待发布前以开发通道计）
 - **引入版本：** `dev-befb1492dc9f`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/core`
@@ -177,7 +177,7 @@
 ### controller-db-20260830-family-split-templates
 
 - **引入日期：** 2026-08-30
-- **引入提交：** `OboardProject/oboard@c4c3e44e42d9`（待发布前以开发通道计）
+- **引入提交：** `obrdx/oboard@c4c3e44e42d9`（待发布前以开发通道计）
 - **引入版本：** `dev-c4c3e44e42d9`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/model`、`internal/core`、`internal/controller`、`internal/capability`、`internal/application`、Web
@@ -197,7 +197,7 @@
 ### controller-db-20260829-plan-reconcile
 
 - **引入日期：** 2026-08-29
-- **引入提交：** `OboardProject/oboard@a994c031245a`（待发布前以开发通道计）
+- **引入提交：** `obrdx/oboard@a994c031245a`（待发布前以开发通道计）
 - **引入版本：** `dev-a994c031245a`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/model`、Web
@@ -217,7 +217,7 @@
 ### controller-db-20260829-server-cpu-cores
 
 - **引入日期：** 2026-08-29
-- **引入提交：** `OboardProject/oboard@0fc17b734fa3639742066ccbd8f88427bd622a27`（Agent `OboardProject/oboard-agent@f3e0f38677f9875e58fed58d558cfff3de24d1cf`）
+- **引入提交：** `obrdx/oboard@0fc17b734fa3639742066ccbd8f88427bd622a27`（Agent `obrdx/oboard-agent@f3e0f38677f9875e58fed58d558cfff3de24d1cf`）
 - **引入版本：** `dev-0fc17b734fa3`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、Agent `internal/agent`、`internal/model`、Web
@@ -237,7 +237,7 @@
 ### controller-db-20260915-server-stealth-switch
 
 - **引入日期：** 2026-09-15
-- **引入提交：** `OboardProject/oboard@ada407b3bede`（feat/security-process 分支，待合入）
+- **引入提交：** `obrdx/oboard@ada407b3bede`（feat/security-process 分支，待合入）
 - **引入版本：** `dev-ada407b3bede`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、`internal/capability`、Web
@@ -257,7 +257,7 @@
 ### controller-db-20260829-server-display-tags
 
 - **引入日期：** 2026-08-29
-- **引入提交：** `OboardProject/oboard@5e3028465dda0c8050c03542e242f9c01c1a79a0`
+- **引入提交：** `obrdx/oboard@5e3028465dda0c8050c03542e242f9c01c1a79a0`
 - **引入版本：** `dev-5e3028465dda`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、`internal/capability`、`internal/application`、Web
@@ -277,7 +277,7 @@
 ### controller-db-20260829-subscription-client-templates
 
 - **引入日期：** 2026-08-29
-- **引入提交：** `OboardProject/oboard@57aafe877b1cb080a320f43d0718ed796e898171`
+- **引入提交：** `obrdx/oboard@57aafe877b1cb080a320f43d0718ed796e898171`
 - **引入版本：** `dev-57aafe877b1c`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
@@ -297,7 +297,7 @@
 ### controller-db-20260828-traffic-policy-revision-triggers
 
 - **引入日期：** 2026-08-28
-- **引入提交：** `OboardProject/oboard@57aafe877b1cb080a320f43d0718ed796e898171`
+- **引入提交：** `obrdx/oboard@57aafe877b1cb080a320f43d0718ed796e898171`
 - **引入版本：** `dev-57aafe877b1c`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`；Agent `internal/agent`
@@ -317,7 +317,7 @@
 ### controller-db-20260828-remove-vless-tls-vision
 
 - **引入日期：** 2026-08-28
-- **引入提交：** `OboardProject/oboard@fa658a2d24734405aaccf74147ef8b72b49452ff`
+- **引入提交：** `obrdx/oboard@fa658a2d24734405aaccf74147ef8b72b49452ff`
 - **引入版本：** `dev-fa658a2d2473`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
@@ -337,7 +337,7 @@
 ### controller-db-20260828-update-fleet
 
 - **引入日期：** 2026-08-28
-- **引入提交：** `OboardProject/oboard@4d9ba516be1d7fa7908a75142c7b52d3e7c3e5dc`
+- **引入提交：** `obrdx/oboard@4d9ba516be1d7fa7908a75142c7b52d3e7c3e5dc`
 - **引入版本：** `dev-4d9ba516be1d`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Web；Agent 重连仅本地退避
@@ -357,7 +357,7 @@
 ### controller-db-20260825-port-forward-external-target
 
 - **引入日期：** 2026-08-25
-- **引入提交：** `OboardProject/oboard@e2a63295bcfc715da4c2bf8739fd69c84d5d56c8`
+- **引入提交：** `obrdx/oboard@e2a63295bcfc715da4c2bf8739fd69c84d5d56c8`
 - **引入版本：** `dev-e2a63295bcfc`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/core`、`internal/controller`、Web
@@ -377,7 +377,7 @@
 ### controller-db-20260825-transport-tfo-capability
 
 - **引入日期：** 2026-08-25
-- **引入提交：** `OboardProject/oboard@05b18611eabf86c103e9359534e73e49cc6a2d6a`
+- **引入提交：** `obrdx/oboard@05b18611eabf86c103e9359534e73e49cc6a2d6a`
 - **引入版本：** `dev-05b18611eabf`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Agent `internal/agent`
@@ -397,7 +397,7 @@
 ### controller-db-20260826-preset-tfo-defaults
 
 - **引入日期：** 2026-08-26
-- **引入提交：** `OboardProject/oboard@4ef9a80efa97`
+- **引入提交：** `obrdx/oboard@4ef9a80efa97`
 - **引入版本：** `dev-4ef9a80efa97`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/core`、Web
@@ -417,7 +417,7 @@
 ### controller-db-20260826-hy2-salamander-presets
 
 - **引入日期：** 2026-08-26
-- **引入提交：** `OboardProject/oboard@c8f4a4dd07dd51e7247abb3ed001eba7b75b2731`
+- **引入提交：** `obrdx/oboard@c8f4a4dd07dd51e7247abb3ed001eba7b75b2731`
 - **引入版本：** `dev-c8f4a4dd07dd`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
@@ -437,7 +437,7 @@
 ### controller-db-20260825-server-traffic-quota
 
 - **引入日期：** 2026-08-25
-- **引入提交：** `OboardProject/oboard@05b18611eabf86c103e9359534e73e49cc6a2d6a`
+- **引入提交：** `obrdx/oboard@05b18611eabf86c103e9359534e73e49cc6a2d6a`
 - **引入版本：** `dev-05b18611eabf`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
@@ -457,7 +457,7 @@
 ### controller-db-20260824-anytls-padding-presets
 
 - **引入日期：** 2026-08-24
-- **引入提交：** `OboardProject/oboard@8e5b40cc790e3b8e097d584936dab6c6e5b2e2a9`
+- **引入提交：** `obrdx/oboard@8e5b40cc790e3b8e097d584936dab6c6e5b2e2a9`
 - **引入版本：** `dev-8e5b40cc790e`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/core`、Web
@@ -477,7 +477,7 @@
 ### controller-db-20260823-node-presets
 
 - **引入日期：** 2026-08-23
-- **引入提交：** `OboardProject/oboard@936aac8ad0f2`
+- **引入提交：** `obrdx/oboard@936aac8ad0f2`
 - **引入版本：** `dev-936aac8ad0f2`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Web
@@ -497,7 +497,7 @@
 ### controller-db-20260822-subscription-output-filters
 
 - **引入日期：** 2026-08-22
-- **引入提交：** `OboardProject/oboard@e8a8239c3cd79`
+- **引入提交：** `obrdx/oboard@e8a8239c3cd79`
 - **引入版本：** `dev-e8a8239c3cd79`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Web
@@ -517,7 +517,7 @@
 ### controller-db-20260822-server-expiry
 
 - **引入日期：** 2026-08-22
-- **引入提交：** `OboardProject/oboard@49c99f6415e7`
+- **引入提交：** `obrdx/oboard@49c99f6415e7`
 - **引入版本：** `dev-49c99f6415e7`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Web
@@ -537,7 +537,7 @@
 ### controller-db-20260819-configuration-revision-watermark
 
 - **引入日期：** 2026-08-19
-- **引入提交：** `OboardProject/oboard@25ab8ae0b77646b87f38aa7ce9d461c9effa25c3`；active 套餐/绑定触发器与复合拓扑原子修正：`OboardProject/oboard@570563b836848f00284d42f9d9b8f78ebcc3984f`、`OboardProject/oboard@8462675cf0c40de74a2b9a9fc4a70ff19ea62cec`、`OboardProject/oboard@805f434a70bd40ad1842b827ad3471c1da3600ec`、`OboardProject/oboard@506ce5a7ef87a41442db7322fa206ca5ef2051a3`、`OboardProject/oboard@6e171b3d65a1556313709ddf4f8b670f6fd451e5`
+- **引入提交：** `obrdx/oboard@25ab8ae0b77646b87f38aa7ce9d461c9effa25c3`；active 套餐/绑定触发器与复合拓扑原子修正：`obrdx/oboard@570563b836848f00284d42f9d9b8f78ebcc3984f`、`obrdx/oboard@8462675cf0c40de74a2b9a9fc4a70ff19ea62cec`、`obrdx/oboard@805f434a70bd40ad1842b827ad3471c1da3600ec`、`obrdx/oboard@506ce5a7ef87a41442db7322fa206ca5ef2051a3`、`obrdx/oboard@6e171b3d65a1556313709ddf4f8b670f6fd451e5`
 - **引入版本：** `dev-25ab8ae0b776`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`
@@ -557,7 +557,7 @@
 ### controller-db-20260818-telegram-operations
 
 - **引入日期：** 2026-08-18
-- **引入提交：** `OboardProject/oboard@61ea3fa846871ab871a2471d6da3a02adfbec483`
+- **引入提交：** `obrdx/oboard@61ea3fa846871ab871a2471d6da3a02adfbec483`
 - **引入版本：** `dev-61ea3fa84687`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`
@@ -601,7 +601,7 @@
 ### controller-db-20260818-node-workspace
 
 - **引入日期：** 2026-08-18
-- **引入提交：** `OboardProject/oboard@7ab2640d5900dc2ee4d70b8155bdb117722d9328`
+- **引入提交：** `obrdx/oboard@7ab2640d5900dc2ee4d70b8155bdb117722d9328`
 - **引入版本：** `dev-7ab2640d5900`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -634,7 +634,7 @@
 ### controller-db-20260812-connectivity-probe-target
 
 - **引入日期：** 2026-08-12
-- **引入提交：** `OboardProject/oboard@26cd0a1013d104a0cec7331618de7386e64e9f73`
+- **引入提交：** `obrdx/oboard@26cd0a1013d104a0cec7331618de7386e64e9f73`
 - **引入版本：** `dev-26cd0a1013d1`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -662,7 +662,7 @@
 ### controller-db-20260812-latency-probes
 
 - **引入日期：** 2026-08-12
-- **引入提交：** `OboardProject/oboard@302964f672e7e43f651a8a809659f058668e73d3`
+- **引入提交：** `obrdx/oboard@302964f672e7e43f651a8a809659f058668e73d3`
 - **引入版本：** `dev-490892a0ae99`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -689,7 +689,7 @@
 ### controller-db-20260813-unified-latency-probes
 
 - **引入日期：** 2026-08-13
-- **引入提交：** `OboardProject/oboard@0bb8ff77a4e9dc43f101a439d86a6507fde5c30d`
+- **引入提交：** `obrdx/oboard@0bb8ff77a4e9dc43f101a439d86a6507fde5c30d`
 - **引入版本：** `dev-0bb8ff77a4e9`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -732,7 +732,7 @@
 ### controller-db-20260813-resource-history-recording
 
 - **引入日期：** 2026-08-13
-- **引入提交：** `OboardProject/oboard@65a552b0616d5b13bbecf500226e3f2d836795dd`
+- **引入提交：** `obrdx/oboard@65a552b0616d5b13bbecf500226e3f2d836795dd`
 - **引入版本：** `dev-65a552b0616d`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -769,7 +769,7 @@
 ### controller-db-20260813-extended-load-metrics
 
 - **引入日期：** 2026-08-13
-- **引入提交：** `OboardProject/oboard@dbe8bf22ce18d404b3581fb910e47680880cba3d`
+- **引入提交：** `obrdx/oboard@dbe8bf22ce18d404b3581fb910e47680880cba3d`
 - **引入版本：** `dev-dbe8bf22ce18`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -806,7 +806,7 @@
 ### controller-db-20260817-monitoring-retention-indexes
 
 - **引入日期：** 2026-08-17
-- **引入提交：** `OboardProject/oboard@326ecbb8110adfac9c9b132783b46bd7e207da81`
+- **引入提交：** `obrdx/oboard@326ecbb8110adfac9c9b132783b46bd7e207da81`
 - **引入版本：** `dev-326ecbb8110a`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -836,7 +836,7 @@
 ### controller-db-20260814-path-stage-routing
 
 - **引入日期：** 2026-08-14
-- **引入提交：** `OboardProject/oboard@718c60af30cf4f6b920235dfcb1164bf2ec921f8`
+- **引入提交：** `obrdx/oboard@718c60af30cf4f6b920235dfcb1164bf2ec921f8`
 - **引入版本：** `dev-718c60af30cf`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -870,7 +870,7 @@
 ### controller-db-20260815-routing-rule-chains-sync
 
 - **引入日期：** 2026-08-15
-- **引入提交：** `OboardProject/oboard@01666531f1e34ab869f4df68c95e1d403b418c99`
+- **引入提交：** `obrdx/oboard@01666531f1e34ab869f4df68c95e1d403b418c99`
 - **引入版本：** `dev-01666531f1e3`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`
@@ -905,7 +905,7 @@
 ### controller-db-20260827-remote-access
 
 - **引入日期：** 2026-08-27
-- **引入提交：** `OboardProject/oboard@82937c69f06c9b4616f906352f43d81acabbb6fe`
+- **引入提交：** `obrdx/oboard@82937c69f06c9b4616f906352f43d81acabbb6fe`
 - **引入版本：** `dev-82937c69f06c`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、`internal/mcpauth`、Web
@@ -925,7 +925,7 @@
 ### controller-db-20260830-remote-interactive
 
 - **引入日期：** 2026-08-30
-- **引入提交：** `OboardProject/oboard@61294b2468d3`
+- **引入提交：** `obrdx/oboard@61294b2468d3`
 - **引入版本：** `dev-61294b2468d3`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、`internal/capability`、`internal/mcpauth`、Web、Agent
@@ -946,7 +946,7 @@
 
 
 - **引入日期：** 2026-08-31
-- **引入提交：** `OboardProject/oboard@1584fa60fd17`
+- **引入提交：** `obrdx/oboard@1584fa60fd17`
 - **引入版本：** `dev-1584fa60fd17`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web `oboard/web/src/main.tsx`
@@ -966,7 +966,7 @@
 ### controller-db-20260828-traffic-ledger-v2
 
 - **引入日期：** 2026-08-28
-- **引入提交：** `OboardProject/oboard@5fedab310ae87ed7a6d4270daa353a21899bf549`
+- **引入提交：** `obrdx/oboard@5fedab310ae87ed7a6d4270daa353a21899bf549`
 - **引入版本：** `dev-5fedab310ae8`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web；Agent `internal/agent`；kernel `kernel/oboard-sb`

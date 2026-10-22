@@ -24,7 +24,7 @@ jobs:
         with:
           client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}
           private-key: ${{ secrets.OBOARD_RELEASE_APP_PRIVATE_KEY }}
-          owner: OboardProject
+          owner: obrdx
           repositories: oboard-agent
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -54,7 +54,7 @@ jobs:
         run: |
           commit=""
           for attempt in 1 2 3; do
-            if commit=$(gh api repos/OboardProject/oboard-agent/commits/main --jq .sha) && [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            if commit=$(gh api repos/obrdx/oboard-agent/commits/main --jq .sha) && [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
               break
             fi
             commit=""

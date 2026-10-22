@@ -24,7 +24,7 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 		"scripts/install.sh":                                       {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script", "enable-plugins", "want_plugin_runtime"},
 		"scripts/verify-release.sh":                                {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":                           {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_EXPECTED_COMMIT"},
-		".github/workflows/dev-build.yml":                          {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "gh api repos/OboardProject/oboard-agent/commits/main", "OBOARD_AGENT_CHANNEL: dev", "OBOARD_AGENT_EXPECTED_COMMIT", "controller-release-manifest.json", "gh release upload dev", "gh release edit dev", "gh release create dev", "--clobber"},
+		".github/workflows/dev-build.yml":                          {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "gh api repos/obrdx/oboard-agent/commits/main", "OBOARD_AGENT_CHANNEL: dev", "OBOARD_AGENT_EXPECTED_COMMIT", "controller-release-manifest.json", "gh release upload dev", "gh release edit dev", "gh release create dev", "--clobber"},
 		".github/workflows/prerelease.yml":                         {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
 		".github/workflows/release.yml":                            {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
 	}
@@ -264,7 +264,7 @@ exit 1
 	if err := os.WriteFile(filepath.Join(fakeBin, "curl"), []byte(fakeCurl), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	harness := extractShellFunction(t, string(content), "latest_version") + "\nREPO=OboardProject/oboard\nlatest_version\n"
+	harness := extractShellFunction(t, string(content), "latest_version") + "\nREPO=obrdx/oboard\nlatest_version\n"
 	command := exec.Command("bash", "-c", harness)
 	command.Env = controllerTestEnv("PATH=" + fakeBin + ":" + os.Getenv("PATH"))
 	output, err := command.CombinedOutput()

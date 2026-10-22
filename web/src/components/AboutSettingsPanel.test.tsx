@@ -44,7 +44,7 @@ describe('AboutSettingsPanel', () => {
     expect(container.textContent).toContain('GPL-3.0')
     expect(container.textContent).not.toContain('开源的多服务器')
 
-    const projectLink = container.querySelector<HTMLAnchorElement>('a[href="https://github.com/OboardProject/oboard"]')
+    const projectLink = container.querySelector<HTMLAnchorElement>('a[href="https://github.com/obrdx/oboard"]')
     expect(projectLink?.target).toBe('_blank')
     expect(projectLink?.rel).toContain('noreferrer')
   })

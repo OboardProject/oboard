@@ -4,7 +4,7 @@ set -eu
 
 COMPONENT=${COMPONENT:-${1:-controller}}
 VERSION_INPUT=${VERSION:-}
-REPO=${OBOARD_REPO:-OboardProject/oboard}
+REPO=${OBOARD_REPO:-obrdx/oboard}
 export COMPONENT OBOARD_REPO="$REPO" OBOARD_ACTION=update
 if [ -n "$VERSION_INPUT" ]; then
   VERSION=$VERSION_INPUT

@@ -38,7 +38,7 @@ type manifestFile struct {
 func main() {
 	dir := flag.String("dir", "", "directory containing Agent release assets")
 	publicKey := flag.String("public-key", "", "base64 raw Ed25519 public key")
-	repo := flag.String("repo", "OboardProject/oboard-agent", "expected release repository")
+	repo := flag.String("repo", "obrdx/oboard-agent", "expected release repository")
 	channel := flag.String("channel", "stable", "stable, prerelease, or dev")
 	expectedVersion := flag.String("expected-version", "", "exact expected version for immutable releases")
 	expectedCommit := flag.String("expected-commit", "", "exact expected commit for development releases")

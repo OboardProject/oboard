@@ -16,7 +16,7 @@ export type OBoardVersionInfo = {
   kernel?: string
 }
 
-const projectURL = 'https://github.com/OboardProject/oboard'
+const projectURL = 'https://github.com/obrdx/oboard'
 
 function present(value?: string) {
   const normalized = String(value || '').trim()

@@ -28,7 +28,7 @@ function Invoke-OBoardAgentInstaller {
     $Purge = $env:OBOARD_PURGE -ne '0'
     $AllowPanelUpdate = $env:OBOARD_ALLOW_PANEL_UPDATE
     $UpdateSource = $env:OBOARD_UPDATE_SOURCE
-    $UpdateRepo = if ($env:OBOARD_UPDATE_REPO) { $env:OBOARD_UPDATE_REPO } else { 'OboardProject/oboard-agent' }
+    $UpdateRepo = if ($env:OBOARD_UPDATE_REPO) { $env:OBOARD_UPDATE_REPO } else { 'obrdx/oboard-agent' }
 
     if ($Action -notin @('install', 'update', 'uninstall')) {
         throw "不支持的操作：$Action（可用：install、update、uninstall）"

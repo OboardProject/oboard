@@ -189,7 +189,7 @@ printf '1048576 524288'
 		extractShellFunction(t, script, "format_download_value"),
 		extractShellFunction(t, script, "resolve_download_url"),
 		extractShellFunction(t, script, "download_component"),
-		"download_component 主控安装包 https://github.com/OboardProject/oboard/releases/download/dev/package " + shellQuote(filepath.Join(root, "package")),
+		"download_component 主控安装包 https://github.com/obrdx/oboard/releases/download/dev/package " + shellQuote(filepath.Join(root, "package")),
 	}, "\n")
 	cmd := exec.Command(testPOSIXShell(t), "-c", harness)
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_LOG="+curlLog)
@@ -232,7 +232,7 @@ func TestControllerDownloadResumesInterruptedTransferAndStopsAfterThreeAttempts(
 	writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
 case "$*" in
   *'--range 0-0'*)
-    printf '200 https://github.com/OboardProject/oboard/releases/download/dev/package'
+    printf '200 https://github.com/obrdx/oboard/releases/download/dev/package'
     exit 0
     ;;
 esac
@@ -259,7 +259,7 @@ printf '5 1024'
 		extractShellFunction(t, script, "format_download_value"),
 		extractShellFunction(t, script, "resolve_download_url"),
 		extractShellFunction(t, script, "download_component"),
-		"download_component 主控安装包 https://github.com/OboardProject/oboard/releases/download/dev/package " + shellQuote(destination),
+		"download_component 主控安装包 https://github.com/obrdx/oboard/releases/download/dev/package " + shellQuote(destination),
 	}, "\n")
 	cmd := exec.Command(testPOSIXShell(t), "-c", harness)
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
@@ -283,7 +283,7 @@ printf '5 1024'
 	quietHarness := strings.Join([]string{
 		"set -eu",
 		extractShellFunction(t, script, "download_quiet"),
-		"download_quiet https://github.com/OboardProject/oboard/releases/download/dev/sha256sums.txt " + shellQuote(destination),
+		"download_quiet https://github.com/obrdx/oboard/releases/download/dev/sha256sums.txt " + shellQuote(destination),
 	}, "\n")
 	cmd = exec.Command(testPOSIXShell(t), "-c", quietHarness)
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
@@ -537,7 +537,7 @@ func TestControllerInstallPluginRuntimeIsOptional(t *testing.T) {
 func TestPluginRuntimeInstallCommandUsesUpdateChannel(t *testing.T) {
 	t.Setenv("OBOARD_UPDATE_CHANNEL", "dev")
 	command := pluginRuntimeInstallCommand()
-	if !strings.Contains(command, "https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh") ||
+	if !strings.Contains(command, "https://raw.githubusercontent.com/obrdx/oboard/main/scripts/install.sh") ||
 		!strings.Contains(command, "OBOARD_ACTION=enable-plugins") || !strings.Contains(command, "VERSION=dev") {
 		t.Fatalf("unexpected install command: %s", command)
 	}

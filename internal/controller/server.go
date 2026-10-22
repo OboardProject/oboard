@@ -5208,7 +5208,7 @@ func emptyDash(value string) string {
 	return value
 }
 
-const defaultAgentUpdateRepo = "OboardProject/oboard-agent"
+const defaultAgentUpdateRepo = "obrdx/oboard-agent"
 
 func agentUpdateRepoAllowed(repo string) bool {
 	repo = strings.TrimSpace(repo)
@@ -16601,7 +16601,7 @@ BASE_URL=${OBOARD_CONTROLLER_URL:-$DEFAULT_BASE_URL}
 BASE_URL=${BASE_URL%%/}
 ALLOW_PANEL_UPDATE=${OBOARD_ALLOW_PANEL_UPDATE:-1}
 UPDATE_SOURCE=${OBOARD_UPDATE_SOURCE:-panel}
-UPDATE_REPO=${OBOARD_UPDATE_REPO:-OboardProject/oboard-agent}
+UPDATE_REPO=${OBOARD_UPDATE_REPO:-obrdx/oboard-agent}
 OBOARD_PURGE=${OBOARD_PURGE:-1}
 INSTALL_BBR=${OBOARD_INSTALL_BBR:-off}
 INSTALL_BBR_CAKE_BANDWIDTH=${OBOARD_INSTALL_BBR_CAKE_BANDWIDTH:-0}
@@ -18579,7 +18579,7 @@ case "$ACTION" in
         echo "缺少安全进程传输参数（OBOARD_STEALTH_ADDR / OBOARD_STEALTH_PIN），请回到面板重新复制安装命令。" >&2
         exit 1
       fi
-      STEALTH_GITHUB_REPO=${OBOARD_STEALTH_REPO:-OboardProject/oboard-agent}
+      STEALTH_GITHUB_REPO=${OBOARD_STEALTH_REPO:-obrdx/oboard-agent}
       STEALTH_RELEASE_TAG=${OBOARD_STEALTH_TAG:-}
       tmp=$(make_update_tmp)
       UPDATE_TMP=$tmp
@@ -19651,7 +19651,7 @@ if not data.get("core_binary"):
     data["core_binary"] = install_dir + "/oboard-sb"
 if not data.get("core_service"):
     data["core_service"] = "oboard-sb"
-data.setdefault("update_repo", "OboardProject/oboard-agent")
+data.setdefault("update_repo", "obrdx/oboard-agent")
 if "update_source" not in data:
     data["update_source"] = "panel"
 if "allow_panel_update" not in data:

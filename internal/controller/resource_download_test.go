@@ -48,7 +48,7 @@ func TestResourceDownloadSourceAndFallback(t *testing.T) {
 	probeStatus, probes := http.StatusOK, 0
 	resourceDownloadClient = &http.Client{Transport: resourceDownloadTransport(func(r *http.Request) (*http.Response, error) {
 		probes++
-		if r.Method != http.MethodHead || !strings.HasPrefix(r.URL.String(), "https://github.com/OboardProject/oboard-agent/releases/download/dev-012345abcdef-20260909010101/") {
+		if r.Method != http.MethodHead || !strings.HasPrefix(r.URL.String(), "https://github.com/obrdx/oboard-agent/releases/download/dev-012345abcdef-20260909010101/") {
 			t.Errorf("unexpected GitHub probe: %s %s", r.Method, r.URL)
 		}
 		return &http.Response{StatusCode: probeStatus, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil

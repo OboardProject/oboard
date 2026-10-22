@@ -294,7 +294,7 @@ func writeTestAgentRelease(t *testing.T, directory, commit string, privateKey ed
 		Build:   "20260731000000",
 		Commit:  commit,
 		Date:    "2026-07-31T00:00:00Z",
-		Repo:    "OboardProject/oboard-agent",
+		Repo:    "obrdx/oboard-agent",
 	}
 	for _, file := range files {
 		content := []byte(file.name + "-" + commit)
