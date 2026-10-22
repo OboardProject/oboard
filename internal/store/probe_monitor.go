@@ -177,11 +177,17 @@ func (s *Store) ProbeRouteHistory(ctx context.Context, id, before int64) ([]mode
 func ValidateProbeMonitor(v *model.ProbeMonitor) error {
 	v.Name = strings.TrimSpace(v.Name)
 	v.Target = strings.TrimSpace(v.Target)
-	if v.ServerID <= 0 || v.Name == "" || len([]rune(v.Name)) > 60 {
+	if v.ServerID <= 0 || len([]rune(v.Name)) > 60 {
 		return errors.New("请选择服务器并填写不超过 60 字的名称")
 	}
 	if v.Kind != "route" && v.Kind != "ip_quality" {
 		return errors.New("监控类型无效")
+	}
+	if v.Name == "" {
+		if v.Kind != "ip_quality" {
+			return errors.New("请选择服务器并填写不超过 60 字的名称")
+		}
+		v.Name = "IP 质量拨测"
 	}
 	if ip, err := netip.ParseAddr(v.Target); err == nil {
 		if !pluginhttp.PublicIP(ip) {

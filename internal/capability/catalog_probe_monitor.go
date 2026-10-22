@@ -34,12 +34,12 @@ func probeMonitorDescriptors(id, text, boolean map[string]any) []Descriptor {
 			input = schemaObject(map[string]any{"id": id, "server_id": id, "before": integer}, "id", "server_id")
 			output = schemaObject(map[string]any{"versions": arrayOf(version)}, "versions")
 		case "save":
-			input = schemaObject(fields, "server_id", "name", "kind", "target", "mode", "port", "interval_seconds", "enabled")
+			input = schemaObject(fields, "server_id", "kind", "target", "mode", "port", "interval_seconds", "enabled")
 		default:
 			input = schemaObject(map[string]any{"id": id, "server_id": id, "revision": id}, "id", "server_id", "revision")
 		}
 		read := action == "list" || action == "history"
-		d := Descriptor{Name: "probe_monitors." + action, Description: map[string]string{"list": "列出授权服务器的路由及 IP 质量监控任务和最近结果；路由以 NextTrace ASN 数据为主，缺失跳由主控 NextTrace 与 IP 归属数据源补全；IP 质量结果分为 attribution、quality 与 google 三部分，google 为服务器自身公网 IPv4 的 Google 地区判定，sent_to_china=true 表示被 Google 判定为中国大陆（送中）；providers 只表示各数据源是否已配置密钥", "history": "分页读取 ASN 路径变化历史；相同路径只更新 last_seen_at，未知结果不生成变化", "save": "创建或更新拨测监控任务；既有任务只能改名称、周期和启停，更换目标请新建", "delete": "删除拨测监控任务及其路由历史", "run": "将已启用监控任务排入下一轮执行；结果随后读取"}[action], InputSchema: input, OutputSchema: output, RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: read, Idempotent: action != "save", DataClassification: DataInternal, MCPEnabled: true, Executable: !read, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: refs}
+		d := Descriptor{Name: "probe_monitors." + action, Description: map[string]string{"list": "列出授权服务器的路由及 IP 质量监控任务和最近结果；路由以 NextTrace ASN 数据为主，缺失跳由主控 NextTrace 与 IP 归属数据源补全；IP 质量结果分为 attribution、quality 与 google 三部分，google 为服务器自身公网 IPv4 的 Google 地区判定，sent_to_china=true 表示被 Google 判定为中国大陆（送中）；providers 只表示各数据源是否已配置密钥", "history": "分页读取 ASN 路径变化历史；相同路径只更新 last_seen_at，未知结果不生成变化", "save": "创建或更新拨测监控任务；路由任务必须填写名称，IP 质量任务名称可留空并默认「IP 质量拨测」；既有任务只能改名称、周期和启停，更换目标请新建", "delete": "删除拨测监控任务及其路由历史", "run": "将已启用监控任务排入下一轮执行；结果随后读取"}[action], InputSchema: input, OutputSchema: output, RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: read, Idempotent: action != "save", DataClassification: DataInternal, MCPEnabled: true, Executable: !read, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: refs}
 		if !read {
 			d.RequiredScopes = []string{"servers:write"}
 			d.MinimumAccess = mcpauth.AccessOperate

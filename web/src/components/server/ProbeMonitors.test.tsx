@@ -89,3 +89,24 @@ it.each(["route", "ip_quality"] as const)("toasts a failed %s edit while preserv
   expect(document.body.querySelector<HTMLInputElement>('[aria-label="任务名称"]')?.value).toBe(task.name)
   expect(document.body.textContent).not.toContain("任务保存失败")
 })
+
+it("creates an IP quality task without a name and relies on the default", async () => {
+  const requestV2 = vi.fn(async (_path: string, init?: RequestInit) => init?.method === "POST" ? { applied: true } : { monitors: [], providers: {} })
+  await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={servers} kind="ip_quality" canManage />))
+  await act(async () => button("创建IP 质量任务").click())
+  const name = document.body.querySelector<HTMLInputElement>('[aria-label="任务名称"]')!
+  expect(name.required).toBe(false)
+  expect(name.value).toBe("")
+  expect(name.placeholder).toBe("IP 质量拨测")
+  await act(async () => button("创建任务").click())
+  const call = requestV2.mock.calls.find(([, init]) => init?.method === "POST")!
+  expect(JSON.parse(String(call[1]?.body)).input).toMatchObject({ name: "", kind: "ip_quality", server_id: 1 })
+})
+it("keeps the route task name required", async () => {
+  const requestV2 = vi.fn(async () => ({ monitors: [], providers: {} }))
+  await act(async () => root.render(<ProbeMonitors client={{ request: vi.fn(), requestV2 }} servers={servers} kind="route" canManage />))
+  await act(async () => button("创建路由监控任务").click())
+  const name = document.body.querySelector<HTMLInputElement>('[aria-label="任务名称"]')!
+  expect(name.required).toBe(true)
+  expect(button("创建任务").disabled).toBe(true)
+})

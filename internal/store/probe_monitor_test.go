@@ -107,3 +107,21 @@ func TestProbeMonitorHistoryAndPreviousSchema(t *testing.T) {
 		t.Fatal("stale server identity accepted")
 	}
 }
+
+func TestValidateProbeMonitorDefaultName(t *testing.T) {
+	quality := model.ProbeMonitor{ServerID: 1, Kind: "ip_quality", IntervalSeconds: 86400}
+	if err := ValidateProbeMonitor(&quality); err != nil {
+		t.Fatal(err)
+	}
+	if quality.Name != "IP 质量拨测" {
+		t.Fatalf("default name = %q", quality.Name)
+	}
+	named := model.ProbeMonitor{ServerID: 1, Name: "入口", Kind: "ip_quality", IntervalSeconds: 86400}
+	if err := ValidateProbeMonitor(&named); err != nil || named.Name != "入口" {
+		t.Fatalf("name=%q err=%v", named.Name, err)
+	}
+	route := model.ProbeMonitor{ServerID: 1, Kind: "route", Target: "1.1.1.1", Mode: "icmp", IntervalSeconds: 300}
+	if err := ValidateProbeMonitor(&route); err == nil {
+		t.Fatal("route monitor accepted an empty name")
+	}
+}

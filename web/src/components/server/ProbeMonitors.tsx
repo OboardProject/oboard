@@ -43,7 +43,6 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
   const [items, setItems] = useState<Monitor[]>([])
   const [providers, setProviders] = useState<Record<string, boolean>>({})
   const [, setError] = useErrorToast(notify)
-  const [notice, setNotice] = useState("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
@@ -67,12 +66,12 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
   useEffect(() => { const abort = new AbortController(); void refresh(abort.signal); const timer = window.setInterval(() => { if (!document.hidden) void refresh(abort.signal) }, 15000); return () => { abort.abort(); window.clearInterval(timer) } }, [refresh])
   const mutate = async (action: string, task: Monitor) => {
     if (busyRef.current) return
-    busyRef.current = true; setBusy(true); setError(""); setNotice("")
+    busyRef.current = true; setBusy(true); setError("")
     try {
       const input = action === "save" ? { id: task.id, server_id: task.server_id, revision: task.revision, name: task.name.trim(), kind: task.kind, target: task.target.trim(), mode: task.mode, port: task.port, interval_seconds: task.interval_seconds, enabled: task.enabled } : { id: task.id, server_id: task.server_id, revision: task.revision }
       await request("/probe-monitors", { method: "POST", body: JSON.stringify({ action, request_id: crypto.randomUUID(), input }) })
       setEditing(null); setDeleting(null)
-      setNotice(action === "run" ? `已安排「${task.name}」在下一轮检测${kind === "ip_quality" ? "，缓存期内的 IP 数据会复用" : ""}。` : action === "delete" ? "任务已删除。" : "任务已保存。")
+      notify?.(action === "run" ? `已安排「${task.name}」在下一轮检测${kind === "ip_quality" ? "，缓存期内的 IP 数据会复用" : ""}。` : action === "delete" ? "任务已删除。" : "任务已保存。", "success")
       await refresh()
     } catch (e: any) { setError(e.message || "操作失败，请重试") } finally { setBusy(false); busyRef.current = false }
   }
@@ -98,7 +97,7 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
   const needle = query.trim().toLowerCase()
   const visible = needle ? all.filter(item => `${item.name} ${item.target} ${serverName(item.server_id)}`.toLowerCase().includes(needle)) : all
   const missingProviders = kind === "ip_quality" && !loading ? ["ipinfo", "abuseipdb"].filter(name => providers[name] === false) : []
-  const create = () => { setError(""); setNotice(""); setEditing({ id: 0, revision: 0, server_id: servers.length === 1 ? servers[0].id : 0, name: "", kind, target: "", mode: kind === "route" ? "icmp" : "", port: 0, interval_seconds: kind === "route" ? 900 : 86400, enabled: true }) }
+  const create = () => { setError(""); setEditing({ id: 0, revision: 0, server_id: servers.length === 1 ? servers[0].id : 0, name: "", kind, target: "", mode: kind === "route" ? "icmp" : "", port: 0, interval_seconds: kind === "route" ? 900 : 86400, enabled: true }) }
   const targetText = (task: Monitor) => `${task.target || "服务器公网 IPv4"}${task.mode === "tcp" ? `:${task.port} · TCP` : task.mode === "icmp" ? " · ICMP" : ""}`
 
   const toolbar = <>
@@ -108,7 +107,6 @@ export function ProbeMonitors({ client, servers, kind, canManage, toolbarSlot, n
 
   return <section aria-label={title} aria-busy={loading} className="return-latency-tasks probe-monitors">
     {toolbarSlot ? createPortal(toolbar, toolbarSlot) : <div className="return-latency-toolbar">{toolbar}</div>}
-    {notice && <p className="muted" role="status">{notice}</p>}
     {missingProviders.length > 0 && <p className="muted probe-monitor-note">{missingProviders.map(name => providerName[name]).join("、")} 未填写 Key，已自动使用备用来源。管理员可在“设置 › 节点 › IP 与路由数据”中填写。</p>}
     {all.length > 0 && <div className="return-latency-filters">
       <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label={`搜索${title}任务`} placeholder="搜索名称、目标或服务器" value={query} onChange={event => setQuery(event.target.value)} /></div>
@@ -185,13 +183,14 @@ function MonitorForm({ task, servers, busy, onChange, onCancel, onSubmit }: { ta
   const minMinutes = minimumMinutes[task.kind]
   const intervalInvalid = minutes === "" || !Number.isInteger(minutes) || minutes < minMinutes || minutes > MAX_MINUTES
   const portInvalid = route && task.mode === "tcp" && (!Number.isInteger(task.port) || task.port < 1 || task.port > 65535)
-  const canSubmit = !busy && task.server_id > 0 && task.name.trim() !== "" && (!route || task.target.trim() !== "") && !intervalInvalid && !portInvalid
+  const nameInvalid = route && task.name.trim() === ""
+  const canSubmit = !busy && task.server_id > 0 && !nameInvalid && (!route || task.target.trim() !== "") && !intervalInvalid && !portInvalid
   const setInterval = (value: number | "") => { setMinutes(value); if (value !== "") onChange({ ...task, interval_seconds: value * 60 }) }
   return <form className="probe-task-form probe-monitor-form" onSubmit={event => { event.preventDefault(); if (canSubmit) onSubmit() }}>
     <fieldset disabled={busy} className="return-latency-fields">
       <div className="probe-task-form-grid">
-        <FormField label="任务名称" required>
-          <input aria-label="任务名称" required maxLength={60} placeholder={route ? "例如：到上海电信的回程" : "例如：入口 IP 质量"} value={task.name} onChange={event => onChange({ ...task, name: event.target.value })} />
+        <FormField label="任务名称" required={route} hint={route ? undefined : "留空默认「IP 质量拨测」。"}>
+          <input aria-label="任务名称" aria-invalid={nameInvalid} required={route} maxLength={60} placeholder={route ? "例如：到上海电信的回程" : "IP 质量拨测"} value={task.name} onChange={event => onChange({ ...task, name: event.target.value })} />
         </FormField>
         <FormField label="执行服务器" required hint={locked ? "创建后不可更换，请新建任务。" : route ? "路由从该服务器向目标发起探测，服务器需要在线。" : "未填写目标 IP 时检测该服务器的公网 IPv4。"}>
           <Select aria-label="执行服务器" value={String(task.server_id)} disabled={locked} onChange={event => onChange({ ...task, server_id: Number(event.target.value) })}>
@@ -318,8 +317,8 @@ function QualityResult({ result }: { result?: { ip?: string; attribution?: Attri
         </dl>
         <SourceList sources={q.sources} quality />
       </section>}
-    </div>
       {google && <GoogleRegionCard google={google} />}
+    </div>
     <p className="muted">每项按各来源投票；机房不等于滥用，未查询到的数据显示为未知，不合成纯净度总分。</p>
   </div>
 }
