@@ -22,14 +22,30 @@ ZIP 容器，最大 2 MiB、最多 8 个文件、解压后 ≤1 MiB，只允许�
 
 ## `oboard-plugin-tool`
 
+以下从 OBoard 工作区的 `oboard/` 仓库目录执行；构建缓存、二进制、私钥和包均留在工作区根目录。已有发布者必须复用原签名密钥，不能每次发布都生成新身份。
+
 ```bash
-go run ./cmd/oboard-plugin-tool check examples/plugins/trace-monitor
-go run ./cmd/oboard-plugin-tool keygen publisher.pem
-go run ./cmd/oboard-plugin-tool pack -key publisher.pem -publisher "Acme" examples/plugins/trace-monitor trace-monitor.obplugin
-go run ./cmd/oboard-plugin-tool inspect trace-monitor.obplugin
+(
+set -eu
+# 使用本次任务独占的缓存目录；结束后只清理该目录。
+mkdir -p ../.cache
+plugin_cache=$(mktemp -d ../.cache/plugin-build.XXXXXX)
+trap 'rm -rf -- "$plugin_cache"' EXIT
+mkdir -p "$plugin_cache/go" "$plugin_cache/tmp" ../dist/bin ../dist/plugins ../.tmp
+GOCACHE="$PWD/$plugin_cache/go" GOTMPDIR="$PWD/$plugin_cache/tmp" \
+  go build -o ../dist/bin/oboard-plugin-tool ./cmd/oboard-plugin-tool
+../dist/bin/oboard-plugin-tool check examples/plugins/trace-monitor
+# 仅首次建立发布者身份时执行，私钥不得提交或放入插件目录。
+../dist/bin/oboard-plugin-tool keygen ../.tmp/plugin-publisher.pem
+../dist/bin/oboard-plugin-tool pack -key ../.tmp/plugin-publisher.pem -publisher "Acme" \
+  examples/plugins/trace-monitor ../dist/plugins/trace-monitor.obplugin
+../dist/bin/oboard-plugin-tool inspect ../dist/plugins/trace-monitor.obplugin
+)
 ```
 
-- `check`：与主控相同的清单与源码校验，外加未声明能力检查（代码调用了清单未声明的 SDK 方法时失败）与未使用变量提示。
+中途失败应停止发布并清理本次专用缓存；不要删除签名私钥或预先存在的共享缓存。外部插件仓库同样应将私钥、缓存和生成包放在仓库之外。
+
+- `check`：与主控相同的清单与源码校验，外加文本级未声明能力检查与未使用变量提示。它可能漏掉动态或别名调用，不是安全审计，也不运行 `main`；完整验证见 [开发规范](development.md)。
 - `pack`：生成确定性的归档；带 `-key` 时签名。私钥必须是 `0600`。
 - `keygen`：生成 PKCS#8 PEM Ed25519 私钥（不覆盖已有文件）并打印发布者身份。
 
