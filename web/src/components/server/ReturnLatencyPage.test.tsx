@@ -221,11 +221,10 @@ describe('return latency probe tasks', () => {
     expect(document.body.querySelector('[role="menu"]')).toBeNull()
   })
 
-  it('constrains probe settings dialog scroll to task list only', () => {
+  it('scrolls the probe settings dialog body and keeps the save actions pinned', () => {
     const stylesheet = readFileSync(path.resolve(__dirname, '../../style.css'), 'utf8')
-    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.dialog-chrome-body\s*\{[^}]*overflow:\s*hidden/s)
-    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.probe-task-server-list\s*\{[^}]*overflow-y:\s*auto/s)
-    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.return-latency-form-actions\s*\{[^}]*margin-top:\s*auto/s)
+    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.dialog-chrome-body\s*\{[^}]*overflow-y:\s*auto/s)
+    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.return-latency-form-actions\s*\{[^}]*position:\s*sticky[^}]*bottom:\s*0/s)
   })
 
   it('integrates network probe tabs and toolbar in a unified header bar', async () => {

@@ -24634,82 +24634,46 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 }
 
 .dialog.probe-settings-dialog .dialog-chrome-body {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.dialog.probe-settings-dialog .return-latency-editor {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dialog.probe-settings-dialog .return-latency-fields {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
   gap: 14px;
-}
-
-.dialog.probe-settings-dialog .return-latency-switch-row,
-.dialog.probe-settings-dialog .latency-params-grid {
-  flex: 0 0 auto;
 }
 
 .dialog.probe-settings-dialog .probe-task-servers {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
   gap: 8px;
 }
 
 .dialog.probe-settings-dialog .return-latency-section-head {
-  flex: 0 0 auto;
   margin-bottom: 0;
 }
 
 .dialog.probe-settings-dialog .probe-task-servers > p {
-  flex: 0 0 auto;
   margin: 0;
 }
 
-.dialog.probe-settings-dialog .probe-task-server-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--muted) 34%, transparent) transparent;
-  padding-right: 4px;
-}
-
 .dialog.probe-settings-dialog .danger-text {
-  flex: 0 0 auto;
   margin: 0;
 }
 
 .dialog.probe-settings-dialog .return-latency-form-actions {
-  flex: 0 0 auto;
-  margin-top: auto;
-  padding-top: 6px;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 4px;
+  padding: 12px 0 2px;
+  background: var(--surface-solid);
+  border-top: 1px solid var(--border);
 }
 
-@media (max-height: 640px) {
-  .dialog.probe-settings-dialog .dialog-chrome-body {
-    overflow-y: auto;
-  }
-
-  .dialog.probe-settings-dialog .probe-task-server-list {
-    flex: 0 0 auto;
-    min-height: 0;
-    max-height: 180px;
-  }
+.dialog.probe-settings-dialog .probe-task-server-list {
+  max-height: none;
+  overflow: visible;
 }
 
 .dialog.probe-task-dialog {
@@ -24773,14 +24737,6 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
     max-height: calc(100dvh - 8px);
     padding: 14px 14px calc(12px + env(safe-area-inset-bottom, 0px));
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  }
-  .dialog.probe-settings-dialog .dialog-chrome-body {
-    overflow-y: auto;
-  }
-  .dialog.probe-settings-dialog .probe-task-server-list {
-    flex: 0 0 auto;
-    min-height: 0;
-    max-height: 220px;
   }
   .probe-task-form-grid { grid-template-columns: minmax(0, 1fr); }
   .probe-task-form .ui-segmented-select button { padding-inline: 8px; }
